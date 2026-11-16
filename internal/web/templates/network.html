@@ -1,0 +1,46 @@
+{{define "content"}}
+{{$csrf := .CSRF}}
+<span class="bar"></span>
+<h1>Spiele-<em>Netze</em></h1>
+<p class="lead">{{.Data.On}} von {{.Data.Total}} Netzen an. Ein VLAN pro Tisch. Braucht ihr einen Tisch nicht, schalte ihn aus.</p>
+
+<div class="tablewrap">
+<table class="vlans">
+  <thead><tr><th class="col-switch">Im Relay</th><th>Netz</th><th class="col-opt">Gruppe</th><th class="col-opt">Adressen</th><th class="col-opt2">Relay-IP</th><th class="col-opt2">Interface</th><th class="num">Rein/s</th><th class="num col-opt">Rein</th><th class="num col-opt">Raus</th></tr></thead>
+  <tbody>
+  {{range .Data.VLANs}}
+  <tr data-vlan="{{.VID}}" data-status="{{.Live.Status}}">
+    <td class="col-switch">
+      <form method="post" action="/netz/{{.VID}}" class="toggle-form" data-confirm="Spiele aus {{.Name}} werden dann nicht mehr in andere Netze verteilt und umgekehrt." data-confirm-title="{{.Name}} ausschalten?" data-confirm-ok="Ausschalten">
+        <input type="hidden" name="csrf" value="{{$csrf}}">
+        <input type="hidden" name="on" value="{{if .Enabled}}0{{else}}1{{end}}">
+        <button class="switch" type="submit" role="switch" aria-checked="{{if .Enabled}}true{{else}}false{{end}}" aria-label="{{.Name}} (VLAN {{.VID}})"><span class="track" aria-hidden="true"><i></i></span><span class="switch-word" aria-hidden="true">{{if .Enabled}}An{{else}}Aus{{end}}</span></button>
+      </form>
+    </td>
+    <td><span class="netname"><span class="key key-sm" aria-hidden="true">{{.Key}}</span><span><b>{{.Name}}</b><br><span class="mono small muted">VLAN {{.VID}}</span></span></span></td>
+    <td class="col-opt">{{group .Group}}</td>
+    <td class="mono col-opt">{{.CIDR}}</td>
+    <td class="mono col-opt2">{{.RelayIP}}</td>
+    <td class="mono small col-opt2">{{.Iface}}</td>
+    <td class="num mono" data-f="rate">{{num .Live.InRate}}</td>
+    <td class="num mono col-opt" data-f="in">{{num .Live.In}}</td>
+    <td class="num mono col-opt" data-f="out">{{num .Live.Out}}</td>
+  </tr>
+  {{end}}
+  </tbody>
+</table>
+</div>
+<p class="small muted">Rein: Broadcasts, die aus dem Netz ankommen. Raus: Kopien, die das Relay in das Netz sendet. Zähler seit dem Start der Engine.</p>
+
+<section class="section">
+  <h2>Wer sieht wessen Spiele</h2>
+  <p class="muted">Ein Haken heißt: Spiele aus Netzen der Zeile werden in Netze der Spalte kopiert. Gleiche Gruppe heißt zwischen allen Netzen dieser Gruppe.</p>
+  {{range .Data.Profiles}}
+  <h3>Profil <span class="mono">{{.Name}}</span>{{if .Default}} <span class="tag">Standard</span>{{end}}</h3>
+  <div class="tablewrap matrixwrap"><table class="matrix">
+    <thead><tr><th scope="col">von ↓ nach →</th>{{range .Groups}}<th scope="col">{{group .}}</th>{{end}}</tr></thead>
+    <tbody>{{range .Rows}}<tr><th scope="row">{{group .Src}}</th>{{range .Cells}}<td>{{if .}}<span class="yes">{{icon "check"}}<span class="sr">ja</span></span>{{else}}<span class="no" aria-hidden="true">–</span><span class="sr">nein</span>{{end}}</td>{{end}}</tr>{{end}}</tbody>
+  </table></div>
+  {{end}}
+</section>
+{{end}}

@@ -1,0 +1,71 @@
+{{define "row"}}
+<li class="grow{{if .G.Pinned}} grow-pin{{end}}" data-id="{{.G.ID}}" data-on="{{if .G.Enabled}}1{{else}}0{{end}}" data-unsure="{{if .G.Unsure}}1{{else}}0{{end}}"
+    data-search="{{.G.ID}} {{.G.Name}} {{join .G.Aliases " "}} {{.G.Ports}}" data-rules="{{.G.RuleIDs}}">
+  {{if .CanSwitch}}
+  <form method="post" action="/spiele/{{.G.ID}}" class="toggle-form">
+    <input type="hidden" name="csrf" value="{{.CSRF}}">
+    <input type="hidden" name="back" value="/spiele">
+    <input type="hidden" name="on" value="{{if .G.Enabled}}0{{else}}1{{end}}">
+    <button class="switch" type="submit" role="switch" aria-checked="{{if .G.Enabled}}true{{else}}false{{end}}" aria-label="{{.G.Name}}"><span class="track" aria-hidden="true"><i></i></span><span class="switch-word" aria-hidden="true">{{if .G.Enabled}}An{{else}}Aus{{end}}</span></button>
+  </form>
+  {{else}}
+  <span class="onoff" data-onoff>{{if .G.Enabled}}An{{else}}Aus{{end}}</span>
+  {{end}}
+  <a class="grow-main" href="/spiele/{{.G.ID}}">
+    <span class="grow-name">{{.G.Name}}</span>
+    {{if .G.Unsure}}<span class="tag tag-warn">{{icon "alert"}}Unsicher</span>{{end}}
+    <span class="grow-ports mono">{{if .G.Ports}}UDP {{.G.Ports}}{{else}}Ports unbekannt{{end}}</span>
+  </a>
+  <span class="grow-live" title="Suchanfragen seit dem Start der Engine"><i class="dot" aria-hidden="true"></i><span class="mono" data-f="rx">{{num .G.RX}}</span><span class="sr"> Pakete empfangen</span></span>
+  <a class="grow-go" href="/spiele/{{.G.ID}}" tabindex="-1" aria-hidden="true">{{icon "chevron"}}</a>
+</li>
+{{end}}
+
+{{define "content"}}
+{{$d := .Data}}{{$csrf := .CSRF}}
+<span class="bar"></span>
+<h1>LAN-<em>Spiele</em></h1>
+<p class="lead"><b data-live="games_on">{{$d.On}}</b> von {{$d.Total}} an. Schalten wirkt sofort, laufende Partien merken nichts.</p>
+
+<div class="toolbar" id="game-toolbar">
+  <label class="search">{{icon "search"}}<span class="sr">Spiel oder Port suchen</span><input type="search" id="game-search" placeholder="Spiel oder Port, z. B. 23757" autocomplete="off" spellcheck="false"><kbd aria-hidden="true">/</kbd></label>
+  <div class="chips" role="group" aria-label="Filter">
+    <button type="button" class="chip" data-filter="all" aria-pressed="true">Alle <span class="n" id="n-all">{{$d.Total}}</span></button>
+    <button type="button" class="chip" data-filter="an" aria-pressed="false">An <span class="n" id="n-on">{{$d.On}}</span></button>
+    <button type="button" class="chip" data-filter="aus" aria-pressed="false">Aus <span class="n" id="n-off">{{$d.Off}}</span></button>
+    <button type="button" class="chip" data-filter="unsicher" aria-pressed="false">Unsicher <span class="n">{{$d.Unsure}}</span></button>
+  </div>
+</div>
+<p class="sr" id="game-count" role="status"></p>
+
+<div id="games">
+  {{if $d.FlatOut}}
+  <section class="gsec" data-gsec>
+    <h2>FlatOut <span class="tag">Priorität</span></h2>
+    <ul class="glist">{{range $d.FlatOut}}{{template "row" (dict "G" . "CSRF" $csrf "CanSwitch" $d.CanSwitch)}}{{end}}</ul>
+  </section>
+  {{end}}
+  <section class="gsec" data-gsec>
+    <h2>Alle Spiele</h2>
+    <div class="glist-head" aria-hidden="true"><span>Im Relay</span><span>Spiel und Ports der LAN-Suche</span><span>Empfangen</span></div>
+    <ul class="glist">{{range $d.Games}}{{template "row" (dict "G" . "CSRF" $csrf "CanSwitch" $d.CanSwitch)}}{{end}}</ul>
+  </section>
+  <p class="quiet" id="game-empty" hidden>{{icon "search"}}<span>Nichts gefunden. Probier einen Port, z. B. <span class="mono">23757</span>, oder nimm den Filter raus.</span></p>
+
+  {{if $d.NoLAN}}
+  <details class="fold gsec" id="nolan" data-gsec>
+    <summary><span class="fold-body"><span class="fold-title">Ohne LAN-Broadcast <span class="tag">{{len $d.NoLAN}}</span></span><span class="small muted">Nichts zu schalten: Diese Spiele suchen nicht per Broadcast.</span></span></summary>
+    <ul class="glist glist-plain">
+      {{range $d.NoLAN}}
+      <li class="grow" data-id="{{.ID}}" data-nolan="1" data-search="{{.ID}} {{.Name}} {{join .Aliases " "}}">
+        <span class="onoff onoff-na">Kein Relay</span>
+        <a class="grow-main" href="/spiele/{{.ID}}"><span class="grow-name">{{.Name}}</span></a>
+        <span></span>
+        <a class="grow-go" href="/spiele/{{.ID}}" tabindex="-1" aria-hidden="true">{{icon "chevron"}}</a>
+      </li>
+      {{end}}
+    </ul>
+  </details>
+  {{end}}
+</div>
+{{end}}

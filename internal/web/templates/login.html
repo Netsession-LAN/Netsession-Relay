@@ -1,0 +1,22 @@
+{{define "content"}}
+<section class="login">
+  <img class="watermark" src="{{static "ns/logo/netsession_bildmarke_negativ.svg"}}" alt="" aria-hidden="true">
+  <div class="login-card card">
+    <img class="login-logo" src="{{static "ns/logo/netsession_logo-horizontal_negativ.svg"}}" alt="Netsession" width="200" height="44">
+    <span class="bar"></span>
+    <h1>Relay <em>Anmelden</em></h1>
+    <p class="muted">Das Relay verbindet die LAN-Spiele über alle Tische.</p>
+    <form method="post" action="/login/local" class="form">
+      <label class="field"><span class="label">Name</span><input name="name" autocomplete="username" autocapitalize="none" spellcheck="false" required autofocus></label>
+      <label class="field"><span class="label">Passwort</span><input name="password" type="password" autocomplete="current-password" required></label>
+      <button class="btn" type="submit">Anmelden</button>
+    </form>
+    {{if .Demo}}<p class="notice notice-warn">{{icon "alert"}}<span><b>Demo.</b> Erfundene Daten, es wird nichts weitergeleitet. Konten <span class="mono">demo</span>, <span class="mono">op</span>, <span class="mono">view</span>, Passwort <span class="mono">demo</span>.</span></p>{{end}}
+    <details class="fold">
+      <summary><span class="label">Kein Konto oder Passwort vergessen?</span></summary>
+      <p class="small muted">Lokale Konten legt ein Admin auf der Relay-VM an:<br><code>docker exec nsrelay-web-1 nsrelay admin set-password &lt;name&gt;</code></p>
+      <p class="small muted">Die Anmeldung mit dem Netsession-Konto (Authentik) folgt.</p>
+    </details>
+  </div>
+</section>
+{{end}}

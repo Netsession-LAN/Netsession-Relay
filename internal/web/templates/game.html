@@ -1,0 +1,93 @@
+{{define "diagnose"}}
+<p class="notice notice-{{.Verdict.Tone}} verdict">{{icon .Verdict.Icon}}<span><b>{{.Verdict.Title}}.</b> {{.Verdict.Text}}</span></p>
+{{if .Steps}}
+<ol class="steps">
+  {{range .Steps}}
+  <li class="step step-{{.Tone}}">{{icon .Icon}}<div><b>{{.Title}}</b><p>{{if eq .Title $.Verdict.Title}}Hier hakt es, siehe oben.{{else}}{{.Text}}{{end}}</p></div></li>
+  {{end}}
+</ol>
+{{end}}
+{{end}}
+
+{{define "content"}}
+{{$d := .Data}}{{$g := .Data.Game}}
+<p class="crumbs"><a href="/spiele">{{icon "back"}}Alle Spiele</a></p>
+<div class="pagehead">
+  <div>
+    <span class="bar"></span>
+    <h1>{{$g.Name}}</h1>
+    <p class="tags">
+      {{if eq $g.RelayNeeded "no"}}<span class="tag">Kein LAN-Broadcast</span>
+      {{else if eq $g.RelayNeeded "unknown"}}<span class="tag tag-warn">{{icon "alert"}}Ports nicht belegt</span>
+      {{else if eq $g.Confidence "low"}}<span class="tag tag-warn">{{icon "alert"}}Unsicher, vor Ort prüfen</span>
+      {{else}}<span class="tag">{{confName $g.Confidence}}</span>{{end}}
+      {{if $g.Pinned}}<span class="tag">Priorität</span>{{end}}
+      <span class="mono small muted">{{$g.ID}}</span>
+    </p>
+    {{if $g.Aliases}}<p class="small muted">Auch bekannt als: {{join $g.Aliases " · "}}</p>{{end}}
+  </div>
+  {{if ne $g.RelayNeeded "no"}}
+  <div class="bigswitch" data-id="{{$g.ID}}" data-game-switch>
+    <span class="label">Im Relay</span>
+    {{if $d.CanSwitch}}
+    <form method="post" action="/spiele/{{$g.ID}}" class="toggle-form">
+      <input type="hidden" name="csrf" value="{{.CSRF}}">
+      <input type="hidden" name="back" value="/spiele/{{$g.ID}}">
+      <input type="hidden" name="on" value="{{if $g.Enabled}}0{{else}}1{{end}}">
+      <button class="switch switch-lg" type="submit" role="switch" aria-checked="{{if $g.Enabled}}true{{else}}false{{end}}" aria-label="{{$g.Name}} im Relay"><span class="track" aria-hidden="true"><i></i></span><span class="switch-word" aria-hidden="true">{{if $g.Enabled}}An{{else}}Aus{{end}}</span></button>
+    </form>
+    {{else}}<span class="onoff" data-onoff>{{if $g.Enabled}}An{{else}}Aus{{end}}</span>{{end}}
+  </div>
+  {{end}}
+</div>
+
+<section class="section" aria-labelledby="diag-h">
+  <h2 id="diag-h">Wird es gefunden?</h2>
+  <div id="diagnose" data-fragment="/spiele/{{$g.ID}}?teil=diagnose" data-id="{{$g.ID}}" data-rules="{{$g.RuleIDs}}">{{template "diagnose" $d}}</div>
+</section>
+
+<section class="section grid2">
+  <div>
+    <h2>LAN-Suche</h2>
+    {{if $g.Discovery}}
+    <div class="tablewrap"><table>
+      <thead><tr><th>Art</th><th>UDP-Ports</th><th>Wer sendet</th></tr></thead>
+      <tbody>{{range $g.Discovery}}<tr>
+        <td>{{kindName .Kind}}{{if .Group}} <span class="mono small">{{.Group}}</span>{{end}}</td>
+        <td class="mono">{{.Ports}}</td>
+        <td>{{dirName .Direction}}</td>
+      </tr>{{end}}</tbody>
+    </table></div>
+    {{else}}<p class="muted">Keine Broadcast-Suche bekannt.</p>{{end}}
+
+    {{if $d.Rules}}
+    <h3>Zähler im Relay</h3>
+    <div class="tablewrap"><table>
+      <thead><tr><th>Regel</th><th class="num">Empfangen</th><th class="num">Kopiert</th></tr></thead>
+      <tbody>{{range $d.Rules}}<tr data-rule="{{.ID}}">
+        <td class="mono small">{{.ID}}</td>
+        <td class="num mono" data-f="rx">{{num .RX}}</td><td class="num mono" data-f="relayed">{{num .Relayed}}</td>
+      </tr>{{end}}</tbody>
+    </table></div>
+    <p class="small muted">Seit dem Start der Engine. Teilen sich mehrere Spiele einen Port, gelten die Zahlen für alle zusammen.</p>
+    {{end}}
+  </div>
+  <div>
+    <h2>Danach: Spielverkehr</h2>
+    {{if $g.GamePorts}}
+    <p>Ist das Spiel gefunden, läuft die Partie direkt zwischen den PCs. Diese Ports müssen zwischen den Netzen erlaubt sein:</p>
+    <ul class="ports">{{range $proto, $ports := $g.GamePorts}}<li><span class="label">{{$proto}}</span> <span class="mono">{{$ports}}</span></li>{{end}}</ul>
+    {{else}}<p class="muted">Keine Spiel-Ports hinterlegt.</p>{{end}}
+    {{if $g.Notes}}
+    <h3>Hinweise</h3>
+    <p class="prose">{{$g.Notes}}</p>
+    {{end}}
+    {{if $g.Sources}}
+    <details class="fold">
+      <summary><span class="label">Quellen ({{len $g.Sources}})</span></summary>
+      <ul class="sources">{{range $g.Sources}}<li><a href="{{.}}" rel="noreferrer noopener" target="_blank" class="small">{{.}}</a></li>{{end}}</ul>
+    </details>
+    {{end}}
+  </div>
+</section>
+{{end}}

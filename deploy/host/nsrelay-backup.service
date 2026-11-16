@@ -1,0 +1,7 @@
+[Unit]
+Description=Netsession Relay configuration backup
+After=docker.service
+
+[Service]
+Type=oneshot
+ExecStart=/usr/bin/docker exec nsrelay-web-1 /usr/local/bin/nsrelay backup -dir /backups -keep 14

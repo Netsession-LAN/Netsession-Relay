@@ -1,0 +1,22 @@
+{{define "content"}}
+<span class="bar"></span>
+<h1>Not-<em>Aus</em></h1>
+<div class="narrow">
+  {{if .Live.State.CanStop}}
+  <p class="lead">Das Relay hört sofort auf, Spiele zwischen den Netzen zu verteilen.</p>
+  <ul class="plain">
+    <li>Laufende Partien bleiben bestehen.</li>
+    <li>Neue Spiele werden nur noch am eigenen Tisch gefunden.</li>
+    <li>Wieder einschalten kann ein Admin unter System.</li>
+  </ul>
+  <form method="post" action="/system/notaus" class="row">
+    <input type="hidden" name="csrf" value="{{.CSRF}}">
+    <button class="btn" type="submit">{{icon "power"}}Relay pausieren</button>
+    <a class="btn-outline" href="/">Abbrechen</a>
+  </form>
+  {{else}}
+  <p class="notice notice-neutral">{{icon "info"}}<span><b>{{.Live.State.Headline}}.</b> {{.Live.State.Text}}</span></p>
+  <p><a class="btn-outline" href="/">Zur Übersicht</a></p>
+  {{end}}
+</div>
+{{end}}

@@ -1,0 +1,637 @@
+<?xml version="1.0"?>
+<!-- Sanitised excerpt of the OPNsense config.xml of relay box 192.0.2.52, 2026-11-16 (before the loop fix). Only hostname, interfaces and udpbroadcastrelay entries. -->
+<opnsense>
+  <system>
+    <hostname>0-52-UDP-BRC-02</hostname>
+    <domain>example.lan</domain>
+  </system>
+  <interfaces>
+    <lan>
+      <if>vtnet0</if>
+      <descr>01_4000_MGMT</descr>
+      <ipaddr>192.0.2.52</ipaddr>
+      <subnet>14</subnet>
+      <enable>1</enable>
+    </lan>
+    <lo0>
+      <if>lo0</if>
+      <descr>Loopback</descr>
+      <ipaddr>127.0.0.1</ipaddr>
+      <subnet>8</subnet>
+      <enable>1</enable>
+    </lo0>
+    <opt1>
+      <if>vtnet1</if>
+      <descr>1100_Gameserver</descr>
+      <ipaddr>10.10.0.52</ipaddr>
+      <subnet>24</subnet>
+      <enable>1</enable>
+    </opt1>
+    <opt2>
+      <if>vtnet2</if>
+      <descr>1110_Tisch_1</descr>
+      <ipaddr>10.10.1.52</ipaddr>
+      <subnet>24</subnet>
+      <enable>1</enable>
+    </opt2>
+    <opt3>
+      <if>vtnet3</if>
+      <descr>1111_Tisch_2</descr>
+      <ipaddr>10.10.2.52</ipaddr>
+      <subnet>24</subnet>
+      <enable>1</enable>
+    </opt3>
+    <opt4>
+      <if>vtnet4</if>
+      <descr>1112_Tisch_3</descr>
+      <ipaddr>10.10.3.52</ipaddr>
+      <subnet>24</subnet>
+      <enable>1</enable>
+    </opt4>
+    <opt5>
+      <if>vtnet5</if>
+      <descr>1113_Tisch_4</descr>
+      <ipaddr>10.10.4.52</ipaddr>
+      <subnet>24</subnet>
+      <enable>1</enable>
+    </opt5>
+    <opt6>
+      <if>vtnet6</if>
+      <descr>1114_Tisch_5</descr>
+      <ipaddr>10.10.5.52</ipaddr>
+      <subnet>24</subnet>
+      <enable>1</enable>
+    </opt6>
+    <opt7>
+      <if>vtnet7</if>
+      <descr>1115_Tisch_6</descr>
+      <ipaddr>10.10.6.52</ipaddr>
+      <subnet>24</subnet>
+      <enable>1</enable>
+    </opt7>
+    <opt8>
+      <if>vtnet8</if>
+      <descr>1116_Tisch_7</descr>
+      <ipaddr>10.10.7.52</ipaddr>
+      <subnet>24</subnet>
+      <enable>1</enable>
+    </opt8>
+    <opt9>
+      <if>vtnet9</if>
+      <descr>1117_Tisch_8</descr>
+      <ipaddr>10.10.8.52</ipaddr>
+      <subnet>24</subnet>
+      <enable>1</enable>
+    </opt9>
+    <opt10>
+      <if>vtnet10</if>
+      <descr>1118_Tisch_9</descr>
+      <ipaddr>10.10.9.52</ipaddr>
+      <subnet>24</subnet>
+      <enable>1</enable>
+    </opt10>
+    <opt11>
+      <if>vtnet11</if>
+      <descr>1119_Tisch_10</descr>
+      <ipaddr>10.10.10.52</ipaddr>
+      <subnet>24</subnet>
+      <enable>1</enable>
+    </opt11>
+    <opt12>
+      <if>vtnet12</if>
+      <descr>1120_Tisch_11</descr>
+      <ipaddr>10.10.11.52</ipaddr>
+      <subnet>24</subnet>
+      <enable>1</enable>
+    </opt12>
+    <opt13>
+      <if>vtnet13</if>
+      <descr>1121_Tisch_12</descr>
+      <ipaddr>10.10.12.52</ipaddr>
+      <subnet>24</subnet>
+      <enable>1</enable>
+    </opt13>
+    <opt14>
+      <if>vtnet14</if>
+      <descr>1122_Tisch_13</descr>
+      <ipaddr>10.10.13.52</ipaddr>
+      <subnet>24</subnet>
+      <enable>1</enable>
+    </opt14>
+    <opt15>
+      <if>vtnet15</if>
+      <descr>1123_Tisch_14</descr>
+      <ipaddr>10.10.14.52</ipaddr>
+      <subnet>24</subnet>
+      <enable>1</enable>
+    </opt15>
+    <opt16>
+      <if>vtnet16</if>
+      <descr>1253_User_WiFi</descr>
+      <ipaddr>10.10.253.52</ipaddr>
+      <subnet>24</subnet>
+      <enable>1</enable>
+    </opt16>
+    <opt17>
+      <if>vtnet17</if>
+      <descr>1254_Orga</descr>
+      <ipaddr>10.10.254.52</ipaddr>
+      <subnet>24</subnet>
+      <enable>1</enable>
+    </opt17>
+  </interfaces>
+  <OPNsense>
+    <udpbroadcastrelays version="1.0.0" persisted_at="1763858108.03">
+      <udpbroadcastrelay uuid="c2e05d8d-6e12-4c74-a5ac-d879c1efa7cd">
+        <enabled>1</enabled>
+        <interfaces>opt1,opt2,opt3,opt4,opt5,opt6,opt7,opt8,opt9,opt10,opt11,opt12,opt13,opt14,opt15,opt16,opt17</interfaces>
+        <multicastaddress />
+        <sourceaddress>1.1.1.2</sourceaddress>
+        <listenport>10666</listenport>
+        <InstanceID>1</InstanceID>
+        <RevertTTL>0</RevertTTL>
+        <description>ZDaemon</description>
+      </udpbroadcastrelay>
+      <udpbroadcastrelay uuid="9803fcf7-ea72-41ca-88e3-d308f7c0d1b6">
+        <enabled>1</enabled>
+        <interfaces>opt1,opt2,opt3,opt4,opt5,opt6,opt7,opt8,opt9,opt10,opt11,opt12,opt13,opt14,opt15,opt16,opt17</interfaces>
+        <multicastaddress />
+        <sourceaddress>1.1.1.2</sourceaddress>
+        <listenport>6666</listenport>
+        <InstanceID>2</InstanceID>
+        <RevertTTL>0</RevertTTL>
+        <description>ZDaemon</description>
+      </udpbroadcastrelay>
+      <udpbroadcastrelay uuid="c709ae19-000c-44d1-b89e-e01ff5ec3920">
+        <enabled>1</enabled>
+        <interfaces>opt1,opt2,opt3,opt4,opt5,opt6,opt7,opt8,opt9,opt10,opt11,opt12,opt13,opt14,opt15,opt16,opt17</interfaces>
+        <multicastaddress />
+        <sourceaddress>1.1.1.2</sourceaddress>
+        <listenport>38927</listenport>
+        <InstanceID>3</InstanceID>
+        <RevertTTL>0</RevertTTL>
+        <description>ZDaemon</description>
+      </udpbroadcastrelay>
+      <udpbroadcastrelay uuid="23d86b1f-a384-44f9-94bd-bc9e72a41e66">
+        <enabled>1</enabled>
+        <interfaces>opt1,opt2,opt3,opt4,opt5,opt6,opt7,opt8,opt9,opt10,opt11,opt12,opt13,opt14,opt15,opt16,opt17</interfaces>
+        <multicastaddress />
+        <sourceaddress>1.1.1.2</sourceaddress>
+        <listenport>15300</listenport>
+        <InstanceID>4</InstanceID>
+        <RevertTTL>0</RevertTTL>
+        <description>ZDaemon</description>
+      </udpbroadcastrelay>
+      <udpbroadcastrelay uuid="ed843f0e-f486-4a5d-a230-feffcfc97c01">
+        <enabled>1</enabled>
+        <interfaces>opt1,opt2,opt3,opt4,opt5,opt6,opt7,opt8,opt9,opt10,opt11,opt12,opt13,opt14,opt15,opt16,opt17</interfaces>
+        <multicastaddress />
+        <sourceaddress>1.1.1.2</sourceaddress>
+        <listenport>4445</listenport>
+        <InstanceID>5</InstanceID>
+        <RevertTTL>0</RevertTTL>
+        <description>Minecraft</description>
+      </udpbroadcastrelay>
+      <udpbroadcastrelay uuid="fb22ca9d-8034-432a-9bf3-7db33667aa6d">
+        <enabled>1</enabled>
+        <interfaces>opt1,opt2,opt3,opt4,opt5,opt6,opt7,opt8,opt9,opt10,opt11,opt12,opt13,opt14,opt15,opt16,opt17</interfaces>
+        <multicastaddress>224.0.0.251</multicastaddress>
+        <sourceaddress>1.1.1.2</sourceaddress>
+        <listenport>5353</listenport>
+        <InstanceID>6</InstanceID>
+        <RevertTTL>0</RevertTTL>
+        <description>mDNS</description>
+      </udpbroadcastrelay>
+      <udpbroadcastrelay uuid="96050d9e-6c0b-4714-85b2-e02885015f30">
+        <enabled>1</enabled>
+        <interfaces>opt1,opt2,opt3,opt4,opt5,opt6,opt7,opt8,opt9,opt10,opt11,opt12,opt13,opt14,opt15,opt16,opt17</interfaces>
+        <multicastaddress />
+        <sourceaddress />
+        <listenport>52217</listenport>
+        <InstanceID>7</InstanceID>
+        <RevertTTL>0</RevertTTL>
+        <description>CS2</description>
+      </udpbroadcastrelay>
+      <udpbroadcastrelay uuid="1701f509-26fb-4cd8-b7e7-1a8547729c68">
+        <enabled>1</enabled>
+        <interfaces>opt1,opt2,opt3,opt4,opt5,opt6,opt7,opt8,opt9,opt10,opt11,opt12,opt13,opt14,opt15,opt16,opt17</interfaces>
+        <multicastaddress>239.255.255.250</multicastaddress>
+        <sourceaddress />
+        <listenport>1900</listenport>
+        <InstanceID>8</InstanceID>
+        <RevertTTL>0</RevertTTL>
+        <description>SSDP</description>
+      </udpbroadcastrelay>
+      <udpbroadcastrelay uuid="3f32e69d-17b9-424d-a5e9-b5eace1c1953">
+        <enabled>1</enabled>
+        <interfaces>opt1,opt2,opt3,opt4,opt5,opt6,opt7,opt8,opt9,opt10,opt11,opt12,opt13,opt14,opt15,opt16,opt17</interfaces>
+        <multicastaddress>224.0.0.252</multicastaddress>
+        <sourceaddress />
+        <listenport>5355</listenport>
+        <InstanceID>9</InstanceID>
+        <RevertTTL>0</RevertTTL>
+        <description>LLMNR</description>
+      </udpbroadcastrelay>
+      <udpbroadcastrelay uuid="ef489018-cc4b-47ee-9599-fc69a3351b00">
+        <enabled>1</enabled>
+        <interfaces>opt1,opt2,opt3,opt4,opt5,opt6,opt7,opt8,opt9,opt10,opt11,opt12,opt13,opt14,opt15,opt16,opt17</interfaces>
+        <multicastaddress />
+        <sourceaddress />
+        <listenport>138</listenport>
+        <InstanceID>10</InstanceID>
+        <RevertTTL>0</RevertTTL>
+        <description>win</description>
+      </udpbroadcastrelay>
+      <udpbroadcastrelay uuid="206cc644-1fb1-4a1b-8af4-340b01e8d7d2">
+        <enabled>1</enabled>
+        <interfaces>opt1,opt2,opt3,opt4,opt5,opt6,opt7,opt8,opt9,opt10,opt11,opt12,opt13,opt14,opt15,opt16,opt17</interfaces>
+        <multicastaddress />
+        <sourceaddress />
+        <listenport>137</listenport>
+        <InstanceID>11</InstanceID>
+        <RevertTTL>0</RevertTTL>
+        <description>win</description>
+      </udpbroadcastrelay>
+      <udpbroadcastrelay uuid="b7ba9d15-e314-489f-aa74-3b5d3adc0d89">
+        <enabled>1</enabled>
+        <interfaces>opt1,opt2,opt3,opt4,opt5,opt6,opt7,opt8,opt9,opt10,opt11,opt12,opt13,opt14,opt15,opt16,opt17</interfaces>
+        <multicastaddress />
+        <sourceaddress />
+        <listenport>14001</listenport>
+        <InstanceID>12</InstanceID>
+        <RevertTTL>0</RevertTTL>
+        <description>Rocket Leage</description>
+      </udpbroadcastrelay>
+      <udpbroadcastrelay uuid="cd1fe5b4-46d8-4285-ad85-8730c7d868e7">
+        <enabled>0</enabled>
+        <interfaces>opt1,opt2,opt3,opt4,opt5,opt6,opt7,opt8,opt9,opt10,opt11,opt12,opt13,opt14,opt15,opt16,opt17</interfaces>
+        <multicastaddress />
+        <sourceaddress />
+        <listenport>4500</listenport>
+        <InstanceID>13</InstanceID>
+        <RevertTTL>0</RevertTTL>
+        <description>AOE</description>
+      </udpbroadcastrelay>
+      <udpbroadcastrelay uuid="9350d4c7-9a5f-4545-b757-56aa81463524">
+        <enabled>0</enabled>
+        <interfaces>opt1,opt2,opt3,opt4,opt5,opt6,opt7,opt8,opt9,opt10,opt11,opt12,opt13,opt14,opt15,opt16,opt17</interfaces>
+        <multicastaddress />
+        <sourceaddress />
+        <listenport>3544</listenport>
+        <InstanceID>14</InstanceID>
+        <RevertTTL>0</RevertTTL>
+        <description>AOE</description>
+      </udpbroadcastrelay>
+      <udpbroadcastrelay uuid="69144d3b-3e7b-4109-8941-8c0a25b8deeb">
+        <enabled>0</enabled>
+        <interfaces>opt1,opt2,opt3,opt4,opt5,opt6,opt7,opt8,opt9,opt10,opt11,opt12,opt13,opt14,opt15,opt16,opt17</interfaces>
+        <multicastaddress />
+        <sourceaddress />
+        <listenport>88</listenport>
+        <InstanceID>15</InstanceID>
+        <RevertTTL>0</RevertTTL>
+        <description>AOE</description>
+      </udpbroadcastrelay>
+      <udpbroadcastrelay uuid="ad47839b-db4f-486c-9f4f-51e6af391159">
+        <enabled>0</enabled>
+        <interfaces>opt1,opt2,opt3,opt4,opt5,opt6,opt7,opt8,opt9,opt10,opt11,opt12,opt13,opt14,opt15,opt16,opt17</interfaces>
+        <multicastaddress />
+        <sourceaddress />
+        <listenport>500</listenport>
+        <InstanceID>16</InstanceID>
+        <RevertTTL>0</RevertTTL>
+        <description>AOE</description>
+      </udpbroadcastrelay>
+      <udpbroadcastrelay uuid="e1914162-ddbe-4210-974e-a767544e4054">
+        <enabled>0</enabled>
+        <interfaces>opt1,opt2,opt3,opt4,opt5,opt6,opt7,opt8,opt9,opt10,opt11,opt12,opt13,opt14,opt15,opt16,opt17</interfaces>
+        <multicastaddress />
+        <sourceaddress />
+        <listenport>27000</listenport>
+        <InstanceID>17</InstanceID>
+        <RevertTTL>0</RevertTTL>
+        <description>AOE</description>
+      </udpbroadcastrelay>
+      <udpbroadcastrelay uuid="c8b01880-39b6-4423-a04c-1da08a473b74">
+        <enabled>0</enabled>
+        <interfaces>opt1,opt2,opt3,opt4,opt5,opt6,opt7,opt8,opt9,opt10,opt11,opt12,opt13,opt14,opt15,opt16,opt17</interfaces>
+        <multicastaddress />
+        <sourceaddress />
+        <listenport>27001</listenport>
+        <InstanceID>18</InstanceID>
+        <RevertTTL>0</RevertTTL>
+        <description>AOE</description>
+      </udpbroadcastrelay>
+      <udpbroadcastrelay uuid="310b8c33-be0e-4004-a0b7-01c0abaee085">
+        <enabled>0</enabled>
+        <interfaces>opt1,opt2,opt3,opt4,opt5,opt6,opt7,opt8,opt9,opt10,opt11,opt12,opt13,opt14,opt15,opt16,opt17</interfaces>
+        <multicastaddress />
+        <sourceaddress />
+        <listenport>27002</listenport>
+        <InstanceID>19</InstanceID>
+        <RevertTTL>0</RevertTTL>
+        <description>AOE</description>
+      </udpbroadcastrelay>
+      <udpbroadcastrelay uuid="5e043f7e-add0-4544-b787-7bf6fe5b3bfe">
+        <enabled>0</enabled>
+        <interfaces>opt1,opt2,opt3,opt4,opt5,opt6,opt7,opt8,opt9,opt10,opt11,opt12,opt13,opt14,opt15,opt16,opt17</interfaces>
+        <multicastaddress />
+        <sourceaddress />
+        <listenport>27003</listenport>
+        <InstanceID>20</InstanceID>
+        <RevertTTL>0</RevertTTL>
+        <description>AOE</description>
+      </udpbroadcastrelay>
+      <udpbroadcastrelay uuid="56503784-ff51-4fca-9403-d401130c937f">
+        <enabled>0</enabled>
+        <interfaces>opt1,opt2,opt3,opt4,opt5,opt6,opt7,opt8,opt9,opt10,opt11,opt12,opt13,opt14,opt15,opt16,opt17</interfaces>
+        <multicastaddress />
+        <sourceaddress />
+        <listenport>27004</listenport>
+        <InstanceID>21</InstanceID>
+        <RevertTTL>0</RevertTTL>
+        <description>AOE</description>
+      </udpbroadcastrelay>
+      <udpbroadcastrelay uuid="124d1e05-8e54-42ed-b8a1-61264f26060d">
+        <enabled>0</enabled>
+        <interfaces>opt1,opt2,opt3,opt4,opt5,opt6,opt7,opt8,opt9,opt10,opt11,opt12,opt13,opt14,opt15,opt16,opt17</interfaces>
+        <multicastaddress />
+        <sourceaddress />
+        <listenport>27021</listenport>
+        <InstanceID>22</InstanceID>
+        <RevertTTL>0</RevertTTL>
+        <description>AOE</description>
+      </udpbroadcastrelay>
+      <udpbroadcastrelay uuid="20731ed9-0682-4e36-812f-038ca9b4ed86">
+        <enabled>0</enabled>
+        <interfaces>opt1,opt2,opt3,opt4,opt5,opt6,opt7,opt8,opt9,opt10,opt11,opt12,opt13,opt14,opt15,opt16,opt17</interfaces>
+        <multicastaddress />
+        <sourceaddress />
+        <listenport>27006</listenport>
+        <InstanceID>23</InstanceID>
+        <RevertTTL>0</RevertTTL>
+        <description>AOE</description>
+      </udpbroadcastrelay>
+      <udpbroadcastrelay uuid="5eff55ff-bd2a-4e96-9292-12b32f570764">
+        <enabled>0</enabled>
+        <interfaces>opt1,opt2,opt3,opt4,opt5,opt6,opt7,opt8,opt9,opt10,opt11,opt12,opt13,opt14,opt15,opt16,opt17</interfaces>
+        <multicastaddress />
+        <sourceaddress />
+        <listenport>27007</listenport>
+        <InstanceID>24</InstanceID>
+        <RevertTTL>0</RevertTTL>
+        <description>AOE</description>
+      </udpbroadcastrelay>
+      <udpbroadcastrelay uuid="c1e0de12-bb24-4f09-b371-728c62939a2d">
+        <enabled>0</enabled>
+        <interfaces>opt1,opt2,opt3,opt4,opt5,opt6,opt7,opt8,opt9,opt10,opt11,opt12,opt13,opt14,opt15,opt16,opt17</interfaces>
+        <multicastaddress />
+        <sourceaddress />
+        <listenport>27008</listenport>
+        <InstanceID>25</InstanceID>
+        <RevertTTL>0</RevertTTL>
+        <description>AOE</description>
+      </udpbroadcastrelay>
+      <udpbroadcastrelay uuid="75e93f3f-8683-4c77-b0f0-0c257fa9f0db">
+        <enabled>0</enabled>
+        <interfaces>opt1,opt2,opt3,opt4,opt5,opt6,opt7,opt8,opt9,opt10,opt11,opt12,opt13,opt14,opt15,opt16,opt17</interfaces>
+        <multicastaddress />
+        <sourceaddress />
+        <listenport>27009</listenport>
+        <InstanceID>26</InstanceID>
+        <RevertTTL>0</RevertTTL>
+        <description>AOE</description>
+      </udpbroadcastrelay>
+      <udpbroadcastrelay uuid="4ef9b72f-b917-44a7-8ee7-ddfdc2478adc">
+        <enabled>0</enabled>
+        <interfaces>opt1,opt2,opt3,opt4,opt5,opt6,opt7,opt8,opt9,opt10,opt11,opt12,opt13,opt14,opt15,opt16,opt17</interfaces>
+        <multicastaddress />
+        <sourceaddress />
+        <listenport>27010</listenport>
+        <InstanceID>27</InstanceID>
+        <RevertTTL>0</RevertTTL>
+        <description>AOE</description>
+      </udpbroadcastrelay>
+      <udpbroadcastrelay uuid="86afad4e-95f8-4440-a63c-d34d2cd00995">
+        <enabled>0</enabled>
+        <interfaces>opt1,opt2,opt3,opt4,opt5,opt6,opt7,opt8,opt9,opt10,opt11,opt12,opt13,opt14,opt15,opt16,opt17</interfaces>
+        <multicastaddress />
+        <sourceaddress />
+        <listenport>27011</listenport>
+        <InstanceID>28</InstanceID>
+        <RevertTTL>0</RevertTTL>
+        <description>AOE</description>
+      </udpbroadcastrelay>
+      <udpbroadcastrelay uuid="819f542e-a877-4ed3-bc2a-8847fac1a0cd">
+        <enabled>0</enabled>
+        <interfaces>opt1,opt2,opt3,opt4,opt5,opt6,opt7,opt8,opt9,opt10,opt11,opt12,opt13,opt14,opt15,opt16,opt17</interfaces>
+        <multicastaddress />
+        <sourceaddress />
+        <listenport>27012</listenport>
+        <InstanceID>29</InstanceID>
+        <RevertTTL>0</RevertTTL>
+        <description>AOE</description>
+      </udpbroadcastrelay>
+      <udpbroadcastrelay uuid="54f87315-8b14-42d9-8e19-6f1a90f2495d">
+        <enabled>0</enabled>
+        <interfaces>opt1,opt2,opt3,opt4,opt5,opt6,opt7,opt8,opt9,opt10,opt11,opt12,opt13,opt14,opt15,opt16,opt17</interfaces>
+        <multicastaddress />
+        <sourceaddress />
+        <listenport>27013</listenport>
+        <InstanceID>30</InstanceID>
+        <RevertTTL>0</RevertTTL>
+        <description>AOE</description>
+      </udpbroadcastrelay>
+      <udpbroadcastrelay uuid="44f3eed2-5446-4c15-a145-133fa988c637">
+        <enabled>0</enabled>
+        <interfaces>opt1,opt2,opt3,opt4,opt5,opt6,opt7,opt8,opt9,opt10,opt11,opt12,opt13,opt14,opt15,opt16,opt17</interfaces>
+        <multicastaddress />
+        <sourceaddress />
+        <listenport>27014</listenport>
+        <InstanceID>31</InstanceID>
+        <RevertTTL>0</RevertTTL>
+        <description>AOE</description>
+      </udpbroadcastrelay>
+      <udpbroadcastrelay uuid="77a9d481-59a7-4f9a-8486-52b2ea658b58">
+        <enabled>0</enabled>
+        <interfaces>opt1,opt2,opt3,opt4,opt5,opt6,opt7,opt8,opt9,opt10,opt11,opt12,opt13,opt14,opt15,opt16,opt17</interfaces>
+        <multicastaddress />
+        <sourceaddress />
+        <listenport>27022</listenport>
+        <InstanceID>32</InstanceID>
+        <RevertTTL>0</RevertTTL>
+        <description>AOE</description>
+      </udpbroadcastrelay>
+      <udpbroadcastrelay uuid="937c2871-7244-4b72-916e-b56c1d3d90f2">
+        <enabled>0</enabled>
+        <interfaces>opt1,opt2,opt3,opt4,opt5,opt6,opt7,opt8,opt9,opt10,opt11,opt12,opt13,opt14,opt15,opt16,opt17</interfaces>
+        <multicastaddress />
+        <sourceaddress />
+        <listenport>27023</listenport>
+        <InstanceID>33</InstanceID>
+        <RevertTTL>0</RevertTTL>
+        <description>AOE</description>
+      </udpbroadcastrelay>
+      <udpbroadcastrelay uuid="175ba0f7-ac94-45ec-9b10-7519d26c8423">
+        <enabled>0</enabled>
+        <interfaces>opt1,opt2,opt3,opt4,opt5,opt6,opt7,opt8,opt9,opt10,opt11,opt12,opt13,opt14,opt15,opt16,opt17</interfaces>
+        <multicastaddress />
+        <sourceaddress />
+        <listenport>27024</listenport>
+        <InstanceID>34</InstanceID>
+        <RevertTTL>0</RevertTTL>
+        <description>AOE</description>
+      </udpbroadcastrelay>
+      <udpbroadcastrelay uuid="9dc700bf-7a58-4868-a74e-98814c216795">
+        <enabled>0</enabled>
+        <interfaces>opt1,opt2,opt3,opt4,opt5,opt6,opt7,opt8,opt9,opt10,opt11,opt12,opt13,opt14,opt15,opt16,opt17</interfaces>
+        <multicastaddress />
+        <sourceaddress />
+        <listenport>27025</listenport>
+        <InstanceID>35</InstanceID>
+        <RevertTTL>0</RevertTTL>
+        <description>AOE</description>
+      </udpbroadcastrelay>
+      <udpbroadcastrelay uuid="d106adb8-b60d-4af3-8319-996da2e9dbf9">
+        <enabled>0</enabled>
+        <interfaces>opt1,opt2,opt3,opt4,opt5,opt6,opt7,opt8,opt9,opt10,opt11,opt12,opt13,opt14,opt15,opt16,opt17</interfaces>
+        <multicastaddress />
+        <sourceaddress />
+        <listenport>27026</listenport>
+        <InstanceID>36</InstanceID>
+        <RevertTTL>0</RevertTTL>
+        <description>AOE</description>
+      </udpbroadcastrelay>
+      <udpbroadcastrelay uuid="161cb513-0f71-4640-935f-d303e48fae47">
+        <enabled>0</enabled>
+        <interfaces>opt1,opt2,opt3,opt4,opt5,opt6,opt7,opt8,opt9,opt10,opt11,opt12,opt13,opt14,opt15,opt16,opt17</interfaces>
+        <multicastaddress />
+        <sourceaddress />
+        <listenport>27027</listenport>
+        <InstanceID>37</InstanceID>
+        <RevertTTL>0</RevertTTL>
+        <description>AOE</description>
+      </udpbroadcastrelay>
+      <udpbroadcastrelay uuid="f16e9e09-f019-4c4b-9151-53d4676f69b1">
+        <enabled>0</enabled>
+        <interfaces>opt1,opt2,opt3,opt4,opt5,opt6,opt7,opt8,opt9,opt10,opt11,opt12,opt13,opt14,opt15,opt16,opt17</interfaces>
+        <multicastaddress />
+        <sourceaddress />
+        <listenport>27028</listenport>
+        <InstanceID>38</InstanceID>
+        <RevertTTL>0</RevertTTL>
+        <description>AOE</description>
+      </udpbroadcastrelay>
+      <udpbroadcastrelay uuid="3b6d22f2-4335-4476-87fa-ad87a0dddd36">
+        <enabled>0</enabled>
+        <interfaces>opt1,opt2,opt3,opt4,opt5,opt6,opt7,opt8,opt9,opt10,opt11,opt12,opt13,opt14,opt15,opt16,opt17</interfaces>
+        <multicastaddress />
+        <sourceaddress />
+        <listenport>27029</listenport>
+        <InstanceID>39</InstanceID>
+        <RevertTTL>0</RevertTTL>
+        <description>AOE</description>
+      </udpbroadcastrelay>
+      <udpbroadcastrelay uuid="ae8cbb43-ab04-4da7-b684-334975a2e734">
+        <enabled>0</enabled>
+        <interfaces>opt1,opt2,opt3,opt4,opt5,opt6,opt7,opt8,opt9,opt10,opt11,opt12,opt13,opt14,opt15,opt16,opt17</interfaces>
+        <multicastaddress />
+        <sourceaddress />
+        <listenport>27030</listenport>
+        <InstanceID>40</InstanceID>
+        <RevertTTL>0</RevertTTL>
+        <description>AOE</description>
+      </udpbroadcastrelay>
+      <udpbroadcastrelay uuid="1fae807f-dd7d-4a33-81c4-a2c69682f483">
+        <enabled>0</enabled>
+        <interfaces>opt1,opt2,opt3,opt4,opt5,opt6,opt7,opt8,opt9,opt10,opt11,opt12,opt13,opt14,opt15,opt16,opt17</interfaces>
+        <multicastaddress />
+        <sourceaddress />
+        <listenport>27031</listenport>
+        <InstanceID>41</InstanceID>
+        <RevertTTL>0</RevertTTL>
+        <description>AOE</description>
+      </udpbroadcastrelay>
+      <udpbroadcastrelay uuid="d4d49ead-c506-43aa-9fb3-7769fda1ddbd">
+        <enabled>1</enabled>
+        <interfaces>opt1,opt2,opt3,opt4,opt5,opt6,opt7,opt8,opt9,opt10,opt11,opt12,opt13,opt14,opt15,opt16,opt17</interfaces>
+        <multicastaddress />
+        <sourceaddress />
+        <listenport>27036</listenport>
+        <InstanceID>42</InstanceID>
+        <RevertTTL>0</RevertTTL>
+        <description>AOE</description>
+      </udpbroadcastrelay>
+      <udpbroadcastrelay uuid="89cd119a-3144-46ec-af5c-eef816495fc0">
+        <enabled>1</enabled>
+        <interfaces>opt1,opt2,opt3,opt4,opt5,opt6,opt7,opt8,opt9,opt10,opt11,opt12,opt13,opt14,opt15,opt16,opt17</interfaces>
+        <multicastaddress />
+        <sourceaddress />
+        <listenport>8888</listenport>
+        <InstanceID>43</InstanceID>
+        <RevertTTL>0</RevertTTL>
+        <description>AOE</description>
+      </udpbroadcastrelay>
+      <udpbroadcastrelay uuid="fcccfb2b-779d-4477-bd9c-1cf49e52e539">
+        <enabled>1</enabled>
+        <interfaces>opt1,opt2,opt3,opt4,opt5,opt6,opt7,opt8,opt9,opt10,opt11,opt12,opt13,opt14,opt15,opt16,opt17</interfaces>
+        <multicastaddress />
+        <sourceaddress />
+        <listenport>9999</listenport>
+        <InstanceID>44</InstanceID>
+        <RevertTTL>0</RevertTTL>
+        <description>AOE</description>
+      </udpbroadcastrelay>
+      <udpbroadcastrelay uuid="1698a10f-d4fd-4f20-8803-f229e1816888">
+        <enabled>1</enabled>
+        <interfaces>opt1,opt2,opt3,opt4,opt5,opt6,opt7,opt8,opt9,opt10,opt11,opt12,opt13,opt14,opt15,opt16,opt17</interfaces>
+        <multicastaddress>239.255.255.250</multicastaddress>
+        <sourceaddress />
+        <listenport>3702</listenport>
+        <InstanceID>45</InstanceID>
+        <RevertTTL>0</RevertTTL>
+        <description>WS Discovery</description>
+      </udpbroadcastrelay>
+      <udpbroadcastrelay uuid="3766ac4c-b611-40e1-9552-34b07b8aa59b">
+        <enabled>1</enabled>
+        <interfaces>opt1,opt2,opt3,opt4,opt5,opt6,opt7,opt8,opt9,opt10,opt11,opt12,opt13,opt14,opt15,opt16,opt17</interfaces>
+        <multicastaddress />
+        <sourceaddress />
+        <listenport>28975</listenport>
+        <InstanceID>46</InstanceID>
+        <RevertTTL>0</RevertTTL>
+        <description>Call of Duty 2 4</description>
+      </udpbroadcastrelay>
+      <udpbroadcastrelay uuid="cd6e6c6a-efca-4ea2-9d72-7ce197ab710a">
+        <enabled>1</enabled>
+        <interfaces>opt1,opt2,opt3,opt4,opt5,opt6,opt7,opt8,opt9,opt10,opt11,opt12,opt13,opt14,opt15,opt16,opt17</interfaces>
+        <multicastaddress />
+        <sourceaddress />
+        <listenport>28990</listenport>
+        <InstanceID>47</InstanceID>
+        <RevertTTL>0</RevertTTL>
+        <description>Call of Duty 2 4</description>
+      </udpbroadcastrelay>
+      <udpbroadcastrelay uuid="af63bc34-9365-4ab5-9ff0-f696fc44b49c">
+        <enabled>1</enabled>
+        <interfaces>opt1,opt2,opt3,opt4,opt5,opt6,opt7,opt8,opt9,opt10,opt11,opt12,opt13,opt14,opt15,opt16,opt17</interfaces>
+        <multicastaddress />
+        <sourceaddress />
+        <listenport>29005</listenport>
+        <InstanceID>48</InstanceID>
+        <RevertTTL>0</RevertTTL>
+        <description>Call of Duty 2 4</description>
+      </udpbroadcastrelay>
+      <udpbroadcastrelay uuid="67bf8e40-deeb-4a7c-b650-717a36da3918">
+        <enabled>1</enabled>
+        <interfaces>opt1,opt2,opt3,opt4,opt5,opt6,opt7,opt8,opt9,opt10,opt11,opt12,opt13,opt14,opt15,opt16,opt17</interfaces>
+        <multicastaddress />
+        <sourceaddress />
+        <listenport>28960</listenport>
+        <InstanceID>49</InstanceID>
+        <RevertTTL>0</RevertTTL>
+        <description>Call of Duty 2 4</description>
+      </udpbroadcastrelay>
+    </udpbroadcastrelays>
+  </OPNsense>
+</opnsense>

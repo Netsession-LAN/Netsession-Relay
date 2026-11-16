@@ -1,0 +1,92 @@
+<!doctype html>
+<html lang="de">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<meta name="color-scheme" content="dark">
+<title>{{.Title}} · Netsession Relay</title>
+<link rel="icon" href="{{static "ns/logo/favicon.svg"}}" type="image/svg+xml">
+<link rel="apple-touch-icon" href="{{static "ns/logo/app-icon-dark-180.png"}}">
+<link rel="stylesheet" href="{{static "ns/tokens.css"}}">
+<link rel="stylesheet" href="{{static "app.css"}}">
+<script src="{{static "app.js"}}" defer></script>
+</head>
+<body{{if .CSRF}} data-csrf="{{.CSRF}}"{{end}}{{if .Live}} data-live-url="/api/v1/events"{{end}}>
+{{if .User.Name}}
+<a class="skip" href="#inhalt">Zum Inhalt springen</a>
+<header class="top">
+  <div class="top-in">
+    <a class="mark" href="/" aria-label="Netsession Relay, zur Übersicht"><img src="{{static "ns/logo/netsession_bildmarke_negativ.svg"}}" alt="" width="36" height="26"></a>
+    <nav class="nav" aria-label="Hauptnavigation">
+      <a href="/"{{if eq .Nav "overview"}} aria-current="page"{{end}}>Übersicht</a>
+      <a href="/spiele"{{if eq .Nav "games"}} aria-current="page"{{end}}>Spiele</a>
+      {{if hasRole .User "admin"}}
+      <a href="/netz"{{if eq .Nav "network"}} aria-current="page"{{end}}>Netz</a>
+      <a href="/verlauf"{{if eq .Nav "history"}} aria-current="page"{{end}}>Verlauf</a>
+      <a href="/system"{{if eq .Nav "system"}} aria-current="page"{{end}}>System</a>
+      {{end}}
+    </nav>
+    <div class="top-side">
+      {{if .Demo}}<span class="tag tag-warn demo-tag" title="Erfundene Daten, es wird nichts weitergeleitet">Demo</span>{{end}}
+      <a class="state" id="engine-state" href="/" data-tone="{{.Live.State.Tone}}" data-tone-live>
+        <span data-icon-live>{{icon .Live.State.Icon}}</span><span class="sr">Betriebsart: </span><span data-live="state.label">{{.Live.State.Label}}</span>
+      </a>
+      <span class="live" id="live" data-state="static" title="Stand vom Seitenaufruf. Mit JavaScript aktualisiert sich die Seite alle 2 Sekunden.">
+        <i class="dot" aria-hidden="true"></i><span id="live-text">Stand {{ts .Live.TS "time"}}</span>
+      </span>
+      {{if hasRole .User "operator"}}
+      <a class="btn-outline btn-stop" id="stop-link" href="/notaus"{{if not .Live.State.CanStop}} hidden{{end}}>{{icon "power"}}<span>Not-Aus</span></a>
+      {{end}}
+      <details class="account">
+        <summary aria-label="Konto {{.User.Name}}">{{icon "user"}}<span class="account-name">{{.User.Name}}</span></summary>
+        <div class="menu">
+          <p class="menu-who"><b>{{.User.Name}}</b><br><span class="label">{{roleName .User.Role}}</span></p>
+          <form method="post" action="/logout">
+            <input type="hidden" name="csrf" value="{{.CSRF}}">
+            <button class="btn-outline btn-block" type="submit">{{icon "logout"}}<span>Abmelden</span></button>
+          </form>
+        </div>
+      </details>
+    </div>
+  </div>
+  <div class="conn" id="conn" role="status" hidden>
+    <div class="conn-in">{{icon "alert"}}<span id="conn-text">Keine Verbindung zum Relay-Server. Die Zahlen sind veraltet. Neuer Versuch läuft.</span>
+    <a class="btn-outline btn-sm" href="">Neu laden</a></div>
+  </div>
+</header>
+{{end}}
+<main class="wrap{{if eq .Nav "login"}} wrap-login{{end}}" id="inhalt" tabindex="-1">
+  {{if .Flash}}<p class="notice notice-ok" role="status">{{icon "check"}}<span>{{.Flash}}</span></p>{{end}}
+  {{if .Error}}<p class="notice notice-danger" role="alert">{{icon "alert"}}<span>{{.Error}}</span></p>{{end}}
+  {{template "content" .}}
+</main>
+{{if .User.Name}}
+<footer class="foot wrap">
+  <span>Netsession Relay <span class="mono">{{.Version}}</span>{{if .Demo}} · Demo mit erfundenen Daten{{end}}</span>
+  <span>Angemeldet als <b>{{.User.Name}}</b> · {{roleName .User.Role}}</span>
+</footer>
+{{if hasRole .User "operator"}}
+<form method="post" action="/system/notaus" id="stop-form" hidden
+      data-confirm="Das Relay hört sofort auf, Spiele zwischen den Netzen zu verteilen. Laufende Partien bleiben bestehen, neue Spiele werden nur noch am eigenen Tisch gefunden. Wieder einschalten kann ein Admin unter System."
+      data-confirm-title="Relay jetzt pausieren?" data-confirm-ok="Relay pausieren">
+  <input type="hidden" name="csrf" value="{{.CSRF}}">
+</form>
+{{end}}
+<dialog class="dialog" id="confirm" aria-labelledby="confirm-title" aria-describedby="confirm-text">
+  <form method="dialog">
+    <h2 id="confirm-title">Sicher?</h2>
+    <p id="confirm-text"></p>
+    <div class="dialog-actions">
+      <button class="btn-outline" type="submit" value="cancel" id="confirm-cancel">Abbrechen</button>
+      <button class="btn" type="submit" value="ok" id="confirm-ok">Ja, weiter</button>
+    </div>
+  </form>
+</dialog>
+<div class="toast" id="toast" hidden>
+  <span id="toast-icon">{{icon "check"}}</span><span id="toast-text" role="status" aria-live="polite"></span>
+  <button class="icon-btn" type="button" id="toast-close" aria-label="Meldung schließen">{{icon "close"}}</button>
+</div>
+<p class="sr" id="announce" aria-live="polite"></p>
+{{end}}
+</body>
+</html>

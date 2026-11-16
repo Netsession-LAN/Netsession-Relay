@@ -1,0 +1,59 @@
+# Netsession Relay (docker compose). Variables: NSRELAY_IMAGE (image to run), NSRELAY_HTTP_ADDR (management IP:port).
+# Host networking is mandatory: the engine must see the VLAN interfaces. The Docker daemon is hardened by
+# deploy/host/setup.sh (no ip-forward, no iptables, no bridge) so the VM never routes between game VLANs.
+
+x-common: &common
+  image: ${NSRELAY_IMAGE:?set NSRELAY_IMAGE in .env}
+  network_mode: host
+  read_only: true
+  restart: unless-stopped
+  security_opt: ["no-new-privileges:true"]
+  logging:
+    driver: json-file
+    options: {max-size: "10m", max-file: "3"}
+
+services:
+  engine:
+    <<: *common
+    command: ["engine"]
+    user: "0:0"
+    cap_drop: [ALL]
+    cap_add: [NET_RAW, NET_ADMIN, CHOWN]
+    environment:
+      NSRELAY_SNAPSHOT: /var/lib/nsrelay/active.json
+      NSRELAY_SOCKET: /run/nsrelay/engine.sock
+      NSRELAY_SOCKET_GID: "10001"
+    volumes:
+      - state:/var/lib/nsrelay
+      - run:/run/nsrelay
+    healthcheck:
+      test: ["CMD", "/usr/local/bin/nsrelay", "admin", "status"]
+      interval: 30s
+      timeout: 5s
+      retries: 3
+
+  web:
+    <<: *common
+    command: ["web"]
+    user: "10001:10001"
+    cap_drop: [ALL]
+    environment:
+      NSRELAY_HTTP_ADDR: ${NSRELAY_HTTP_ADDR:-192.0.2.10:8080}
+      NSRELAY_DB: /var/lib/nsrelay-web/nsrelay.db
+      NSRELAY_SOCKET: /run/nsrelay/engine.sock
+      NSRELAY_BACKUP_DIR: /backups
+    volumes:
+      - data:/var/lib/nsrelay-web
+      - run:/run/nsrelay
+      - /srv/nsrelay/backups:/backups
+    depends_on: [engine]
+    healthcheck:
+      test: ["CMD", "/usr/local/bin/nsrelay", "health"]
+      interval: 30s
+      timeout: 5s
+      retries: 3
+
+volumes:
+  state:
+  data:
+  run:

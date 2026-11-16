@@ -1,0 +1,1629 @@
+# LAN discovery ports of PC games (UDP broadcast / multicast)
+# Research state: 2026-11-16. Prose and reasoning: 02-game-ports.md
+#
+# Field semantics
+#   discovery[].type   broadcast | multicast (then `group`) | none (no LAN discovery, nothing to relay)
+#   discovery[].direction  (optional) query = clients search, hosts answer
+#                          announce = host advertises periodically
+#                          both    = both directions use the port (relay must be bidirectional anyway)
+#   game_ports         ports used AFTER discovery (unicast, must be routed/allowed between VLANs; NOT relayed)
+#   source_ip          original = game needs the original sender IP (reply goes unicast to the packet source,
+#                                 or the packet source is used as the host address) -> relay must NOT rewrite source
+#                      relay    = rewriting the source to the relay IP is harmless (host address is inside the payload
+#                                 and/or replies are broadcast as well)
+#                      unknown  = not verified
+#   confidence         high   = source code, protocol documentation or LAN-event tested port list
+#                      medium = several consistent secondary sources, or engine default
+#                      low    = single/unverified source or inference; verify with Wireshark before relying on it
+#
+# Abbreviated sources used repeatedly:
+#   SDH      = https://github.com/OpenSourceLAN/service-discovery-helper (GAMES.md + `ports`, tested at PAX Aus 2016 / DreamHack DE)
+#   GB       = https://github.com/netwarlan/gamebridge (gamebridge_setup.txt, NETWAR LAN party ebtables whitelist, no game names)
+#   VPNPARTY = https://github.com/tvladyslav/vpnparty (verified games table)
+
+# ---------------------------------------------------------------------------
+# FLATOUT FAMILY (top priority)
+# ---------------------------------------------------------------------------
+
+- id: flatout1
+  name: "FlatOut (2004)"
+  aliases: ["FlatOut 1", "FO1", "FlatOut Steam (AppID 6220)", "FlatOut GOG", "FlatOut ZOOM Platform"]
+  discovery:
+    - {proto: udp, ports: [23757], type: broadcast, direction: both}
+  game_ports: {udp: [23756]}
+  source_ip: relay
+  notes: >-
+    Verified from source code of gaycoderprincess' FlatOutOnlinePlay plugin (v1.1 exe): port 23756 = gameplay
+    ("port_game"), 23757 = "lobby broadcast port". Client sends the lobby query via broadcast to :23757. The host's
+    answer (106-byte server-info struct) is in vanilla ALSO sent as broadcast (the plugin patches 0x4955BD to
+    "reply back with server info to the sender's address instead of broadcast"). The server-info struct carries the
+    host IP at offset 0x18; the plugin overwrites it with the packet source because the game otherwise uses the
+    embedded (private) IP. => Client connects to the IP inside the payload, not to the packet source. Source rewriting
+    by the relay is therefore harmless, BUT the relay must forward 23757 in both directions (it does: same port) and
+    the host's real IP must be routable/allowed on 23756 between VLANs. Multi-NIC PCs (VirtualBox, Hyper-V, VPN
+    adapters) can embed the wrong IP -> disable extra adapters. No GameSpy online in FO1 originally; 23755 is only the
+    plugin's own HTTP master server.
+  confidence: high
+  sources:
+    - https://github.com/gaycoderprincess/FlatOutOnlinePlay
+    - https://raw.githubusercontent.com/gaycoderprincess/FlatOutOnlinePlay/HEAD/main.cpp
+    - https://raw.githubusercontent.com/gaycoderprincess/FlatOutOnlinePlay/HEAD/FlatOutOnlinePlay_gcp.toml
+    - https://steamcommunity.com/app/6220/discussions/0/1741104717717633846/
+
+- id: flatout2
+  name: "FlatOut 2 (2006)"
+  aliases: ["FO2", "FlatOut 2 retail/CD v1.0-1.2", "FlatOut 2 Steam (AppID 2990)", "FlatOut 2 GOG", "FlatOut 2 ZOOM Platform", "FlatOut 2 Super Digital Deluxe"]
+  discovery:
+    - {proto: udp, ports: [23757], type: broadcast, direction: both}
+  game_ports: {udp: [23756]}
+  source_ip: relay
+  notes: >-
+    23757 = LAN discovery to 255.255.255.255 (SDH: "Flatout 2 - Works", also in GB whitelist). 23756 = game port
+    (portforward.com, FO2 Chloe Online docs). Some forum guides list 23756-23758 TCP+UDP; 23758 is not confirmed as
+    LAN-relevant. Same Bugbear netcode lineage as FO1; the official v1.1 patch notes document "-private_addr=ip:
+    Forces the game to report this private address to other players" => host IP travels inside the payload like in
+    FO1, so source rewriting (-s 1.1.1.2) should be harmless; NOT yet verified by capture for FO2 (do a Wireshark check:
+    does the client connect to the host's real IP on 23756 after a relayed discovery?). LAN mode is identical in
+    retail 1.2, Steam, GOG and ZOOM builds as far as known (GOG staff: LAN works; Steam/ZOOM builds only changed the
+    online master from GameSpy to OpenSpy). Command line: -lan -host / -lan -join=IP[:port]. Known pitfall: several
+    active NICs (VirtualBox host-only etc.) => games don't show up. Steam/ZOOM v1.2 online: OpenSpy (no relay needed).
+  confidence: high
+  sources:
+    - https://github.com/OpenSourceLAN/service-discovery-helper/blob/master/GAMES.md
+    - https://github.com/netwarlan/gamebridge
+    - https://worthplaying.com/article/2006/9/1/news/35877-flatout-2-v11-euro-beta-patch-available-now/
+    - https://portforward.com/flatout-2/
+    - https://flatout-itf.ucoz.ru/forum/8-65-1
+    - https://steamcommunity.com/app/2990/discussions/0/630800444144778277
+    - https://www.gog.com/forum/flatout_series/does_lan_work_in_the_gog_version?staff=yes
+    - https://bugs.winehq.org/show_bug.cgi?id=16918
+
+- id: flatout2_chloe_online
+  name: "FlatOut 2 Chloe Online (custom MP plugin by gaycoderprincess)"
+  aliases: ["FlatOut2CustomMP", "FO2 Chloe Online", "FlatOut 2 multiplayer fix"]
+  discovery:
+    - {proto: udp, ports: [23756], type: none}
+  game_ports: {udp: [23756]}
+  source_ip: unknown
+  notes: >-
+    Replaces FO2's multiplayer with a client-server mode (127 players, AI). Requires FO2 v1.2 exe (2990080 bytes).
+    Docs only mention forwarding 23756 for hosting; no LAN broadcast documented (likely master-server list / direct
+    IP). Treat as "no relay needed" until a capture shows otherwise. Not to be confused with the vanilla FO2 LAN mode.
+  confidence: low
+  sources:
+    - https://gaycoderprincess.github.io/project/fo2-custommp
+    - https://modstalgia.com/flatout-2/mods/flatout-2-chloe-online
+
+- id: flatout_uc
+  name: "FlatOut: Ultimate Carnage (2008)"
+  aliases: ["FOUC", "FlatOut UC Collector's Edition (Steam AppID 12360)", "FOUC ZOOM Platform", "FOUC GFWL"]
+  discovery:
+    - {proto: udp, ports: [], type: none}
+  game_ports: {}
+  source_ip: unknown
+  notes: >-
+    Version zoo. (a) Retail/GFWL and Steam beta branch `gfwl`: multiplayer via Games for Windows LIVE incl. System
+    Link; xlivelessness users report LAN lobbies found but kicked on race start. GFWL System Link ports not verified
+    (3074 is a guess, do not rely on it). (b) Steam main branch since 2024-03: DRM/GFWL removed, MP gone, then
+    re-added as native Steamworks multiplayer on 2026-11-09 (lobbies, invites, voice) => Steam lobby, no relay.
+    (c) ZOOM Platform got LAN multiplayer on 2026-11-10; on Steam the LAN mode is the fallback without Steam client or
+    via ForceLAN=1 in zoom_flatout.ini (PCGamingWiki). Discovery ports of this new LAN mode are NOT published yet ->
+    capture with Wireshark at the event and add here. (d) FlatOut UC Chloe Collection mod (gaycoderprincess):
+    non-GFWL MP via server-IP input window = direct IP, no broadcast.
+  confidence: medium
+  sources:
+    - https://www.pcgamingwiki.com/wiki/FlatOut:_Ultimate_Carnage
+    - https://steamcommunity.com/games/12360/announcements/detail/698780869084578504
+    - https://www.zoom-platform.com/news/new-updates-2026-11-10
+    - https://gitlab.com/GlitchyScripts/xlivelessness/-/issues/30
+    - https://gaycoderprincess.github.io/project/chloe-collection
+
+- id: flatout3
+  name: "FlatOut 3: Chaos & Destruction (2011)"
+  aliases: ["FO3"]
+  discovery:
+    - {proto: udp, ports: [], type: none}
+  source_ip: unknown
+  notes: "Steam online (16 players). PCGamingWiki: LAN play 'unknown'. No LAN discovery port known; assume Steam lobby, no relay."
+  confidence: low
+  sources: ["https://www.pcgamingwiki.com/wiki/FlatOut_3:_Chaos_%26_Destruction"]
+
+- id: flatout4
+  name: "FlatOut 4: Total Insanity (2017)"
+  aliases: ["FO4"]
+  discovery:
+    - {proto: udp, ports: [], type: none}
+  source_ip: unknown
+  notes: "PCGamingWiki: LAN play = false; online via Steam matchmaking (8 players) + local hotseat. No relay possible/needed; needs internet."
+  confidence: medium
+  sources: ["https://www.pcgamingwiki.com/wiki/FlatOut_4:_Total_Insanity"]
+
+- id: wreckfest
+  name: "Wreckfest / Wreckfest 2"
+  aliases: ["Bugbear Wreckfest"]
+  discovery:
+    - {proto: udp, ports: [27015, 27016, 27017, 27018, 27019, 27020], type: broadcast, direction: query}
+  game_ports: {udp: [33540, 27015, 27016]}
+  source_ip: original
+  notes: >-
+    Uses the Steam server browser; LAN tab = Steam A2S query broadcast to 27015-27020 (see steam_lan_browser). Works
+    only for dedicated servers whose query port lies in that range. Player-hosted lobbies are Steam lobbies (no relay).
+  confidence: low
+  sources: ["https://physgun.com/games/wreckfest-2-server-hosting/"]
+
+# ---------------------------------------------------------------------------
+# STEAM / VALVE / SOURCE
+# ---------------------------------------------------------------------------
+
+- id: steam_lan_browser
+  name: "Steam server browser – LAN tab (generic, all Steamworks game servers)"
+  aliases: ["A2S LAN query", "SteamMatchmakingServers RequestLANServerList"]
+  discovery:
+    - {proto: udp, ports: [27015, 27016, 27017, 27018, 27019, 27020], type: broadcast, direction: query}
+    - {proto: udp, ports: [26900, 26901, 26902, 26903, 26904, 26905, 4242, 27215], type: broadcast, direction: query}
+  source_ip: original
+  notes: >-
+    Client broadcasts A2S_INFO to 255.255.255.255; servers answer unicast to the packet source => relay must keep the
+    original source IP (no -s). 27015-27020 tested (SDH). The second port group is listed by SDH as "Other ports Steam
+    searches" and also appears in the GB whitelist (27215, 4242, 26900-26905); not officially documented -> medium.
+  confidence: medium
+  sources:
+    - https://github.com/OpenSourceLAN/service-discovery-helper
+    - https://github.com/netwarlan/gamebridge
+
+- id: steam_client
+  name: "Steam client – Remote Play / In-Home Streaming / LAN content transfer discovery"
+  aliases: ["Steam In-Home Streaming", "Steam Remote Play", "Steam LAN game transfer"]
+  discovery:
+    - {proto: udp, ports: [27036], type: broadcast, direction: both}
+  game_ports: {udp: [27031, 27036], tcp: [27036, 27037]}
+  source_ip: original
+  notes: "Not a game, but useful on LAN parties (local game file transfer). Valve documents 27031-27036 UDP / 27036 TCP for Remote Play."
+  confidence: high
+  sources: ["https://help.steampowered.com/en/faqs/view/2EA8-4D75-DA21-31EB", "https://github.com/OpenSourceLAN/service-discovery-helper"]
+
+- id: source_engine
+  name: "Source engine games (generic)"
+  aliases: ["HL2DM", "CS:S", "CS:GO", "TF2", "DoD:S", "Garry's Mod", "Insurgency", "NMRiH", "Synergy", "Black Mesa", "Fistful of Frags", "Zombie Panic! Source"]
+  discovery:
+    - {proto: udp, ports: [27015, 27016, 27017, 27018, 27019, 27020], type: broadcast, direction: query}
+  game_ports: {udp: [27015, 27005]}
+  source_ip: original
+  notes: "SDH tested with TF2; 'sends broadcasts on 255.255.255.255, do not need to rewrite IP dest address'. Server must listen in 27015-27020. Client port 27005."
+  confidence: high
+  sources: ["https://github.com/OpenSourceLAN/service-discovery-helper/blob/master/GAMES.md"]
+
+- id: cs16
+  name: "Counter-Strike 1.6 / Half-Life 1 (GoldSrc, HLDS)"
+  aliases: ["CS 1.6", "Condition Zero", "Day of Defeat 1.3", "TFC", "Half-Life DM", "Sven Co-op"]
+  discovery:
+    - {proto: udp, ports: [27015, 27016, 27017, 27018, 27019, 27020], type: broadcast, direction: query}
+  game_ports: {udp: [27015, 27005]}
+  source_ip: original
+  notes: "Same Steam A2S LAN query as Source. HLDS default 27015."
+  confidence: medium
+  sources: ["https://github.com/OpenSourceLAN/service-discovery-helper"]
+
+- id: cs_source
+  name: "Counter-Strike: Source"
+  aliases: ["CS:S"]
+  discovery: [{proto: udp, ports: [27015, 27016, 27017, 27018, 27019, 27020], type: broadcast, direction: query}]
+  source_ip: original
+  notes: "See source_engine."
+  confidence: high
+  sources: ["https://github.com/OpenSourceLAN/service-discovery-helper/blob/master/GAMES.md"]
+
+- id: csgo
+  name: "Counter-Strike: Global Offensive (legacy)"
+  aliases: ["CS:GO", "csgo_legacy branch"]
+  discovery: [{proto: udp, ports: [27015, 27016, 27017, 27018, 27019, 27020], type: broadcast, direction: query}]
+  source_ip: original
+  notes: "See source_engine (SDH lists CS:GO explicitly)."
+  confidence: high
+  sources: ["https://github.com/OpenSourceLAN/service-discovery-helper/blob/master/GAMES.md"]
+
+- id: cs2
+  name: "Counter-Strike 2"
+  aliases: ["CS2"]
+  discovery: [{proto: udp, ports: [], type: none}]
+  game_ports: {udp: [27015]}
+  source_ip: unknown
+  notes: "No LAN server browser tab in CS2 (community server browser via Steam master / `connect IP`). Relay useless; publish server IPs instead."
+  confidence: medium
+  sources: []
+
+- id: tf2
+  name: "Team Fortress 2"
+  aliases: ["TF2"]
+  discovery: [{proto: udp, ports: [27015, 27016, 27017, 27018, 27019, 27020], type: broadcast, direction: query}]
+  source_ip: original
+  notes: "SDH test title."
+  confidence: high
+  sources: ["https://github.com/OpenSourceLAN/service-discovery-helper/blob/master/GAMES.md"]
+
+- id: hl2dm
+  name: "Half-Life 2: Deathmatch"
+  aliases: ["HL2DM"]
+  discovery: [{proto: udp, ports: [27015, 27016, 27017, 27018, 27019, 27020], type: broadcast, direction: query}]
+  source_ip: original
+  notes: "See source_engine."
+  confidence: high
+  sources: ["https://github.com/OpenSourceLAN/service-discovery-helper/blob/master/GAMES.md"]
+
+- id: gmod
+  name: "Garry's Mod"
+  aliases: ["GMod"]
+  discovery: [{proto: udp, ports: [27015, 27016, 27017, 27018, 27019, 27020], type: broadcast, direction: query}]
+  source_ip: original
+  notes: "Source engine LAN tab. Listen servers with sv_lan 1."
+  confidence: medium
+  sources: ["https://github.com/OpenSourceLAN/service-discovery-helper"]
+
+- id: l4d
+  name: "Left 4 Dead"
+  aliases: ["L4D"]
+  discovery: [{proto: udp, ports: [27015, 27016, 27017, 27018, 27019, 27020], type: broadcast, direction: query}]
+  source_ip: original
+  notes: "Source engine; LAN lobby via Source LAN query. Not separately verified for L4D's lobby UI."
+  confidence: medium
+  sources: []
+
+- id: l4d2
+  name: "Left 4 Dead 2"
+  aliases: ["L4D2"]
+  discovery: [{proto: udp, ports: [27015, 27016, 27017, 27018, 27019, 27020], type: broadcast, direction: query}]
+  source_ip: original
+  notes: "As L4D. Start with -console, `sv_lan 1`; clients use 'Lobby > LAN' or `connect IP`."
+  confidence: medium
+  sources: []
+
+- id: dods
+  name: "Day of Defeat: Source"
+  aliases: ["DoD:S"]
+  discovery: [{proto: udp, ports: [27015, 27016, 27017, 27018, 27019, 27020], type: broadcast, direction: query}]
+  source_ip: original
+  notes: "See source_engine."
+  confidence: high
+  sources: ["https://github.com/OpenSourceLAN/service-discovery-helper/blob/master/GAMES.md"]
+
+- id: insurgency
+  name: "Insurgency (2014) / Day of Infamy"
+  aliases: []
+  discovery: [{proto: udp, ports: [27015, 27016, 27017, 27018, 27019, 27020], type: broadcast, direction: query}]
+  source_ip: original
+  notes: "Source engine. Insurgency: Sandstorm (UE4) uses Steam/own browser, not covered."
+  confidence: medium
+  sources: []
+
+- id: killing_floor
+  name: "Killing Floor (2009)"
+  aliases: ["KF1"]
+  discovery: [{proto: udp, ports: [], type: broadcast}]
+  game_ports: {udp: [7707, 7708, 7717], tcp: [28852]}
+  source_ip: unknown
+  notes: "UE2.5 + Steamworks. LAN discovery port not verified (UE2 LAN beacon would be 10777-like; GB has 7776-7788). Capture before relying."
+  confidence: low
+  sources: []
+
+- id: killing_floor2
+  name: "Killing Floor 2"
+  aliases: ["KF2"]
+  discovery: [{proto: udp, ports: [27015, 27016, 27017, 27018, 27019, 27020], type: broadcast, direction: query}]
+  game_ports: {udp: [7777, 27015]}
+  source_ip: original
+  notes: "Steam server browser LAN tab (query port 27015). Low confidence."
+  confidence: low
+  sources: []
+
+# ---------------------------------------------------------------------------
+# UNREAL ENGINE
+# ---------------------------------------------------------------------------
+
+- id: ut99
+  name: "Unreal Tournament (1999) / UT GOTY / Unreal Gold"
+  aliases: ["UT99", "UT Classic", "OldUnreal UT 469"]
+  discovery:
+    - {proto: udp, ports: [8777, 8778, 8779, 8780, 8781, 8782, 8783, 8784, 8785, 8786], type: broadcast, direction: query}
+  game_ports: {udp: [7777, 7778, 7779]}
+  source_ip: original
+  notes: "UdpBeacon / LAN beacon; SDH: 'UT99 / Classic (tested at dreamhack) 8777-8786'. GB additionally whitelists 7776-7788."
+  confidence: medium
+  sources: ["https://github.com/OpenSourceLAN/service-discovery-helper"]
+
+- id: ut2004
+  name: "Unreal Tournament 2004 / UT2003"
+  aliases: ["UT2k4", "UT2004 ECE", "UT2003"]
+  discovery:
+    - {proto: udp, ports: [10777], type: broadcast, direction: query}
+  game_ports: {udp: [7777, 7778, 7787]}
+  source_ip: original
+  notes: "SDH tested v3369: broadcasts on 255.255.255.255:10777. Also in GB. UT2003 uses the same UE2 LAN beacon (not separately tested)."
+  confidence: high
+  sources: ["https://github.com/OpenSourceLAN/service-discovery-helper/blob/master/GAMES.md", "https://github.com/netwarlan/gamebridge"]
+
+- id: ut3
+  name: "Unreal Tournament 3"
+  aliases: ["UT3 Black Edition"]
+  discovery:
+    - {proto: udp, ports: [14001], type: broadcast, direction: both}
+  game_ports: {udp: [7777]}
+  source_ip: original
+  notes: "UE3 default LanAnnouncePort=14001 (also in GB whitelist). UT3 online used GameSpy; LAN via 14001 beacon."
+  confidence: medium
+  sources: ["https://github.com/netwarlan/gamebridge"]
+
+- id: unreal_engine_4_5_lan
+  name: "Unreal Engine 4/5 games with OnlineSubsystemNull LAN sessions (generic)"
+  aliases: ["UE4 LAN", "UE5 LAN", "FLanBeacon", "Unreal LAN beacon"]
+  discovery:
+    - {proto: udp, ports: [14001], type: broadcast, direction: both}
+  game_ports: {udp: [7777]}
+  source_ip: original
+  notes: >-
+    Engine default LAN_ANNOUNCE_PORT 14001 (FLANSession::LanAnnouncePort), queries/responses to 255.255.255.255:14001
+    (UE-62267 log). Host address taken from packet source. Many games override it or use Steam/EOS sessions instead
+    (then no LAN broadcast; Steam LAN = see steam_lan_browser). Virtual NICs steal the broadcast.
+  confidence: high
+  sources:
+    - https://dev.epicgames.com/documentation/unreal-engine/API/Plugins/OnlineBase/FLANSession
+    - https://issues.unrealengine.com/issue/UE-62267
+    - https://forums.unrealengine.com/t/join-session-over-lan/311445
+
+- id: americas_army
+  name: "America's Army 2.x (UE2)"
+  aliases: ["AA2", "AAO"]
+  discovery: [{proto: udp, ports: [1716], type: broadcast}]
+  game_ports: {udp: [1716, 1717]}
+  source_ip: unknown
+  notes: "GB whitelists 1716-1727; 1716 is AA's default port. Mapping inferred, not documented."
+  confidence: low
+  sources: ["https://github.com/netwarlan/gamebridge"]
+
+- id: swat4
+  name: "SWAT 4"
+  aliases: ["SWAT 4: The Stetchkov Syndicate"]
+  discovery: [{proto: udp, ports: [10480, 10481, 10482, 10483, 10484, 10485, 10486, 10487, 10488, 10489, 10490, 10491], type: broadcast}]
+  game_ports: {udp: [10480, 10481]}
+  source_ip: unknown
+  notes: "GB whitelists 10480-10491; 10480 is SWAT 4's default port (GameSpy LAN query range). Mapping inferred."
+  confidence: low
+  sources: ["https://github.com/netwarlan/gamebridge"]
+
+# ---------------------------------------------------------------------------
+# QUAKE / id TECH & DERIVATIVES
+# ---------------------------------------------------------------------------
+
+- id: quake1
+  name: "Quake (NetQuake) and DarkPlaces-based ports"
+  aliases: ["Quake 1", "QuakeSpasm", "DarkPlaces", "Nexuiz"]
+  discovery: [{proto: udp, ports: [26000], type: broadcast, direction: query}]
+  game_ports: {udp: [26000]}
+  source_ip: original
+  notes: "NetQuake 'slist' broadcasts to 26000; DarkPlaces queries LAN on the game port. GB whitelists 25999-26010 and 26001-26011."
+  confidence: medium
+  sources: ["https://forums.xonotic.org/printthread.php?tid=9094", "https://github.com/netwarlan/gamebridge"]
+
+- id: xonotic
+  name: "Xonotic"
+  aliases: []
+  discovery: [{proto: udp, ports: [26000], type: broadcast, direction: query}]
+  game_ports: {udp: [26000]}
+  source_ip: original
+  notes: "DarkPlaces engine; LAN server list via broadcast query on game port 26000 (forum statements). Server must use 26000 to be found."
+  confidence: medium
+  sources: ["https://docs.linuxgsm.com/game-servers/xonotic", "https://forums.xonotic.org/printthread.php?tid=9094"]
+
+- id: quakeworld
+  name: "QuakeWorld (ezQuake, FTE, nQuake)"
+  aliases: ["QW"]
+  discovery: [{proto: udp, ports: [27500], type: broadcast, direction: query}]
+  game_ports: {udp: [27500]}
+  source_ip: original
+  notes: "Default server port 27500; most clients use master servers. LAN broadcast support depends on client. Unverified."
+  confidence: low
+  sources: []
+
+- id: quake2
+  name: "Quake II (incl. Yamagi, Q2PRO, Quake II Remastered legacy servers)"
+  aliases: ["Q2"]
+  discovery: [{proto: udp, ports: [27910], type: broadcast, direction: query}]
+  game_ports: {udp: [27910]}
+  source_ip: original
+  notes: "Original source: CL_PingServers broadcasts 'info' to PORT_SERVER 27910. Q2 Remastered (2023) uses its own online/Steam lobbies."
+  confidence: medium
+  sources: ["https://github.com/id-Software/Quake-2"]
+
+- id: quake3
+  name: "Quake III Arena / Team Arena / ioquake3"
+  aliases: ["Q3A", "ioq3", "OpenArena"]
+  discovery: [{proto: udp, ports: [27960, 27961, 27962, 27963], type: broadcast, direction: query}]
+  game_ports: {udp: [27960]}
+  source_ip: original
+  notes: "id Tech 3: LAN scan sends getinfo to broadcast on PORT_SERVER..+3 (NUM_SERVER_PORTS 4). SDH: Q3A 27960-27963 tested at DreamHack. GB: 27959-27970."
+  confidence: high
+  sources: ["https://github.com/OpenSourceLAN/service-discovery-helper", "https://github.com/id-Software/Quake-III-Arena"]
+
+- id: openarena
+  name: "OpenArena"
+  aliases: []
+  discovery: [{proto: udp, ports: [27960, 27961, 27962, 27963], type: broadcast, direction: query}]
+  source_ip: original
+  notes: "ioquake3-based, see quake3."
+  confidence: medium
+  sources: []
+
+- id: urban_terror
+  name: "Urban Terror"
+  aliases: ["UrT"]
+  discovery: [{proto: udp, ports: [27960, 27961, 27962, 27963], type: broadcast, direction: query}]
+  game_ports: {udp: [27960]}
+  source_ip: original
+  notes: "ioquake3-based, see quake3."
+  confidence: medium
+  sources: []
+
+- id: rtcw
+  name: "Return to Castle Wolfenstein (MP)"
+  aliases: ["RtCW", "iortcw"]
+  discovery: [{proto: udp, ports: [27960, 27961, 27962, 27963], type: broadcast, direction: query}]
+  game_ports: {udp: [27960]}
+  source_ip: original
+  notes: "id Tech 3 LAN scan as quake3."
+  confidence: medium
+  sources: []
+
+- id: wolfet
+  name: "Wolfenstein: Enemy Territory / ET: Legacy"
+  aliases: ["W:ET", "ET:L", "ETLegacy"]
+  discovery: [{proto: udp, ports: [27960, 27961, 27962, 27963], type: broadcast, direction: query}]
+  game_ports: {udp: [27960]}
+  source_ip: original
+  notes: "id Tech 3 LAN scan as quake3."
+  confidence: medium
+  sources: []
+
+- id: jk2
+  name: "Star Wars Jedi Knight II: Jedi Outcast (MP)"
+  aliases: ["JK2", "JK2MV"]
+  discovery: [{proto: udp, ports: [28070, 28071, 28072, 28073], type: broadcast, direction: query}]
+  game_ports: {udp: [28070]}
+  source_ip: original
+  notes: "Q3 engine, default port 28070. GB whitelists 28069-28080 (fits)."
+  confidence: medium
+  sources: ["https://github.com/netwarlan/gamebridge"]
+
+- id: jka
+  name: "Star Wars Jedi Knight: Jedi Academy (MP)"
+  aliases: ["JKA", "JA+", "OpenJK", "Jedi Academy"]
+  discovery: [{proto: udp, ports: [29070, 29071, 29072, 29073], type: broadcast, direction: query}]
+  game_ports: {udp: [29070]}
+  source_ip: original
+  notes: "Q3 engine, default port 29070. GB whitelists 29069-29080 (fits)."
+  confidence: medium
+  sources: ["https://github.com/netwarlan/gamebridge"]
+
+- id: sof2
+  name: "Soldier of Fortune II: Double Helix"
+  aliases: ["SoF2"]
+  discovery: [{proto: udp, ports: [20100, 20101, 20102, 20103], type: broadcast, direction: query}]
+  game_ports: {udp: [20100]}
+  source_ip: original
+  notes: "Q3 engine, default 20100. GB whitelists 20099-20110. Mapping inferred."
+  confidence: low
+  sources: ["https://github.com/netwarlan/gamebridge"]
+
+- id: mohaa
+  name: "Medal of Honor: Allied Assault (+ Spearhead, Breakthrough)"
+  aliases: ["MOHAA", "MoH:AA", "MOH:SH", "MOH:BT", "OpenMoHAA"]
+  discovery: [{proto: udp, ports: [12203, 12300], type: broadcast, direction: query}]
+  game_ports: {udp: [12203, 12300]}
+  source_ip: original
+  notes: "12203 game, 12300 GameSpy query (LAN browse). GB whitelists 12299-12310. Exact LAN mechanism not verified."
+  confidence: low
+  sources: ["https://github.com/netwarlan/gamebridge", "https://icculus.org/pipermail/mohaa/2002-September/001054.html"]
+
+- id: cod1
+  name: "Call of Duty (2003) / United Offensive"
+  aliases: ["CoD1", "CoD:UO"]
+  discovery: [{proto: udp, ports: [28960, 28961, 28962, 28963], type: broadcast, direction: query}]
+  game_ports: {udp: [28960]}
+  source_ip: original
+  notes: "Q3-derived; same LAN scan as CoD2/4."
+  confidence: medium
+  sources: ["https://github.com/OpenSourceLAN/service-discovery-helper"]
+
+- id: cod2
+  name: "Call of Duty 2"
+  aliases: ["CoD2"]
+  discovery: [{proto: udp, ports: [28960, 28961, 28962, 28963], type: broadcast, direction: query}]
+  game_ports: {udp: [28960]}
+  source_ip: original
+  notes: "SDH: 'Call of Duty 2/4 (tested at dreamhack) 28960-28963'. GB: 28959-28970."
+  confidence: high
+  sources: ["https://github.com/OpenSourceLAN/service-discovery-helper"]
+
+- id: cod4
+  name: "Call of Duty 4: Modern Warfare"
+  aliases: ["CoD4", "CoD4x"]
+  discovery: [{proto: udp, ports: [28960, 28961, 28962, 28963], type: broadcast, direction: query}]
+  game_ports: {udp: [28960]}
+  source_ip: original
+  notes: "SDH tested at DreamHack."
+  confidence: high
+  sources: ["https://github.com/OpenSourceLAN/service-discovery-helper"]
+
+- id: codwaw
+  name: "Call of Duty: World at War"
+  aliases: ["CoD5", "WaW", "Plutonium T4"]
+  discovery: [{proto: udp, ports: [28960, 28961, 28962, 28963], type: broadcast, direction: query}]
+  game_ports: {udp: [28960]}
+  source_ip: original
+  notes: "IW3-derived engine, LAN browser with default 28960. Plutonium T4 has its own browser (LAN behaviour not verified)."
+  confidence: low
+  sources: []
+
+- id: codmw2
+  name: "Call of Duty: Modern Warfare 2 (2009)"
+  aliases: ["MW2", "IW4x", "alterIWnet"]
+  discovery: [{proto: udp, ports: [28960, 28961, 28962, 28963], type: broadcast, direction: query}]
+  game_ports: {udp: [28960]}
+  source_ip: original
+  notes: "Vanilla PC: IWNet only, no LAN. Community clients (IW4x) re-add dedicated servers + LAN; port 28960 is their default. LAN broadcast behaviour of IW4x not verified."
+  confidence: low
+  sources: []
+
+- id: warsow
+  name: "Warsow"
+  aliases: []
+  discovery: [{proto: udp, ports: [44400], type: broadcast, direction: query}]
+  game_ports: {udp: [44400]}
+  source_ip: original
+  notes: "SDH tested v1.02 (+ DreamHack). GB whitelists 44400-44410."
+  confidence: high
+  sources: ["https://github.com/OpenSourceLAN/service-discovery-helper/blob/master/GAMES.md"]
+
+- id: warfork
+  name: "Warfork"
+  aliases: []
+  discovery: [{proto: udp, ports: [44400], type: broadcast, direction: query}]
+  game_ports: {udp: [44400]}
+  source_ip: original
+  notes: "Fork of Warsow 2.1; same default port. Not separately tested. Also has Steam integration."
+  confidence: medium
+  sources: []
+
+- id: sauerbraten
+  name: "Cube 2: Sauerbraten (also Tesseract)"
+  aliases: ["Sauer", "Cube 2"]
+  discovery: [{proto: udp, ports: [28784], type: broadcast, direction: query}]
+  game_ports: {udp: [28785, 28786]}
+  source_ip: original
+  notes: "28784 = LAN info/ping port ('must be available for pinging servers over a LAN'), game 28785/+1."
+  confidence: medium
+  sources: ["https://eggs.pterodactyl.io/egg/games-cube-2-sauerbraten"]
+
+- id: teeworlds
+  name: "Teeworlds / DDraceNetwork (DDNet)"
+  aliases: ["DDNet", "DDRace", "Teeworlds 0.6/0.7"]
+  discovery: [{proto: udp, ports: [8303, 8304, 8305, 8306, 8307, 8308, 8309, 8310], type: broadcast, direction: query}]
+  game_ports: {udp: [8303]}
+  source_ip: original
+  notes: "Client only looks for LAN servers on 8303-8310 (since 0.5.0). DDNet still defaults to 8303; current DDNet LAN code not re-verified."
+  confidence: medium
+  sources: ["https://teeworlds.com/forum/viewtopic.php?id=3459", "https://wiki.ddnet.tw/wiki/LAN_Server"]
+
+- id: zandronum
+  name: "Zandronum (Doom)"
+  aliases: ["Skulltag successor", "Doomseeker LAN"]
+  discovery: [{proto: udp, ports: [15101], type: broadcast, direction: announce}]
+  game_ports: {udp: [10666]}
+  source_ip: original
+  notes: "Servers send 'launcher' broadcast packets to subnet broadcast :15101 when 'Broadcast to LAN' is set (tracker #847). Doomseeker listens there."
+  confidence: medium
+  sources: ["https://zandronum.com/tracker/view.php?id=847", "https://www.doomworld.com/forum/post/1658494"]
+
+- id: zdaemon
+  name: "ZDaemon (Doom)"
+  aliases: []
+  discovery: [{proto: udp, ports: [15300], type: broadcast}]
+  game_ports: {udp: [10666]}
+  source_ip: unknown
+  notes: "SDH ports file has a ZDaemon block with 10666/6666/38927 commented out and 15300 active. Unclear which one is the LAN port."
+  confidence: low
+  sources: ["https://github.com/OpenSourceLAN/service-discovery-helper"]
+
+- id: eduke32
+  name: "Duke Nukem 3D (EDuke32 / Megaton / 20th Anniversary)"
+  aliases: ["Duke3D", "EDuke32", "Rednukem"]
+  discovery: [{proto: udp, ports: [], type: none}]
+  game_ports: {udp: [23513]}
+  source_ip: unknown
+  notes: "EDuke32 multiplayer = command line /server, /connect IP (no browser). DOS original: IPX/serial -> DOSBox IPX (see dosbox_ipx). Megaton/20th: Steam lobbies."
+  confidence: medium
+  sources: []
+
+- id: descent_dxx
+  name: "Descent 1/2 (DXX-Rebirth / DXX-Retro)"
+  aliases: ["D1X", "D2X", "DXX-Rebirth"]
+  discovery: [{proto: udp, ports: [42424], type: broadcast, direction: query}]
+  game_ports: {udp: [42424]}
+  source_ip: original
+  notes: "UDP/IP LAN scan in DXX-Rebirth uses default port 42424 (also tracker). Original DOS: IPX -> DOSBox."
+  confidence: low
+  sources: []
+
+# ---------------------------------------------------------------------------
+# BLIZZARD
+# ---------------------------------------------------------------------------
+
+- id: warcraft3
+  name: "Warcraft III: Reign of Chaos / The Frozen Throne (classic, <=1.26 .. 1.31)"
+  aliases: ["WC3", "TFT", "ROC", "DotA Allstars LAN"]
+  discovery: [{proto: udp, ports: [6112], type: broadcast, direction: both}]
+  game_ports: {tcp: [6112], udp: [6112]}
+  source_ip: original
+  notes: >-
+    SDH tested 1.23, vpnparty verified 1.26: client SEARCHGAME to 255.255.255.255:6112, host answers GAMEINFO unicast
+    to packet source:6112; host also broadcasts CREATEGAME/REFRESHGAME. Joining = TCP 6112 to the source address.
+    Host-port configurable in game options (must stay 6112 for discovery). Reforged: Battle.net only, see warcraft3_reforged.
+  confidence: high
+  sources:
+    - https://github.com/OpenSourceLAN/service-discovery-helper/blob/master/GAMES.md
+    - https://github.com/tvladyslav/vpnparty
+    - https://github.com/marjohn56/udpbroadcastrelay
+
+- id: warcraft3_reforged
+  name: "Warcraft III: Reforged (1.32+)"
+  aliases: ["WC3R"]
+  discovery: [{proto: udp, ports: [], type: none}]
+  source_ip: unknown
+  notes: "Classic LAN was removed with Reforged (1.32); custom games through Battle.net. vpnparty explicitly verifies only non-Reforged. Do not rely on a relay."
+  confidence: medium
+  sources: ["https://github.com/tvladyslav/vpnparty"]
+
+- id: starcraft1
+  name: "StarCraft / Brood War (1.16-1.18, Remastered)"
+  aliases: ["SC1", "SC:BW", "StarCraft Remastered"]
+  discovery: [{proto: udp, ports: [6111, 6112], type: broadcast, direction: both}]
+  game_ports: {udp: [6112]}
+  source_ip: original
+  notes: "'Local Area Network (UDP)'. SDH: 'Blizzard Classics (tested at dreamhack: wc3, sc1, d2) 6111 6112'. Remastered LAN still exists but needs Battle.net login."
+  confidence: medium
+  sources: ["https://github.com/OpenSourceLAN/service-discovery-helper"]
+
+- id: diablo2
+  name: "Diablo II / Lord of Destruction (classic)"
+  aliases: ["D2", "D2LoD", "PlugY"]
+  discovery: [{proto: udp, ports: [6111, 6112], type: broadcast}]
+  game_ports: {tcp: [4000]}
+  source_ip: unknown
+  notes: "TCP/IP game: host creates, others type the host IP (no browser) -> technically no discovery broadcast needed; SDH nevertheless lists d2 under 6111/6112 'tested at dreamhack'. Diablo II: Resurrected = Battle.net only, no LAN."
+  confidence: low
+  sources: ["https://github.com/OpenSourceLAN/service-discovery-helper"]
+
+- id: warcraft2_bne
+  name: "Warcraft II: Battle.net Edition"
+  aliases: ["WC2BNE"]
+  discovery: [{proto: udp, ports: [6112], type: broadcast}]
+  game_ports: {udp: [6112]}
+  source_ip: original
+  notes: "Uses the same Storm 'Local Area Network (UDP)' provider as StarCraft. Not separately verified."
+  confidence: low
+  sources: []
+
+# ---------------------------------------------------------------------------
+# MICROSOFT / DIRECTPLAY-ERA RTS & CO
+# ---------------------------------------------------------------------------
+
+- id: directplay4
+  name: "DirectPlay 1-7 (generic, used by many 1996-2003 games)"
+  aliases: ["DPlay", "DirectPlay TCP/IP service provider"]
+  discovery: [{proto: udp, ports: [47624], type: broadcast, direction: query}]
+  game_ports: {tcp: [47624], udp_range: "2300-2400", tcp_range: "2300-2400"}
+  source_ip: original
+  notes: >-
+    Session enumeration: client broadcasts EnumSessions to UDP 47624, host answers unicast from a port in 2300-2400 to
+    the requester. Microsoft KB 240429/895864 list 47624 + 2300-2400 for AoE II and others. Modern Windows needs the
+    DirectPlay optional feature. Relay with original source IP; rewriting breaks the unicast reply.
+  confidence: high
+  sources:
+    - https://infania.net/misc/kbarchive/kb/240/Q240429/index.html
+    - https://ftp.zx.net.nz/pub/archive/ftp.microsoft.com/MISC/KB/en-us/895/864.HTM
+
+- id: directplay8
+  name: "DirectPlay 8/9 (generic)"
+  aliases: ["DirectPlay8", "DPNSVR"]
+  discovery: [{proto: udp, ports: [6073], type: broadcast, direction: query}]
+  game_ports: {udp_range: "2302-2400"}
+  source_ip: original
+  notes: "DPNSVR enumeration port 6073; session default 2302. Used e.g. by Freelancer, Flight Simulator 2004/X, Halo PC (custom variant)."
+  confidence: medium
+  sources: []
+
+- id: aoe1
+  name: "Age of Empires (1997) / Rise of Rome"
+  aliases: ["AoE1", "AoE RoR"]
+  discovery: [{proto: udp, ports: [47624], type: broadcast, direction: query}]
+  game_ports: {udp_range: "2300-2400", tcp: [47624]}
+  source_ip: original
+  notes: "DirectPlay. AoE: Definitive Edition = online/Xbox services, see aoe_de."
+  confidence: medium
+  sources: ["https://infania.net/misc/kbarchive/kb/240/Q240429/index.html"]
+
+- id: aoe2
+  name: "Age of Empires II: The Age of Kings / The Conquerors (2000 CD) incl. UserPatch"
+  aliases: ["AoK", "AoC", "AoE2 TC", "UserPatch 1.5", "Voobly LAN"]
+  discovery: [{proto: udp, ports: [47624], type: broadcast, direction: query}]
+  game_ports: {udp_range: "2300-2400", tcp: [47624]}
+  source_ip: original
+  notes: "DirectPlay (Microsoft KB 240429: TCP 47624 + TCP/UDP 2300-2400)."
+  confidence: medium
+  sources: ["https://infania.net/misc/kbarchive/kb/240/Q240429/index.html"]
+
+- id: aoe2hd
+  name: "Age of Empires II HD (2013, Steam)"
+  aliases: ["AoE2HD"]
+  discovery: [{proto: udp, ports: [], type: none}]
+  source_ip: unknown
+  notes: "Multiplayer via Steam lobbies/Steam networking; no classic LAN browse. No relay."
+  confidence: low
+  sources: ["https://portforward.com/age-of-empires-ii-hd-edition/"]
+
+- id: aoe_de
+  name: "Age of Empires I/II/III Definitive Edition, AoE IV, AoM Retold"
+  aliases: ["AoE2 DE", "AoE3 DE", "AoE DE", "AoE4", "Age of Mythology Retold"]
+  discovery: [{proto: udp, ports: [], type: none}]
+  game_ports: {tcp: [8888, 3478, 5222], udp: [9999, 3478, 5222]}
+  source_ip: unknown
+  notes: >-
+    'LAN' lobbies still require online login (World's Edge/Xbox services); lobby discovery goes through the online
+    service, gameplay can stay local. Official support page lists TCP 8888, UDP 9999, 3478, 5222 to allow for LAN
+    games. Whether 9999 is a broadcast is NOT documented -> no relay entry; capture if LAN lobbies don't show.
+  confidence: low
+  sources: ["https://support.ageofempires.com/hc/en-us/articles/360047763271-I-m-having-trouble-connecting-to-a-LAN-match-with-my-friends"]
+
+- id: aoe3_2005
+  name: "Age of Empires III (2005, original/Complete Collection)"
+  aliases: ["AoE3"]
+  discovery: [{proto: udp, ports: [], type: broadcast}]
+  game_ports: {udp_range: "2300-2310"}
+  source_ip: unknown
+  notes: "LAN exists; port not verified (ESO-era docs mention 2300-2310). Capture needed."
+  confidence: low
+  sources: []
+
+- id: aom
+  name: "Age of Mythology (2002) / The Titans"
+  aliases: ["AoM", "AoT"]
+  discovery: [{proto: udp, ports: [], type: broadcast}]
+  game_ports: {udp_range: "2300-2400", tcp: [2300]}
+  source_ip: unknown
+  notes: "LAN supported; discovery port not verified. Extended Edition (2014): Steam lobbies, no relay."
+  confidence: low
+  sources: []
+
+- id: halo_ce
+  name: "Halo: Combat Evolved PC / Halo Custom Edition"
+  aliases: ["Halo PC", "Halo CE", "HaloCE", "Chimera"]
+  discovery: [{proto: udp, ports: [2302], type: broadcast, direction: query}]
+  game_ports: {udp: [2302, 2303]}
+  source_ip: original
+  notes: "Microsoft KB 829473: host listens 2302, client uses 2303. LAN tab finds servers on the default port; servers moved to other ports may not show up. Halo MCC: Steam/XBL, no relay."
+  confidence: medium
+  sources: ["https://ftp.zx.net.nz/pub/archive/ftp.microsoft.com/MISC/KB/en-us/829/473.HTM", "https://halomaps.haloman30.com/index.cfm%3Fpage=topic&topicID=48133"]
+
+- id: freelancer
+  name: "Freelancer"
+  aliases: ["FLHook servers"]
+  discovery: [{proto: udp, ports: [6073], type: broadcast, direction: query}]
+  game_ports: {udp: [2302]}
+  source_ip: original
+  notes: "DirectPlay 8 (default session port 2302). LAN enum on 6073 inferred from DPlay8."
+  confidence: low
+  sources: []
+
+- id: rise_of_nations
+  name: "Rise of Nations / Rise of Legends (original)"
+  aliases: ["RoN", "RoL"]
+  discovery: [{proto: udp, ports: [], type: broadcast}]
+  game_ports: {udp: [6112]}
+  source_ip: unknown
+  notes: "Microsoft KB 917714 lists ports for RoL multiplayer; LAN discovery port not separated. RoN: Extended Edition = Steam lobbies."
+  confidence: low
+  sources: ["https://ftp.zx.net.nz/pub/archive/ftp.microsoft.com/MISC/KB/en-us/917/714.HTM"]
+
+# ---------------------------------------------------------------------------
+# COMMAND & CONQUER
+# ---------------------------------------------------------------------------
+
+- id: cnc_generals
+  name: "Command & Conquer: Generals / Zero Hour"
+  aliases: ["Generals", "ZH", "C&C Generals Zero Hour", "GenTool", "GeneralsOnline"]
+  discovery: [{proto: udp, ports: [8086], type: broadcast, direction: both}]
+  game_ports: {udp: [8088]}
+  source_ip: original
+  notes: >-
+    SAGE engine LAN lobby on UDP 8086, game traffic 8088 (GB whitelists 8086-8088; Wine bug: forwarding 8086 helped).
+    Same engine family as C&C3 whose protocol embeds IPs AND tracks peers by source address -> keep original source.
+    Common LAN issue on Win10/11: game binds wrong adapter -> disable extra NICs / GenTool 'IP selection'.
+  confidence: medium
+  sources:
+    - https://github.com/netwarlan/gamebridge
+    - https://list.winehq.org/mailman3/hyperkitty/list/wine-bugs@winehq.org/thread/LXW577LI2V5IBLES4LEHTIALTIUAQAES
+
+- id: cnc3
+  name: "Command & Conquer 3: Tiberium Wars / Kane's Wrath"
+  aliases: ["C&C3", "CNC3", "KW"]
+  discovery: [{proto: udp, ports: [8086, 8087, 8088, 8089, 8090, 8091, 8092, 8093], type: broadcast, direction: both}]
+  game_ports: {udp: [8086]}
+  source_ip: original
+  notes: "Reverse-engineered: 476-byte XOR-'encrypted' messages to 255.255.255.255 on every port 8086-8093; prefers to bind 8086. HOST/ADVERTISE embed player IPs; peers are tracked by source IP:port."
+  confidence: high
+  sources: ["https://gist.github.com/adamnew123456/95599bf69e6c30f641b4729c218bdf59"]
+
+- id: cnc_ra3
+  name: "Command & Conquer: Red Alert 3 / Uprising"
+  aliases: ["RA3"]
+  discovery: [{proto: udp, ports: [8086, 8087, 8088, 8089, 8090, 8091, 8092, 8093], type: broadcast, direction: both}]
+  source_ip: original
+  notes: "Same SAGE LAN code family as C&C3 (assumed, not verified). Also playable via C&C Online/Revora."
+  confidence: low
+  sources: []
+
+- id: cnc_ra2
+  name: "Red Alert 2 / Yuri's Revenge / Tiberian Sun (via CnCNet client)"
+  aliases: ["RA2", "YR", "TS", "CnCNet", "Mental Omega"]
+  discovery: [{proto: udp, ports: [], type: broadcast}]
+  source_ip: unknown
+  notes: "Original games use IPX/wsock emulation; today's LAN play is via the CnCNet/XNA client 'LAN' lobby. Its LAN port was not verified (capture needed)."
+  confidence: low
+  sources: ["https://tore.cnc-comm.com/cncnet5/what-is-cncnet.php"]
+
+- id: cnc_remastered
+  name: "C&C Remastered Collection"
+  aliases: []
+  discovery: [{proto: udp, ports: [], type: none}]
+  source_ip: unknown
+  notes: "Has a LAN mode; mechanism/port not verified. Steam lobbies otherwise."
+  confidence: low
+  sources: []
+
+# ---------------------------------------------------------------------------
+# BATTLEFIELD / GAMESPY ERA
+# ---------------------------------------------------------------------------
+
+- id: gamespy_lan_generic
+  name: "GameSpy SDK LAN browse (generic, ~2000-2014 games)"
+  aliases: ["qr2 LAN", "ServerBrowserLANUpdate"]
+  discovery: [{proto: udp, ports: [], type: broadcast, direction: query}]
+  source_ip: original
+  notes: >-
+    GameSpy's server-browsing SDK sends the LAN query as broadcast to a game-specific query port range (typically the
+    default query port and the next ~10). Servers answer unicast to the source. Each game has its own range (e.g.
+    BF1942 22000, BF2 29900, MOHAA 12300). 27900 (GameSpy master/heartbeat) is in GB's whitelist too.
+  confidence: medium
+  sources: ["https://github.com/netwarlan/gamebridge"]
+
+- id: bf1942
+  name: "Battlefield 1942 (+ Road to Rome, Secret Weapons, Desert Combat etc.)"
+  aliases: ["BF1942", "BF42"]
+  discovery: [{proto: udp, ports: [22000], type: broadcast, direction: query}]
+  game_ports: {udp: [14567, 23000]}
+  source_ip: original
+  notes: "22000 = LAN query port, 23000 = internet GameSpy query, 14567 game (icculus bf1942 list, several posts). GB whitelists 21999-22010."
+  confidence: medium
+  sources: ["https://icculus.org/pipermail/bf1942/2003-April/003735.html", "https://icculus.org/pipermail/bf1942/2002-December/000164.html"]
+
+- id: bfvietnam
+  name: "Battlefield Vietnam"
+  aliases: ["BFV 2004"]
+  discovery: [{proto: udp, ports: [22000], type: broadcast, direction: query}]
+  game_ports: {udp: [15567, 23000]}
+  source_ip: original
+  notes: "Refractor 1 like BF1942; game port 15567. LAN query 22000 assumed (within GB range)."
+  confidence: low
+  sources: []
+
+- id: bf2
+  name: "Battlefield 2 (+ Project Reality, Special Forces)"
+  aliases: ["BF2", "PR:BF2"]
+  discovery: [{proto: udp, ports: [29900, 29901, 29902, 29903, 29904, 29905, 29906, 29907, 29908, 29909, 29910], type: broadcast, direction: query}]
+  game_ports: {udp: [16567, 29900]}
+  source_ip: original
+  notes: "Game 16567, GameSpy query 29900; GB whitelists 29899-29910. LAN query range inferred. Project Reality has own launcher/browser."
+  confidence: low
+  sources: ["https://github.com/netwarlan/gamebridge"]
+
+- id: bf2142
+  name: "Battlefield 2142"
+  aliases: ["BF2142"]
+  discovery: [{proto: udp, ports: [29900, 29901, 29902, 29903, 29904, 29905, 29906, 29907, 29908, 29909, 29910], type: broadcast, direction: query}]
+  game_ports: {udp: [17567, 29900]}
+  source_ip: original
+  notes: "Same engine as BF2 (inferred)."
+  confidence: low
+  sources: []
+
+- id: bfbc2
+  name: "Battlefield: Bad Company 2 / BF3 and newer"
+  aliases: ["BC2", "BF3", "BF4", "BF1", "BFV", "BF2042"]
+  discovery: [{proto: udp, ports: [], type: none}]
+  source_ip: unknown
+  notes: "No LAN on PC (EA online backend / Project Rome community servers with own browser). No relay."
+  confidence: medium
+  sources: []
+
+- id: fear
+  name: "F.E.A.R. (MP / Combat)"
+  aliases: ["FEAR Combat"]
+  discovery: [{proto: udp, ports: [27888], type: broadcast, direction: query}]
+  game_ports: {udp: [27888]}
+  source_ip: original
+  notes: "Default port 27888 (GameSpy LAN). GB whitelists 27887-27898. Mapping inferred."
+  confidence: low
+  sources: ["https://github.com/netwarlan/gamebridge"]
+
+- id: painkiller
+  name: "Painkiller (2004)"
+  aliases: []
+  discovery: [{proto: udp, ports: [3455], type: broadcast, direction: query}]
+  game_ports: {udp: [3455]}
+  source_ip: original
+  notes: "Default port 3455; GB whitelists 3454-3465. Mapping inferred."
+  confidence: low
+  sources: ["https://github.com/netwarlan/gamebridge"]
+
+- id: nwn
+  name: "Neverwinter Nights (Diamond / Enhanced Edition)"
+  aliases: ["NWN", "NWN:EE"]
+  discovery: [{proto: udp, ports: [5121], type: broadcast, direction: query}]
+  game_ports: {udp: [5121]}
+  source_ip: original
+  notes: "Default 5121; GB whitelists 5120-5131. Mapping inferred. NWN:EE also has a master server list."
+  confidence: low
+  sources: ["https://github.com/netwarlan/gamebridge"]
+
+- id: crysis
+  name: "Crysis (2007) / Crysis Wars / Crysis Warhead"
+  aliases: []
+  discovery: [{proto: udp, ports: [64087], type: broadcast}]
+  game_ports: {udp: [64087, 64100]}
+  source_ip: unknown
+  notes: "Default server port 64087 (LAN tab exists). Discovery port not verified. Crysis 2/3: online only."
+  confidence: low
+  sources: []
+
+- id: farcry1
+  name: "Far Cry (2004)"
+  aliases: []
+  discovery: [{proto: udp, ports: [49001], type: broadcast}]
+  game_ports: {udp: [49001, 49002]}
+  source_ip: unknown
+  notes: "Default server port 49001; LAN browser mechanism not verified. Far Cry 2+ have no relevant PC LAN."
+  confidence: low
+  sources: []
+
+- id: blur
+  name: "Blur (2010)"
+  aliases: []
+  discovery: [{proto: udp, ports: [50001], type: broadcast}]
+  source_ip: unknown
+  notes: "SDH: 'Blur - Works, 255.255.255.255, Port 50001' (commented out in ports file)."
+  confidence: medium
+  sources: ["https://github.com/OpenSourceLAN/service-discovery-helper/blob/master/GAMES.md"]
+
+# ---------------------------------------------------------------------------
+# RACING
+# ---------------------------------------------------------------------------
+
+- id: tmnf
+  name: "TrackMania Nations Forever / United Forever (and Nations ESWC, Sunrise, Original)"
+  aliases: ["TMNF", "TMUF", "TMN", "TMU", "TM Forever"]
+  discovery: [{proto: udp, ports: [2350, 2351, 2352, 2353, 2354, 2355, 2356, 2357, 2358, 2359, 2360], type: broadcast, direction: query}]
+  game_ports: {tcp: [2350], udp: [2350, 3450]}
+  source_ip: original
+  notes: "SDH tested Steam TMUF: broadcasts to 255.255.255.255:2350-2360. Server must listen within 2350-2360. P2P 3450."
+  confidence: high
+  sources: ["https://github.com/OpenSourceLAN/service-discovery-helper/blob/master/GAMES.md"]
+
+- id: maniaplanet
+  name: "TrackMania 2 (Canyon/Stadium/Valley/Lagoon) / ShootMania / ManiaPlanet"
+  aliases: ["TM2", "SM", "MP4"]
+  discovery: [{proto: udp, ports: [2350, 2351, 2352, 2353, 2354, 2355, 2356, 2357, 2358, 2359, 2360], type: broadcast, direction: query}]
+  game_ports: {tcp: [2350], udp: [2350, 3450]}
+  source_ip: original
+  notes: "SDH tested TM2 Stadium (Steam) 2013."
+  confidence: high
+  sources: ["https://github.com/OpenSourceLAN/service-discovery-helper/blob/master/GAMES.md"]
+
+- id: trackmania2020
+  name: "Trackmania (2020) / Trackmania Turbo"
+  aliases: ["TM2020", "TM Turbo"]
+  discovery: [{proto: udp, ports: [2350, 2351, 2352, 2353, 2354, 2355, 2356, 2357, 2358, 2359, 2360], type: broadcast, direction: query}]
+  source_ip: original
+  notes: "Nadeo engine successor; LAN mode exists (TM2020 needs Ubisoft/Nadeo login). Port range assumed identical, NOT verified."
+  confidence: low
+  sources: []
+
+- id: nfsu1
+  name: "Need for Speed: Underground (2003)"
+  aliases: ["NFSU", "NFSU1"]
+  discovery: [{proto: udp, ports: [9999], type: broadcast, direction: both}]
+  game_ports: {tcp: [9900], udp: [3658, 3659]}
+  source_ip: original
+  notes: "Assumed identical to NFSU2/MW (same EA Black Box LAN code; 3658 in GB range 3657-3668). Not separately verified."
+  confidence: low
+  sources: ["https://portforward.com/need-for-speed-underground/"]
+
+- id: nfsu2
+  name: "Need for Speed: Underground 2"
+  aliases: ["NFSU2"]
+  discovery: [{proto: udp, ports: [9999], type: broadcast, direction: both}]
+  game_ports: {tcp: [9900, 3282, 3284, 3285], udp: [3658, 3659, 9999]}
+  source_ip: original
+  notes: "Client searches via broadcast 255.255.255.255:9999, server also advertises on 9999. Game takes host IP from the packet SOURCE (nfsu2relay spoofs the original source for this reason)."
+  confidence: high
+  sources: ["https://abatis.org.uk/nfsu2relay.html", "https://github.com/xan1242/nfslan"]
+
+- id: nfsmw2005
+  name: "Need for Speed: Most Wanted (2005)"
+  aliases: ["NFSMW", "MW2005"]
+  discovery: [{proto: udp, ports: [9999], type: broadcast, direction: both}]
+  source_ip: original
+  notes: "Same as NFSU2: broadcast 9999, host IP from packet source; relay must preserve the source (nfsu3relay spoofs)."
+  confidence: high
+  sources: ["https://abatis.org.uk/nfsu3relay.html"]
+
+- id: nfs_carbon_ps_uc
+  name: "Need for Speed: Carbon / ProStreet / Undercover"
+  aliases: []
+  discovery: [{proto: udp, ports: [9999], type: broadcast}]
+  source_ip: original
+  notes: "LAN mode exists (Carbon, ProStreet). Port 9999 assumed by analogy, not verified."
+  confidence: low
+  sources: []
+
+- id: assetto_corsa
+  name: "Assetto Corsa"
+  aliases: ["AC", "Content Manager LAN"]
+  discovery: [{proto: udp, ports: [], type: broadcast}]
+  game_ports: {tcp: [9600, 8081], udp: [9600]}
+  source_ip: unknown
+  notes: "Server: TCP/UDP 9600 + HTTP 8081. Content Manager has a LAN tab; its discovery port is not verified. Dedicated servers can simply be added by IP."
+  confidence: low
+  sources: []
+
+- id: beamng
+  name: "BeamNG.drive (BeamMP)"
+  aliases: ["BeamMP"]
+  discovery: [{proto: udp, ports: [], type: none}]
+  game_ports: {tcp: [30814], udp: [30814]}
+  source_ip: unknown
+  notes: "No native MP; BeamMP uses online backend server list / direct connect. No relay."
+  confidence: medium
+  sources: []
+
+- id: rocket_league
+  name: "Rocket League"
+  aliases: ["RL"]
+  discovery: [{proto: udp, ports: [], type: none}]
+  source_ip: unknown
+  notes: "LAN option exists in private matches but requires Epic online services; no documented broadcast discovery. Treat as online-only."
+  confidence: low
+  sources: []
+
+# ---------------------------------------------------------------------------
+# SANDBOX / SURVIVAL / COOP
+# ---------------------------------------------------------------------------
+
+- id: minecraft_java
+  name: "Minecraft: Java Edition ('Open to LAN' and LAN servers)"
+  aliases: ["Minecraft Java", "MC Java"]
+  discovery: [{proto: udp, ports: [4445], type: multicast, group: "224.0.2.60", direction: announce}]
+  game_ports: {tcp: [25565]}
+  source_ip: original
+  notes: >-
+    Host announces '[MOTD]..[/MOTD][AD]port[/AD]' every ~1.5 s to 224.0.2.60:4445. The client takes the host IP from
+    the packet SOURCE and the port from the payload => relay must keep the original source (no -s). Port of
+    'Open to LAN' is random unless set. GB whitelist contains 25565 broadcast (old/third-party servers).
+  confidence: high
+  sources: ["https://github.com/OpenSourceLAN/service-discovery-helper", "https://github.com/marjohn56/udpbroadcastrelay"]
+
+- id: minecraft_bedrock
+  name: "Minecraft: Bedrock Edition (Windows/console/mobile, BDS)"
+  aliases: ["MCBE", "Bedrock Dedicated Server"]
+  discovery:
+    - {proto: udp, ports: [19132], type: broadcast, direction: query}
+    - {proto: udp, ports: [19133], type: multicast, group: "ff02::1", direction: query}
+    - {proto: udp, ports: [7551], type: broadcast, direction: both}
+  game_ports: {udp: [19132, 19133]}
+  source_ip: original
+  notes: >-
+    Legacy: RakNet unconnected ping broadcast to :19132 (IPv4) / :19133 (IPv6), servers pong unicast to the source
+    (udpbroadcastrelay README: 'Raknet (Minecraft) 19132'). Newer client-hosted worlds announce/discover via NetherNet
+    LAN discovery on UDP 7551 broadcast (df-mc/go-nethernet default). Relay both 19132 and 7551.
+  confidence: medium
+  sources: ["https://github.com/marjohn56/udpbroadcastrelay", "https://pkg.go.dev/github.com/df-mc/go-nethernet/discovery"]
+
+- id: terraria
+  name: "Terraria / tModLoader"
+  aliases: ["tML"]
+  discovery: [{proto: udp, ports: [], type: none}]
+  game_ports: {tcp: [7777]}
+  source_ip: unknown
+  notes: "PC: 'Join via IP' or Steam friends; no LAN browser. Dedicated server TCP 7777. Rumoured UDP 8888 broadcast is unverified."
+  confidence: medium
+  sources: ["https://terraria.wiki.gg/wiki/Dedicated_Server"]
+
+- id: stardew
+  name: "Stardew Valley"
+  aliases: []
+  discovery: [{proto: udp, ports: [], type: none}]
+  game_ports: {udp: [24642]}
+  source_ip: unknown
+  notes: "'Join LAN Game' asks for an IP (Lidgren, UDP 24642). No broadcast discovery documented. Steam/GOG invites otherwise."
+  confidence: medium
+  sources: ["https://stardew-valley-dedicated-server.github.io/server/developers/architecture/networking.html"]
+
+- id: valheim
+  name: "Valheim"
+  aliases: []
+  discovery: [{proto: udp, ports: [], type: none}]
+  game_ports: {udp: [2456, 2457]}
+  source_ip: unknown
+  notes: "Steam/PlayFab server list, join by IP. No LAN broadcast."
+  confidence: medium
+  sources: []
+
+- id: factorio
+  name: "Factorio"
+  aliases: []
+  discovery: [{proto: udp, ports: [34196], type: broadcast, direction: announce}]
+  game_ports: {udp: [34197]}
+  source_ip: original
+  notes: "Server with visibility 'lan' continually sends a directed (subnet) broadcast on port 34196; client then connects back to the source on 34197. Known to fail across VLANs. 34196 per one secondary source -> verify."
+  confidence: medium
+  sources: ["https://forums.factorio.com/viewtopic.php?p=389268", "https://cxong.github.io/2016/01/how-to-write-a-lan-server"]
+
+- id: satisfactory
+  name: "Satisfactory"
+  aliases: []
+  discovery: [{proto: udp, ports: [], type: none}]
+  game_ports: {udp: [7777], tcp: [7777, 8888]}
+  source_ip: unknown
+  notes: "Dedicated server added by IP in Server Manager; session hosting via Epic/Steam. No relay."
+  confidence: medium
+  sources: []
+
+- id: seven_days_to_die
+  name: "7 Days to Die"
+  aliases: ["7DtD"]
+  discovery: [{proto: udp, ports: [26900, 26901, 26902, 26903, 26904, 26905], type: broadcast, direction: query}]
+  game_ports: {tcp: [26900], udp: [26900, 26901, 26902, 26903]}
+  source_ip: original
+  notes: "Default 26900; Steam LAN query hits 26900-26905 (see steam_lan_browser). Inferred."
+  confidence: low
+  sources: ["https://github.com/OpenSourceLAN/service-discovery-helper"]
+
+- id: arma2
+  name: "ARMA 2 / Operation Arrowhead / DayZ Mod"
+  aliases: ["A2", "A2OA", "DayZ Mod"]
+  discovery: [{proto: udp, ports: [2302, 2314, 2326, 2338, 2350, 2362, 2374, 2386, 2398, 2410, 2422, 2434, 2446, 2458, 2470], type: broadcast, direction: query}]
+  game_ports: {udp: [2302, 2303, 2304, 2305]}
+  source_ip: original
+  notes: "SDH tested 1.62.103419: broadcasts on 255.255.255.255 on every 12th port 2302-2470. Note 2350 overlaps Trackmania."
+  confidence: high
+  sources: ["https://github.com/OpenSourceLAN/service-discovery-helper/blob/master/GAMES.md"]
+
+- id: arma3
+  name: "ARMA 3 / DayZ Standalone / Arma Reforger"
+  aliases: ["A3", "DayZ SA", "Reforger"]
+  discovery: [{proto: udp, ports: [2303, 27016], type: broadcast, direction: query}]
+  game_ports: {udp: [2302, 2303, 2304, 2305, 2306]}
+  source_ip: original
+  notes: "Uses Steam query (2302+1). LAN tab behaviour not verified; may use same 12-step scheme as ARMA 2. Reforger: BI backend only."
+  confidence: low
+  sources: []
+
+- id: among_us
+  name: "Among Us (Local)"
+  aliases: []
+  discovery: [{proto: udp, ports: [47777], type: broadcast, direction: announce}]
+  game_ports: {udp: [22023]}
+  source_ip: original
+  notes: "Local host announces via UDP broadcast 47777 (Hazel), game on 22023; client uses packet source. From community analysis, not official."
+  confidence: low
+  sources: []
+
+- id: unity_unet_mirror
+  name: "Unity games with UNet NetworkDiscovery / Mirror NetworkDiscovery (generic)"
+  aliases: ["UNet", "Mirror", "FishNet discovery"]
+  discovery: [{proto: udp, ports: [47777], type: broadcast, direction: both}]
+  game_ports: {udp: [7777]}
+  source_ip: original
+  notes: "Default broadcastPort 47777 (UNet docs; Mirror inherited it), game 7777. Games frequently change it."
+  confidence: medium
+  sources: ["https://docs.unity3d.com/2018.4/Documentation/Manual/UNetDiscovery.html", "https://mirror-networking.gitbook.io/docs/manual/components/network-discovery"]
+
+- id: lethal_company
+  name: "Lethal Company"
+  aliases: []
+  discovery: [{proto: udp, ports: [], type: none}]
+  game_ports: {udp: [7777]}
+  source_ip: unknown
+  notes: "Default: Steam lobbies. 'LAN' mode (Unity Netcode/UnityTransport) joins by IP; no broadcast discovery known."
+  confidence: low
+  sources: []
+
+- id: stick_fight
+  name: "Stick Fight: The Game"
+  aliases: []
+  discovery: [{proto: udp, ports: [], type: none}]
+  source_ip: unknown
+  notes: "Steam P2P lobbies only. No relay."
+  confidence: medium
+  sources: []
+
+- id: ultimate_chicken_horse
+  name: "Ultimate Chicken Horse"
+  aliases: ["UCH"]
+  discovery: [{proto: udp, ports: [], type: none}]
+  source_ip: unknown
+  notes: "Online via Steam/Epic lobbies, local = same PC. No relay."
+  confidence: medium
+  sources: []
+
+- id: northgard
+  name: "Northgard"
+  aliases: []
+  discovery: [{proto: udp, ports: [], type: broadcast}]
+  source_ip: unknown
+  notes: "Has a LAN option in multiplayer; discovery port not documented -> capture needed."
+  confidence: low
+  sources: []
+
+- id: torchlight2
+  name: "Torchlight II"
+  aliases: ["TL2"]
+  discovery: [{proto: udp, ports: [4549], type: broadcast}]
+  game_ports: {udp: [4549]}
+  source_ip: original
+  notes: "vpnparty verified v1.25.9.5 (unicast replies to source)."
+  confidence: high
+  sources: ["https://github.com/tvladyslav/vpnparty"]
+
+- id: titan_quest
+  name: "Titan Quest / Anniversary Edition"
+  aliases: ["TQ", "TQAE"]
+  discovery: [{proto: udp, ports: [42801], type: broadcast}]
+  game_ports: {udp: [42801]}
+  source_ip: original
+  notes: "vpnparty verified v2.10.21415."
+  confidence: high
+  sources: ["https://github.com/tvladyslav/vpnparty"]
+
+- id: chicken_invaders5
+  name: "Chicken Invaders 5"
+  aliases: []
+  discovery: [{proto: udp, ports: [23016], type: broadcast}]
+  source_ip: original
+  notes: "vpnparty: does NOT work when converted to unicast - the game seems to check that the packet was a broadcast. A broadcast-to-broadcast relay should work."
+  confidence: medium
+  sources: ["https://github.com/tvladyslav/vpnparty"]
+
+# ---------------------------------------------------------------------------
+# STRATEGY / BUILDING
+# ---------------------------------------------------------------------------
+
+- id: openttd
+  name: "OpenTTD"
+  aliases: []
+  discovery: [{proto: udp, ports: [3979], type: broadcast, direction: query}]
+  game_ports: {tcp: [3979], udp: [3979]}
+  source_ip: original
+  notes: "Broadcasts to the network broadcast address on 3979. SDH (v1.3.1): did NOT accept relayed broadcasts from other LANs (probably interface/subnet check). Newer versions: join by invite code (STUN/TURN) or IP – recommend that instead."
+  confidence: medium
+  sources: ["https://github.com/OpenSourceLAN/service-discovery-helper/blob/master/GAMES.md"]
+
+- id: stronghold
+  name: "Stronghold / Stronghold Crusader (+ HD, Extreme)"
+  aliases: ["SHC", "Stronghold HD", "Crusader Extreme"]
+  discovery: [{proto: udp, ports: [47624], type: broadcast, direction: query}]
+  game_ports: {udp_range: "2300-2400", tcp: [47624]}
+  source_ip: original
+  notes: "DirectPlay (needs DirectPlay feature on Win10/11). Stronghold 2/Legends: GameSpy-era; Definitive Editions: Steam lobbies."
+  confidence: medium
+  sources: []
+
+- id: settlers4
+  name: "The Settlers III / IV (original, History Edition)"
+  aliases: ["Siedler 3", "Siedler 4"]
+  discovery: [{proto: udp, ports: [47624], type: broadcast, direction: query}]
+  game_ports: {udp_range: "2300-2400"}
+  source_ip: original
+  notes: "Original LAN via DirectPlay (S3 also IPX). History Edition: Ubisoft Connect, LAN unclear. Low."
+  confidence: low
+  sources: []
+
+- id: anno_1602
+  name: "Anno 1602 / 1503 / 1701 / 1404 / 1800"
+  aliases: ["Anno"]
+  discovery: [{proto: udp, ports: [47624], type: broadcast, direction: query}]
+  source_ip: original
+  notes: "1602 (and probably 1503): DirectPlay/IPX. 1701/1404: own LAN, ports unverified. Anno 1800/117: Ubisoft online only (no relay)."
+  confidence: low
+  sources: []
+
+- id: total_annihilation
+  name: "Total Annihilation"
+  aliases: ["TA", "TA Escalation"]
+  discovery: [{proto: udp, ports: [47624], type: broadcast, direction: query}]
+  game_ports: {udp_range: "2300-2400"}
+  source_ip: original
+  notes: "DirectPlay TCP/IP (or IPX via IPXWrapper). TAF/GPGnet community lobby is an alternative."
+  confidence: medium
+  sources: []
+
+- id: supreme_commander
+  name: "Supreme Commander / Forged Alliance"
+  aliases: ["SupCom", "FA", "FAF"]
+  discovery: [{proto: udp, ports: [], type: broadcast}]
+  game_ports: {udp: [6112]}
+  source_ip: unknown
+  notes: "LAN tab exists plus Direct IP; peer-to-peer, game uses 6112 by default. LAN broadcast port not verified (15000 is unconfirmed). FAF = online client."
+  confidence: low
+  sources: ["https://gog.com/forum/general/direct_ip_udp_multiplayer_over_the_internet_a_solution/page1"]
+
+- id: coh1
+  name: "Company of Heroes (original / Legacy Edition)"
+  aliases: ["CoH", "CoH1"]
+  discovery: [{proto: udp, ports: [6112], type: broadcast}]
+  game_ports: {udp: [6112, 9100, 30260]}
+  source_ip: unknown
+  notes: "LAN supported; port lists give UDP 6112, 9100, 30260 (internet). LAN broadcast port not verified. CoH2/CoH3: online only (Steam)."
+  confidence: low
+  sources: ["https://portforward.com/company-of-heroes/"]
+
+- id: dawn_of_war
+  name: "Warhammer 40,000: Dawn of War (GOTY, Dark Crusade, Soulstorm)"
+  aliases: ["DoW", "DoW1"]
+  discovery: [{proto: udp, ports: [6112], type: broadcast}]
+  game_ports: {udp: [6112]}
+  source_ip: unknown
+  notes: "Relic 'Dawn of War Host' on 6112 UDP; LAN discovery not separately verified. DoW II/III: Steam online."
+  confidence: low
+  sources: ["https://www.speedguide.net/port.php?port=6112"]
+
+- id: warzone2100
+  name: "Warzone 2100"
+  aliases: ["WZ2100"]
+  discovery: [{proto: udp, ports: [], type: none}]
+  game_ports: {tcp: [2100]}
+  source_ip: unknown
+  notes: "Host on TCP 2100, join via lobby server or by typing the LAN IP. No LAN broadcast found."
+  confidence: medium
+  sources: ["https://developer.wz2100.net/ticket/3347", "https://forums.wz2100.net/viewtopic.php?p=114574"]
+
+- id: zero_ad
+  name: "0 A.D."
+  aliases: ["0AD", "Pyrogenesis"]
+  discovery: [{proto: udp, ports: [], type: none}]
+  game_ports: {udp: [20595]}
+  source_ip: unknown
+  notes: "Join by IP (UDP 20595) or via the online lobby (XMPP + STUN). No LAN broadcast."
+  confidence: medium
+  sources: []
+
+# ---------------------------------------------------------------------------
+# PARTY / INDIE / OPEN SOURCE
+# ---------------------------------------------------------------------------
+
+- id: worms_armageddon
+  name: "Worms Armageddon / Worms World Party (Remastered)"
+  aliases: ["W:A", "WWP", "WWPR"]
+  discovery: [{proto: udp, ports: [17010, 17012], type: broadcast, direction: announce}]
+  game_ports: {tcp: [17011]}
+  source_ip: original
+  notes: "Worms Knowledge Base: LAN-hosted games are announced by broadcast on UDP 17010 and 17012; joining is TCP 17011 to the host."
+  confidence: medium
+  sources: ["https://worms2d.info/Network", "https://worms2d.info/Hosting"]
+
+- id: worms_newer
+  name: "Worms Reloaded / Clan Wars / W.M.D / Rumble / Worms 3D/4M"
+  aliases: []
+  discovery: [{proto: udp, ports: [], type: none}]
+  source_ip: unknown
+  notes: "Steam lobbies (W.M.D has local multiplayer on one PC only). Worms 3D/Forts: own LAN, unverified."
+  confidence: low
+  sources: []
+
+- id: blobby_volley
+  name: "Blobby Volley (1, Windows 2000) / Blobby Volley 2"
+  aliases: ["Blobby"]
+  discovery:
+    - {proto: udp, ports: [47624], type: broadcast, direction: query}
+    - {proto: udp, ports: [1234], type: broadcast, direction: query}
+  game_ports: {udp: [1234]}
+  source_ip: original
+  notes: "SDH: 'Blobby Volley (tested at dreamhack) 47624' = DirectPlay => Blobby Volley 1. Blobby Volley 2 (open source, RakNet) default port 1234; LAN broadcast to 1234 is unverified."
+  confidence: medium
+  sources: ["https://github.com/OpenSourceLAN/service-discovery-helper"]
+
+- id: armagetron
+  name: "Armagetron Advanced"
+  aliases: ["Tron"]
+  discovery: [{proto: udp, ports: [4534], type: broadcast, direction: query}]
+  game_ports: {udp: [4534]}
+  source_ip: original
+  notes: "Default server port 4534; LAN scan range around it not verified."
+  confidence: low
+  sources: []
+
+- id: hedgewars
+  name: "Hedgewars"
+  aliases: []
+  discovery: [{proto: udp, ports: [], type: none}]
+  game_ports: {tcp: [46631]}
+  source_ip: unknown
+  notes: "Official server (TCP 46631) or local server joined by IP; no LAN broadcast known."
+  confidence: low
+  sources: []
+
+- id: liero_x
+  name: "OpenLieroX / Liero X"
+  aliases: ["OLX", "LieroX"]
+  discovery: [{proto: udp, ports: [23400], type: broadcast, direction: query}]
+  game_ports: {udp: [23400]}
+  source_ip: original
+  notes: "Default port 23400, has a LAN tab. Discovery port assumed = game port. Classic Liero (1998) is hot-seat only."
+  confidence: low
+  sources: []
+
+- id: soldat
+  name: "Soldat (1.x / Soldat 1.8 Steam)"
+  aliases: []
+  discovery: [{proto: udp, ports: [23073], type: broadcast}]
+  game_ports: {udp: [23073], tcp: [23083]}
+  source_ip: unknown
+  notes: "Default 23073 (+10 for file server/admin). LAN discovery not verified."
+  confidence: low
+  sources: []
+
+- id: toribash
+  name: "Toribash"
+  aliases: []
+  discovery: [{proto: udp, ports: [], type: none}]
+  source_ip: unknown
+  notes: "Online lobby servers; no LAN discovery known."
+  confidence: low
+  sources: []
+
+- id: serious_sam_classic
+  name: "Serious Sam Classic: The First/Second Encounter (incl. SE1 open-source ports)"
+  aliases: ["SS:TFE", "SS:TSE", "SamTFE", "SamTSE"]
+  discovery: [{proto: udp, ports: [25600], type: broadcast, direction: query}]
+  game_ports: {udp: [25600, 25601]}
+  source_ip: original
+  notes: "Default server port 25600 (net_iPort). LAN enumeration mechanism not documented. SS HD/3/4/Fusion: Steam lobbies."
+  confidence: low
+  sources: ["https://forums.anandtech.com/threads/serious-sam-1st-encounter-lan-settings-pls.1045805", "https://333networks.com/instructions/serioussam"]
+
+- id: gta2
+  name: "Grand Theft Auto 2"
+  aliases: ["GTA2"]
+  discovery: [{proto: udp, ports: [47624], type: broadcast, direction: query}]
+  game_ports: {udp_range: "2300-2400"}
+  source_ip: original
+  notes: "Multiplayer via DirectPlay (gta2 manager)."
+  confidence: low
+  sources: []
+
+- id: gta_sa_mta
+  name: "GTA San Andreas – Multi Theft Auto (MTA:SA) / SA-MP / open.mp"
+  aliases: ["MTA", "SA-MP", "open.mp"]
+  discovery: [{proto: udp, ports: [34219], type: broadcast, direction: query}]
+  game_ports: {udp: [22003, 22126], tcp: [22005]}
+  source_ip: original
+  notes: "GTA SA itself has no LAN MP. MTA: game 22003, ASE query 22126, LAN broadcast port 34219 (from memory of MTA server config, unverified). SA-MP/open.mp: no LAN broadcast (master list / direct IP 7777)."
+  confidence: low
+  sources: []
+
+# ---------------------------------------------------------------------------
+# GENERIC PROTOCOLS / EMULATION LAYERS
+# ---------------------------------------------------------------------------
+
+- id: ipxwrapper
+  name: "IPXWrapper (IPX/SPX over UDP for old Windows games)"
+  aliases: ["ipxwrapper", "IPX emulation"]
+  discovery: [{proto: udp, ports: [54792], type: broadcast, direction: both}]
+  source_ip: original
+  notes: "Default UDP port 54792; all IPX broadcasts become UDP broadcasts on this port. Used for TA, C&C95/RA (non-CnCNet), StarCraft (IPX), Diablo (IPX), Warcraft II etc. Newer versions can also use an Ethernet/pcap mode."
+  confidence: medium
+  sources: ["https://github.com/solemnwarning/ipxwrapper"]
+
+- id: dosbox_ipx
+  name: "DOSBox / DOSBox-X / DOSBox Staging IPX (IPXNET)"
+  aliases: ["IPXNET"]
+  discovery: [{proto: udp, ports: [], type: none}]
+  game_ports: {udp: [213]}
+  source_ip: unknown
+  notes: "IPX is tunnelled over UDP to an IPXNET server (default port 213, unicast). No broadcast relay needed – run one IPXNET server and route to it."
+  confidence: high
+  sources: ["https://www.dosbox.com/wiki/Connectivity"]
+
+- id: netbios_ns
+  name: "NetBIOS Name Service"
+  aliases: ["NBNS", "nmbd"]
+  discovery: [{proto: udp, ports: [137], type: broadcast, direction: both}]
+  source_ip: original
+  notes: "Name resolution for Windows network neighbourhood; replies unicast to sender. udpbroadcastrelay README: needs instances for 137, 138 (and 1900) with -f."
+  confidence: high
+  sources: ["https://github.com/marjohn56/udpbroadcastrelay"]
+
+- id: netbios_dgm
+  name: "NetBIOS Datagram Service / Browser"
+  aliases: ["Computer Browser"]
+  discovery: [{proto: udp, ports: [138], type: broadcast, direction: both}]
+  source_ip: original
+  notes: "Browse announcements. Mostly irrelevant for games; adds load."
+  confidence: high
+  sources: ["https://github.com/marjohn56/udpbroadcastrelay"]
+
+- id: mdns
+  name: "mDNS / Bonjour / DNS-SD"
+  aliases: ["Zeroconf", "Avahi"]
+  discovery:
+    - {proto: udp, ports: [5353], type: multicast, group: "224.0.0.251"}
+    - {proto: udp, ports: [5353], type: multicast, group: "ff02::fb"}
+  source_ip: relay
+  notes: "Link-local multicast (TTL 255). Some consumers (Chromecast) need -s 1.1.1.1. Rarely game-relevant (a few modern indie games and Steam Link use it)."
+  confidence: high
+  sources: ["https://github.com/marjohn56/udpbroadcastrelay"]
+
+- id: ssdp
+  name: "SSDP / UPnP discovery"
+  aliases: ["UPnP", "DLNA", "DIAL"]
+  discovery: [{proto: udp, ports: [1900], type: multicast, group: "239.255.255.250"}]
+  source_ip: original
+  notes: "M-SEARCH replies go unicast to the sender. Not needed for LAN games; Xbox app/UPnP NAT discovery uses it."
+  confidence: high
+  sources: ["https://github.com/marjohn56/udpbroadcastrelay"]
+
+- id: llmnr
+  name: "LLMNR (Link-Local Multicast Name Resolution)"
+  aliases: []
+  discovery:
+    - {proto: udp, ports: [5355], type: multicast, group: "224.0.0.252"}
+    - {proto: udp, ports: [5355], type: multicast, group: "ff02::1:3"}
+  source_ip: original
+  notes: "Windows name fallback. Not needed for games; relaying it is a security risk (LLMNR poisoning)."
+  confidence: high
+  sources: []
+
+- id: ws_discovery
+  name: "WS-Discovery (Windows network discovery, printers)"
+  aliases: ["WSD", "FDResPub"]
+  discovery: [{proto: udp, ports: [3702], type: multicast, group: "239.255.255.250"}]
+  source_ip: original
+  notes: "Not game-relevant."
+  confidence: high
+  sources: []
+
+- id: gfwl_system_link
+  name: "Games for Windows – LIVE System Link (generic)"
+  aliases: ["GFWL LAN", "xlive System Link"]
+  discovery: [{proto: udp, ports: [3074], type: broadcast}]
+  game_ports: {udp: [3074]}
+  source_ip: unknown
+  notes: "3074 is the Xbox/GFWL default port and appears in SDH (as 'Rainbow Six Siege (untested)') and GB. Whether GFWL System Link discovery broadcasts on 3074 is NOT verified."
+  confidence: low
+  sources: ["https://github.com/OpenSourceLAN/service-discovery-helper", "https://github.com/netwarlan/gamebridge"]
+
+- id: dropbox_lansync
+  name: "Dropbox LAN Sync (noise, not a game)"
+  aliases: []
+  discovery: [{proto: udp, ports: [17500], type: broadcast, direction: announce}]
+  source_ip: relay
+  notes: "Appears in the NETWAR gamebridge whitelist; do NOT relay, it only adds load."
+  confidence: high
+  sources: ["https://github.com/netwarlan/gamebridge"]

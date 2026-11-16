@@ -1,0 +1,56 @@
+{{define "content"}}
+{{$csrf := .CSRF}}{{$e := .Engine}}{{$l := .Live}}
+<span class="bar"></span>
+<h1>Relay-<em>System</em></h1>
+
+<section class="section section-first grid2">
+  <div>
+    <h2>Betriebsart</h2>
+    <p class="nowline"><span class="label">Läuft gerade</span> <span class="state" data-tone="{{$l.State.Tone}}" data-tone-live><span data-icon-live>{{icon $l.State.Icon}}</span><span data-live="state.label">{{$l.State.Label}}</span></span></p>
+    <form method="post" action="/system/mode" class="form" data-confirm="Die Betriebsart gilt sofort für alle Netze." data-confirm-title="Betriebsart wechseln?" data-confirm-ok="Wechseln">
+      <input type="hidden" name="csrf" value="{{$csrf}}">
+      <fieldset class="radios">
+        <legend class="sr">Betriebsart wählen</legend>
+        <label class="radio"><input type="radio" name="mode" value="active"{{if eq .Data.Mode "active"}} checked{{end}}><span><b>Aktiv</b>{{if eq .Data.Mode "active"}} <span class="tag">eingestellt</span>{{end}}<br><span class="small muted">Leitet weiter. Nur wenn keine OPNsense-Box mehr dieselben Ports relayt.</span></span></label>
+        <label class="radio"><input type="radio" name="mode" value="observe"{{if eq .Data.Mode "observe"}} checked{{end}}><span><b>Beobachten</b>{{if eq .Data.Mode "observe"}} <span class="tag">eingestellt</span>{{end}}<br><span class="small muted">Zählt mit, sendet nichts. Für den Parallelbetrieb mit den alten Boxen.</span></span></label>
+        <label class="radio"><input type="radio" name="mode" value="paused"{{if eq .Data.Mode "paused"}} checked{{end}}><span><b>Pausiert</b>{{if eq .Data.Mode "paused"}} <span class="tag">eingestellt</span>{{end}}<br><span class="small muted">Wie Not-Aus. Nichts wird weitergeleitet.</span></span></label>
+      </fieldset>
+      <button class="btn" type="submit">Betriebsart wechseln</button>
+    </form>
+  </div>
+  <div>
+    <h2>Engine</h2>
+    {{if .EngErr}}<p class="notice notice-danger">{{icon "alert"}}<span>Die Engine antwortet nicht. Prüfe den Container <span class="mono">nsrelay-engine-1</span>.</span></p>{{else}}
+    <dl class="facts">
+      <dt>Version</dt><dd class="mono">{{$e.Version}}</dd>
+      <dt>Läuft seit</dt><dd>{{ts $e.Started "datetime"}}</dd>
+      <dt>Stand</dt><dd><span class="mono">{{short $e.SnapshotHash}}</span> · <span data-live="vlan_count">{{$e.VLANs}}</span> Netze · <span data-live="rule_count">{{$e.Rules}}</span> Regeln</dd>
+      <dt>Empfangen</dt><dd class="mono" data-live="rx">{{num $e.RX}}</dd>
+      <dt>Gesendet</dt><dd class="mono" data-live="sent">{{num $e.Sent}}</dd>
+    </dl>
+    {{range $e.SelfTest}}<p class="notice notice-warn">{{icon "alert"}}<span>{{.}}</span></p>{{end}}
+    {{end}}
+    <h3>Nicht weitergeleitet, nach Grund</h3>
+    <div class="tablewrap"><table>
+      <thead><tr><th>Grund</th><th class="num">Pakete</th></tr></thead>
+      <tbody data-rows="reasons" data-cols="label,count:num mono" data-empty="Bisher wurde nichts verworfen.">
+        {{range $l.Reasons}}<tr><td>{{.Label}}</td><td class="num mono">{{num .Count}}</td></tr>
+        {{else}}<tr><td colspan="2" class="muted">Bisher wurde nichts verworfen.</td></tr>{{end}}
+      </tbody>
+    </table></div>
+  </div>
+</section>
+
+<section class="section grid2">
+  <div>
+    <h2>Sicherung</h2>
+    <p class="muted">Die ganze Datenbank als Datei: Spiele, Netze, Revisionen, Protokoll, Konten.</p>
+    <p><a class="btn-outline" href="/system/backup">{{icon "download"}}<span>Backup herunterladen</span></a></p>
+  </div>
+  <div>
+    <h2>Änderungen</h2>
+    <p class="muted">Wer hat was geändert, und zurück auf einen älteren Stand.</p>
+    <p><a class="btn-outline" href="/verlauf"><span>Zum Verlauf</span>{{icon "arrow"}}</a></p>
+  </div>
+</section>
+{{end}}

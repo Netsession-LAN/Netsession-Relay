@@ -1,0 +1,2508 @@
+{
+  "version": 1,
+  "hash": "90f1c7f32ac8bc36818bea65c7f1f7c583c984b9762b2abe41b92470060ca65c",
+  "mode": "active",
+  "seed_hash": "57b5e837fa1dc95e533bdae1a1b1399a9932cfa1dac52966ea077b50010c5719",
+  "vlans": [
+    {
+      "vid": 1100,
+      "name": "Gameserver",
+      "group": "gameserver",
+      "cidr": "10.10.0.0/24",
+      "relay_ip": "10.10.0.55",
+      "attach": "trunk",
+      "parent": "trunk0"
+    },
+    {
+      "vid": 1101,
+      "name": "Tisch 1",
+      "group": "tische",
+      "cidr": "10.10.1.0/24",
+      "relay_ip": "10.10.1.55",
+      "attach": "trunk",
+      "parent": "trunk0"
+    },
+    {
+      "vid": 1102,
+      "name": "Tisch 2",
+      "group": "tische",
+      "cidr": "10.10.2.0/24",
+      "relay_ip": "10.10.2.55",
+      "attach": "trunk",
+      "parent": "trunk0"
+    },
+    {
+      "vid": 1103,
+      "name": "Tisch 3",
+      "group": "tische",
+      "cidr": "10.10.3.0/24",
+      "relay_ip": "10.10.3.55",
+      "attach": "trunk",
+      "parent": "trunk0"
+    },
+    {
+      "vid": 1104,
+      "name": "Tisch 4",
+      "group": "tische",
+      "cidr": "10.10.4.0/24",
+      "relay_ip": "10.10.4.55",
+      "attach": "trunk",
+      "parent": "trunk0"
+    },
+    {
+      "vid": 1105,
+      "name": "Tisch 5",
+      "group": "tische",
+      "cidr": "10.10.5.0/24",
+      "relay_ip": "10.10.5.55",
+      "attach": "trunk",
+      "parent": "trunk0"
+    },
+    {
+      "vid": 1106,
+      "name": "Tisch 6",
+      "group": "tische",
+      "cidr": "10.10.6.0/24",
+      "relay_ip": "10.10.6.55",
+      "attach": "trunk",
+      "parent": "trunk0"
+    },
+    {
+      "vid": 1107,
+      "name": "Tisch 7",
+      "group": "tische",
+      "cidr": "10.10.7.0/24",
+      "relay_ip": "10.10.7.55",
+      "attach": "trunk",
+      "parent": "trunk0"
+    },
+    {
+      "vid": 1108,
+      "name": "Tisch 8",
+      "group": "tische",
+      "cidr": "10.10.8.0/24",
+      "relay_ip": "10.10.8.55",
+      "attach": "trunk",
+      "parent": "trunk0"
+    },
+    {
+      "vid": 1109,
+      "name": "Tisch 9",
+      "group": "tische",
+      "cidr": "10.10.9.0/24",
+      "relay_ip": "10.10.9.55",
+      "attach": "trunk",
+      "parent": "trunk0"
+    },
+    {
+      "vid": 1110,
+      "name": "Tisch 10",
+      "group": "tische",
+      "cidr": "10.10.10.0/24",
+      "relay_ip": "10.10.10.55",
+      "attach": "trunk",
+      "parent": "trunk0"
+    },
+    {
+      "vid": 1111,
+      "name": "Tisch 11",
+      "group": "tische",
+      "cidr": "10.10.11.0/24",
+      "relay_ip": "10.10.11.55",
+      "attach": "trunk",
+      "parent": "trunk0"
+    },
+    {
+      "vid": 1112,
+      "name": "Tisch 12",
+      "group": "tische",
+      "cidr": "10.10.12.0/24",
+      "relay_ip": "10.10.12.55",
+      "attach": "trunk",
+      "parent": "trunk0"
+    },
+    {
+      "vid": 1113,
+      "name": "Tisch 13",
+      "group": "tische",
+      "cidr": "10.10.13.0/24",
+      "relay_ip": "10.10.13.55",
+      "attach": "trunk",
+      "parent": "trunk0"
+    },
+    {
+      "vid": 1114,
+      "name": "Tisch 14",
+      "group": "tische",
+      "cidr": "10.10.14.0/24",
+      "relay_ip": "10.10.14.55",
+      "attach": "trunk",
+      "parent": "trunk0"
+    },
+    {
+      "vid": 1253,
+      "name": "User-WiFi",
+      "group": "wlan",
+      "cidr": "10.10.253.0/24",
+      "relay_ip": "10.10.253.55",
+      "attach": "trunk",
+      "parent": "trunk0"
+    },
+    {
+      "vid": 1254,
+      "name": "Orga",
+      "group": "orga",
+      "cidr": "10.10.254.0/24",
+      "relay_ip": "10.10.254.55",
+      "attach": "trunk",
+      "parent": "trunk0"
+    }
+  ],
+  "rules": [
+    {
+      "id": "bc:1234",
+      "kind": "broadcast",
+      "ports": "1234",
+      "specs": [
+        "blobby_volley"
+      ],
+      "source_mode": "original",
+      "dst_mode": "keep",
+      "ttl_mode": "keep",
+      "flows": [
+        {
+          "src": "gameserver",
+          "dst": "gameserver"
+        },
+        {
+          "src": "gameserver",
+          "dst": "orga"
+        },
+        {
+          "src": "gameserver",
+          "dst": "tische"
+        },
+        {
+          "src": "orga",
+          "dst": "gameserver"
+        },
+        {
+          "src": "orga",
+          "dst": "orga"
+        },
+        {
+          "src": "orga",
+          "dst": "tische"
+        },
+        {
+          "src": "tische",
+          "dst": "gameserver"
+        },
+        {
+          "src": "tische",
+          "dst": "orga"
+        },
+        {
+          "src": "tische",
+          "dst": "tische"
+        }
+      ],
+      "rate_pps": 5,
+      "rate_burst": 10,
+      "payload_max": 1472
+    },
+    {
+      "id": "bc:2302",
+      "kind": "broadcast",
+      "ports": "2302",
+      "specs": [
+        "arma2",
+        "halo_ce"
+      ],
+      "source_mode": "original",
+      "dst_mode": "keep",
+      "ttl_mode": "keep",
+      "flows": [
+        {
+          "src": "gameserver",
+          "dst": "gameserver"
+        },
+        {
+          "src": "gameserver",
+          "dst": "orga"
+        },
+        {
+          "src": "gameserver",
+          "dst": "tische"
+        },
+        {
+          "src": "orga",
+          "dst": "gameserver"
+        },
+        {
+          "src": "orga",
+          "dst": "orga"
+        },
+        {
+          "src": "orga",
+          "dst": "tische"
+        },
+        {
+          "src": "tische",
+          "dst": "gameserver"
+        },
+        {
+          "src": "tische",
+          "dst": "orga"
+        },
+        {
+          "src": "tische",
+          "dst": "tische"
+        }
+      ],
+      "rate_pps": 5,
+      "rate_burst": 10,
+      "payload_max": 1472
+    },
+    {
+      "id": "bc:2314-2338/12",
+      "kind": "broadcast",
+      "ports": "2314-2338/12",
+      "specs": [
+        "arma2"
+      ],
+      "source_mode": "original",
+      "dst_mode": "keep",
+      "ttl_mode": "keep",
+      "flows": [
+        {
+          "src": "gameserver",
+          "dst": "gameserver"
+        },
+        {
+          "src": "gameserver",
+          "dst": "orga"
+        },
+        {
+          "src": "gameserver",
+          "dst": "tische"
+        },
+        {
+          "src": "orga",
+          "dst": "gameserver"
+        },
+        {
+          "src": "orga",
+          "dst": "orga"
+        },
+        {
+          "src": "orga",
+          "dst": "tische"
+        },
+        {
+          "src": "tische",
+          "dst": "gameserver"
+        },
+        {
+          "src": "tische",
+          "dst": "orga"
+        },
+        {
+          "src": "tische",
+          "dst": "tische"
+        }
+      ],
+      "rate_pps": 5,
+      "rate_burst": 10,
+      "payload_max": 1472
+    },
+    {
+      "id": "bc:2350",
+      "kind": "broadcast",
+      "ports": "2350",
+      "specs": [
+        "arma2",
+        "maniaplanet",
+        "tmnf"
+      ],
+      "source_mode": "original",
+      "dst_mode": "keep",
+      "ttl_mode": "keep",
+      "flows": [
+        {
+          "src": "gameserver",
+          "dst": "gameserver"
+        },
+        {
+          "src": "gameserver",
+          "dst": "orga"
+        },
+        {
+          "src": "gameserver",
+          "dst": "tische"
+        },
+        {
+          "src": "orga",
+          "dst": "gameserver"
+        },
+        {
+          "src": "orga",
+          "dst": "orga"
+        },
+        {
+          "src": "orga",
+          "dst": "tische"
+        },
+        {
+          "src": "tische",
+          "dst": "gameserver"
+        },
+        {
+          "src": "tische",
+          "dst": "orga"
+        },
+        {
+          "src": "tische",
+          "dst": "tische"
+        }
+      ],
+      "rate_pps": 5,
+      "rate_burst": 10,
+      "payload_max": 1472
+    },
+    {
+      "id": "bc:2351-2360",
+      "kind": "broadcast",
+      "ports": "2351-2360",
+      "specs": [
+        "maniaplanet",
+        "tmnf"
+      ],
+      "source_mode": "original",
+      "dst_mode": "keep",
+      "ttl_mode": "keep",
+      "flows": [
+        {
+          "src": "gameserver",
+          "dst": "gameserver"
+        },
+        {
+          "src": "gameserver",
+          "dst": "orga"
+        },
+        {
+          "src": "gameserver",
+          "dst": "tische"
+        },
+        {
+          "src": "orga",
+          "dst": "gameserver"
+        },
+        {
+          "src": "orga",
+          "dst": "orga"
+        },
+        {
+          "src": "orga",
+          "dst": "tische"
+        },
+        {
+          "src": "tische",
+          "dst": "gameserver"
+        },
+        {
+          "src": "tische",
+          "dst": "orga"
+        },
+        {
+          "src": "tische",
+          "dst": "tische"
+        }
+      ],
+      "rate_pps": 5,
+      "rate_burst": 10,
+      "payload_max": 1472
+    },
+    {
+      "id": "bc:2362-2470/12",
+      "kind": "broadcast",
+      "ports": "2362-2470/12",
+      "specs": [
+        "arma2"
+      ],
+      "source_mode": "original",
+      "dst_mode": "keep",
+      "ttl_mode": "keep",
+      "flows": [
+        {
+          "src": "gameserver",
+          "dst": "gameserver"
+        },
+        {
+          "src": "gameserver",
+          "dst": "orga"
+        },
+        {
+          "src": "gameserver",
+          "dst": "tische"
+        },
+        {
+          "src": "orga",
+          "dst": "gameserver"
+        },
+        {
+          "src": "orga",
+          "dst": "orga"
+        },
+        {
+          "src": "orga",
+          "dst": "tische"
+        },
+        {
+          "src": "tische",
+          "dst": "gameserver"
+        },
+        {
+          "src": "tische",
+          "dst": "orga"
+        },
+        {
+          "src": "tische",
+          "dst": "tische"
+        }
+      ],
+      "rate_pps": 5,
+      "rate_burst": 10,
+      "payload_max": 1472
+    },
+    {
+      "id": "bc:3979",
+      "kind": "broadcast",
+      "ports": "3979",
+      "specs": [
+        "openttd"
+      ],
+      "source_mode": "original",
+      "dst_mode": "keep",
+      "ttl_mode": "keep",
+      "flows": [
+        {
+          "src": "gameserver",
+          "dst": "gameserver"
+        },
+        {
+          "src": "gameserver",
+          "dst": "orga"
+        },
+        {
+          "src": "gameserver",
+          "dst": "tische"
+        },
+        {
+          "src": "orga",
+          "dst": "gameserver"
+        },
+        {
+          "src": "orga",
+          "dst": "orga"
+        },
+        {
+          "src": "orga",
+          "dst": "tische"
+        },
+        {
+          "src": "tische",
+          "dst": "gameserver"
+        },
+        {
+          "src": "tische",
+          "dst": "orga"
+        },
+        {
+          "src": "tische",
+          "dst": "tische"
+        }
+      ],
+      "rate_pps": 5,
+      "rate_burst": 10,
+      "payload_max": 1472
+    },
+    {
+      "id": "bc:4242",
+      "kind": "broadcast",
+      "ports": "4242",
+      "specs": [
+        "steam_lan_browser"
+      ],
+      "source_mode": "original",
+      "dst_mode": "keep",
+      "ttl_mode": "keep",
+      "flows": [
+        {
+          "src": "gameserver",
+          "dst": "gameserver"
+        },
+        {
+          "src": "gameserver",
+          "dst": "orga"
+        },
+        {
+          "src": "gameserver",
+          "dst": "tische"
+        },
+        {
+          "src": "orga",
+          "dst": "gameserver"
+        },
+        {
+          "src": "orga",
+          "dst": "orga"
+        },
+        {
+          "src": "orga",
+          "dst": "tische"
+        },
+        {
+          "src": "tische",
+          "dst": "gameserver"
+        },
+        {
+          "src": "tische",
+          "dst": "orga"
+        },
+        {
+          "src": "tische",
+          "dst": "tische"
+        }
+      ],
+      "rate_pps": 5,
+      "rate_burst": 10,
+      "payload_max": 1472
+    },
+    {
+      "id": "bc:4549",
+      "kind": "broadcast",
+      "ports": "4549",
+      "specs": [
+        "torchlight2"
+      ],
+      "source_mode": "original",
+      "dst_mode": "keep",
+      "ttl_mode": "keep",
+      "flows": [
+        {
+          "src": "gameserver",
+          "dst": "gameserver"
+        },
+        {
+          "src": "gameserver",
+          "dst": "orga"
+        },
+        {
+          "src": "gameserver",
+          "dst": "tische"
+        },
+        {
+          "src": "orga",
+          "dst": "gameserver"
+        },
+        {
+          "src": "orga",
+          "dst": "orga"
+        },
+        {
+          "src": "orga",
+          "dst": "tische"
+        },
+        {
+          "src": "tische",
+          "dst": "gameserver"
+        },
+        {
+          "src": "tische",
+          "dst": "orga"
+        },
+        {
+          "src": "tische",
+          "dst": "tische"
+        }
+      ],
+      "rate_pps": 5,
+      "rate_burst": 10,
+      "payload_max": 1472
+    },
+    {
+      "id": "bc:6073",
+      "kind": "broadcast",
+      "ports": "6073",
+      "specs": [
+        "directplay8"
+      ],
+      "source_mode": "original",
+      "dst_mode": "keep",
+      "ttl_mode": "keep",
+      "flows": [
+        {
+          "src": "gameserver",
+          "dst": "gameserver"
+        },
+        {
+          "src": "gameserver",
+          "dst": "orga"
+        },
+        {
+          "src": "gameserver",
+          "dst": "tische"
+        },
+        {
+          "src": "orga",
+          "dst": "gameserver"
+        },
+        {
+          "src": "orga",
+          "dst": "orga"
+        },
+        {
+          "src": "orga",
+          "dst": "tische"
+        },
+        {
+          "src": "tische",
+          "dst": "gameserver"
+        },
+        {
+          "src": "tische",
+          "dst": "orga"
+        },
+        {
+          "src": "tische",
+          "dst": "tische"
+        }
+      ],
+      "rate_pps": 5,
+      "rate_burst": 10,
+      "payload_max": 1472
+    },
+    {
+      "id": "bc:6111",
+      "kind": "broadcast",
+      "ports": "6111",
+      "specs": [
+        "starcraft1"
+      ],
+      "source_mode": "original",
+      "dst_mode": "keep",
+      "ttl_mode": "keep",
+      "flows": [
+        {
+          "src": "gameserver",
+          "dst": "gameserver"
+        },
+        {
+          "src": "gameserver",
+          "dst": "orga"
+        },
+        {
+          "src": "gameserver",
+          "dst": "tische"
+        },
+        {
+          "src": "orga",
+          "dst": "gameserver"
+        },
+        {
+          "src": "orga",
+          "dst": "orga"
+        },
+        {
+          "src": "orga",
+          "dst": "tische"
+        },
+        {
+          "src": "tische",
+          "dst": "gameserver"
+        },
+        {
+          "src": "tische",
+          "dst": "orga"
+        },
+        {
+          "src": "tische",
+          "dst": "tische"
+        }
+      ],
+      "rate_pps": 5,
+      "rate_burst": 10,
+      "payload_max": 1472
+    },
+    {
+      "id": "bc:6112",
+      "kind": "broadcast",
+      "ports": "6112",
+      "specs": [
+        "starcraft1",
+        "warcraft3"
+      ],
+      "source_mode": "original",
+      "dst_mode": "keep",
+      "ttl_mode": "keep",
+      "flows": [
+        {
+          "src": "gameserver",
+          "dst": "gameserver"
+        },
+        {
+          "src": "gameserver",
+          "dst": "orga"
+        },
+        {
+          "src": "gameserver",
+          "dst": "tische"
+        },
+        {
+          "src": "orga",
+          "dst": "gameserver"
+        },
+        {
+          "src": "orga",
+          "dst": "orga"
+        },
+        {
+          "src": "orga",
+          "dst": "tische"
+        },
+        {
+          "src": "tische",
+          "dst": "gameserver"
+        },
+        {
+          "src": "tische",
+          "dst": "orga"
+        },
+        {
+          "src": "tische",
+          "dst": "tische"
+        }
+      ],
+      "rate_pps": 5,
+      "rate_burst": 10,
+      "payload_max": 1472
+    },
+    {
+      "id": "bc:7551",
+      "kind": "broadcast",
+      "ports": "7551",
+      "specs": [
+        "minecraft_bedrock"
+      ],
+      "source_mode": "original",
+      "dst_mode": "keep",
+      "ttl_mode": "keep",
+      "flows": [
+        {
+          "src": "gameserver",
+          "dst": "gameserver"
+        },
+        {
+          "src": "gameserver",
+          "dst": "orga"
+        },
+        {
+          "src": "gameserver",
+          "dst": "tische"
+        },
+        {
+          "src": "orga",
+          "dst": "gameserver"
+        },
+        {
+          "src": "orga",
+          "dst": "orga"
+        },
+        {
+          "src": "orga",
+          "dst": "tische"
+        },
+        {
+          "src": "tische",
+          "dst": "gameserver"
+        },
+        {
+          "src": "tische",
+          "dst": "orga"
+        },
+        {
+          "src": "tische",
+          "dst": "tische"
+        }
+      ],
+      "rate_pps": 5,
+      "rate_burst": 10,
+      "payload_max": 1472
+    },
+    {
+      "id": "bc:8086",
+      "kind": "broadcast",
+      "ports": "8086",
+      "specs": [
+        "cnc3",
+        "cnc_generals"
+      ],
+      "source_mode": "original",
+      "dst_mode": "keep",
+      "ttl_mode": "keep",
+      "flows": [
+        {
+          "src": "gameserver",
+          "dst": "gameserver"
+        },
+        {
+          "src": "gameserver",
+          "dst": "orga"
+        },
+        {
+          "src": "gameserver",
+          "dst": "tische"
+        },
+        {
+          "src": "orga",
+          "dst": "gameserver"
+        },
+        {
+          "src": "orga",
+          "dst": "orga"
+        },
+        {
+          "src": "orga",
+          "dst": "tische"
+        },
+        {
+          "src": "tische",
+          "dst": "gameserver"
+        },
+        {
+          "src": "tische",
+          "dst": "orga"
+        },
+        {
+          "src": "tische",
+          "dst": "tische"
+        }
+      ],
+      "rate_pps": 5,
+      "rate_burst": 10,
+      "payload_max": 1472
+    },
+    {
+      "id": "bc:8087-8093",
+      "kind": "broadcast",
+      "ports": "8087-8093",
+      "specs": [
+        "cnc3"
+      ],
+      "source_mode": "original",
+      "dst_mode": "keep",
+      "ttl_mode": "keep",
+      "flows": [
+        {
+          "src": "gameserver",
+          "dst": "gameserver"
+        },
+        {
+          "src": "gameserver",
+          "dst": "orga"
+        },
+        {
+          "src": "gameserver",
+          "dst": "tische"
+        },
+        {
+          "src": "orga",
+          "dst": "gameserver"
+        },
+        {
+          "src": "orga",
+          "dst": "orga"
+        },
+        {
+          "src": "orga",
+          "dst": "tische"
+        },
+        {
+          "src": "tische",
+          "dst": "gameserver"
+        },
+        {
+          "src": "tische",
+          "dst": "orga"
+        },
+        {
+          "src": "tische",
+          "dst": "tische"
+        }
+      ],
+      "rate_pps": 5,
+      "rate_burst": 10,
+      "payload_max": 1472
+    },
+    {
+      "id": "bc:8303-8310",
+      "kind": "broadcast",
+      "ports": "8303-8310",
+      "specs": [
+        "teeworlds"
+      ],
+      "source_mode": "original",
+      "dst_mode": "keep",
+      "ttl_mode": "keep",
+      "flows": [
+        {
+          "src": "gameserver",
+          "dst": "gameserver"
+        },
+        {
+          "src": "gameserver",
+          "dst": "orga"
+        },
+        {
+          "src": "gameserver",
+          "dst": "tische"
+        },
+        {
+          "src": "orga",
+          "dst": "gameserver"
+        },
+        {
+          "src": "orga",
+          "dst": "orga"
+        },
+        {
+          "src": "orga",
+          "dst": "tische"
+        },
+        {
+          "src": "tische",
+          "dst": "gameserver"
+        },
+        {
+          "src": "tische",
+          "dst": "orga"
+        },
+        {
+          "src": "tische",
+          "dst": "tische"
+        }
+      ],
+      "rate_pps": 5,
+      "rate_burst": 10,
+      "payload_max": 1472
+    },
+    {
+      "id": "bc:8777-8786",
+      "kind": "broadcast",
+      "ports": "8777-8786",
+      "specs": [
+        "ut99"
+      ],
+      "source_mode": "original",
+      "dst_mode": "keep",
+      "ttl_mode": "keep",
+      "flows": [
+        {
+          "src": "gameserver",
+          "dst": "gameserver"
+        },
+        {
+          "src": "gameserver",
+          "dst": "orga"
+        },
+        {
+          "src": "gameserver",
+          "dst": "tische"
+        },
+        {
+          "src": "orga",
+          "dst": "gameserver"
+        },
+        {
+          "src": "orga",
+          "dst": "orga"
+        },
+        {
+          "src": "orga",
+          "dst": "tische"
+        },
+        {
+          "src": "tische",
+          "dst": "gameserver"
+        },
+        {
+          "src": "tische",
+          "dst": "orga"
+        },
+        {
+          "src": "tische",
+          "dst": "tische"
+        }
+      ],
+      "rate_pps": 5,
+      "rate_burst": 10,
+      "payload_max": 1472
+    },
+    {
+      "id": "bc:9999",
+      "kind": "broadcast",
+      "ports": "9999",
+      "specs": [
+        "nfsmw2005",
+        "nfsu2"
+      ],
+      "source_mode": "original",
+      "dst_mode": "keep",
+      "ttl_mode": "keep",
+      "flows": [
+        {
+          "src": "gameserver",
+          "dst": "gameserver"
+        },
+        {
+          "src": "gameserver",
+          "dst": "orga"
+        },
+        {
+          "src": "gameserver",
+          "dst": "tische"
+        },
+        {
+          "src": "orga",
+          "dst": "gameserver"
+        },
+        {
+          "src": "orga",
+          "dst": "orga"
+        },
+        {
+          "src": "orga",
+          "dst": "tische"
+        },
+        {
+          "src": "tische",
+          "dst": "gameserver"
+        },
+        {
+          "src": "tische",
+          "dst": "orga"
+        },
+        {
+          "src": "tische",
+          "dst": "tische"
+        }
+      ],
+      "rate_pps": 5,
+      "rate_burst": 10,
+      "payload_max": 1472
+    },
+    {
+      "id": "bc:10777",
+      "kind": "broadcast",
+      "ports": "10777",
+      "specs": [
+        "ut2004"
+      ],
+      "source_mode": "original",
+      "dst_mode": "keep",
+      "ttl_mode": "keep",
+      "flows": [
+        {
+          "src": "gameserver",
+          "dst": "gameserver"
+        },
+        {
+          "src": "gameserver",
+          "dst": "orga"
+        },
+        {
+          "src": "gameserver",
+          "dst": "tische"
+        },
+        {
+          "src": "orga",
+          "dst": "gameserver"
+        },
+        {
+          "src": "orga",
+          "dst": "orga"
+        },
+        {
+          "src": "orga",
+          "dst": "tische"
+        },
+        {
+          "src": "tische",
+          "dst": "gameserver"
+        },
+        {
+          "src": "tische",
+          "dst": "orga"
+        },
+        {
+          "src": "tische",
+          "dst": "tische"
+        }
+      ],
+      "rate_pps": 5,
+      "rate_burst": 10,
+      "payload_max": 1472
+    },
+    {
+      "id": "bc:14001",
+      "kind": "broadcast",
+      "ports": "14001",
+      "specs": [
+        "unreal_engine_4_5_lan",
+        "ut3"
+      ],
+      "source_mode": "original",
+      "dst_mode": "keep",
+      "ttl_mode": "keep",
+      "flows": [
+        {
+          "src": "gameserver",
+          "dst": "gameserver"
+        },
+        {
+          "src": "gameserver",
+          "dst": "orga"
+        },
+        {
+          "src": "gameserver",
+          "dst": "tische"
+        },
+        {
+          "src": "orga",
+          "dst": "gameserver"
+        },
+        {
+          "src": "orga",
+          "dst": "orga"
+        },
+        {
+          "src": "orga",
+          "dst": "tische"
+        },
+        {
+          "src": "tische",
+          "dst": "gameserver"
+        },
+        {
+          "src": "tische",
+          "dst": "orga"
+        },
+        {
+          "src": "tische",
+          "dst": "tische"
+        }
+      ],
+      "rate_pps": 5,
+      "rate_burst": 10,
+      "payload_max": 1472
+    },
+    {
+      "id": "bc:15101",
+      "kind": "broadcast",
+      "ports": "15101",
+      "specs": [
+        "zandronum"
+      ],
+      "source_mode": "original",
+      "dst_mode": "keep",
+      "ttl_mode": "keep",
+      "flows": [
+        {
+          "src": "gameserver",
+          "dst": "gameserver"
+        },
+        {
+          "src": "gameserver",
+          "dst": "orga"
+        },
+        {
+          "src": "gameserver",
+          "dst": "tische"
+        },
+        {
+          "src": "orga",
+          "dst": "gameserver"
+        },
+        {
+          "src": "orga",
+          "dst": "orga"
+        },
+        {
+          "src": "orga",
+          "dst": "tische"
+        },
+        {
+          "src": "tische",
+          "dst": "gameserver"
+        },
+        {
+          "src": "tische",
+          "dst": "orga"
+        },
+        {
+          "src": "tische",
+          "dst": "tische"
+        }
+      ],
+      "rate_pps": 5,
+      "rate_burst": 10,
+      "payload_max": 1472
+    },
+    {
+      "id": "bc:17010,17012",
+      "kind": "broadcast",
+      "ports": "17010,17012",
+      "specs": [
+        "worms_armageddon"
+      ],
+      "source_mode": "original",
+      "dst_mode": "keep",
+      "ttl_mode": "keep",
+      "flows": [
+        {
+          "src": "gameserver",
+          "dst": "gameserver"
+        },
+        {
+          "src": "gameserver",
+          "dst": "orga"
+        },
+        {
+          "src": "gameserver",
+          "dst": "tische"
+        },
+        {
+          "src": "orga",
+          "dst": "gameserver"
+        },
+        {
+          "src": "orga",
+          "dst": "orga"
+        },
+        {
+          "src": "orga",
+          "dst": "tische"
+        },
+        {
+          "src": "tische",
+          "dst": "gameserver"
+        },
+        {
+          "src": "tische",
+          "dst": "orga"
+        },
+        {
+          "src": "tische",
+          "dst": "tische"
+        }
+      ],
+      "rate_pps": 5,
+      "rate_burst": 10,
+      "payload_max": 1472
+    },
+    {
+      "id": "bc:19132",
+      "kind": "broadcast",
+      "ports": "19132",
+      "specs": [
+        "minecraft_bedrock"
+      ],
+      "source_mode": "original",
+      "dst_mode": "keep",
+      "ttl_mode": "keep",
+      "flows": [
+        {
+          "src": "gameserver",
+          "dst": "gameserver"
+        },
+        {
+          "src": "gameserver",
+          "dst": "orga"
+        },
+        {
+          "src": "gameserver",
+          "dst": "tische"
+        },
+        {
+          "src": "orga",
+          "dst": "gameserver"
+        },
+        {
+          "src": "orga",
+          "dst": "orga"
+        },
+        {
+          "src": "orga",
+          "dst": "tische"
+        },
+        {
+          "src": "tische",
+          "dst": "gameserver"
+        },
+        {
+          "src": "tische",
+          "dst": "orga"
+        },
+        {
+          "src": "tische",
+          "dst": "tische"
+        }
+      ],
+      "rate_pps": 5,
+      "rate_burst": 10,
+      "payload_max": 1472
+    },
+    {
+      "id": "bc:22000",
+      "kind": "broadcast",
+      "ports": "22000",
+      "specs": [
+        "bf1942"
+      ],
+      "source_mode": "original",
+      "dst_mode": "keep",
+      "ttl_mode": "keep",
+      "flows": [
+        {
+          "src": "gameserver",
+          "dst": "gameserver"
+        },
+        {
+          "src": "gameserver",
+          "dst": "orga"
+        },
+        {
+          "src": "gameserver",
+          "dst": "tische"
+        },
+        {
+          "src": "orga",
+          "dst": "gameserver"
+        },
+        {
+          "src": "orga",
+          "dst": "orga"
+        },
+        {
+          "src": "orga",
+          "dst": "tische"
+        },
+        {
+          "src": "tische",
+          "dst": "gameserver"
+        },
+        {
+          "src": "tische",
+          "dst": "orga"
+        },
+        {
+          "src": "tische",
+          "dst": "tische"
+        }
+      ],
+      "rate_pps": 5,
+      "rate_burst": 10,
+      "payload_max": 1472
+    },
+    {
+      "id": "bc:23016",
+      "kind": "broadcast",
+      "ports": "23016",
+      "specs": [
+        "chicken_invaders5"
+      ],
+      "source_mode": "original",
+      "dst_mode": "keep",
+      "ttl_mode": "keep",
+      "flows": [
+        {
+          "src": "gameserver",
+          "dst": "gameserver"
+        },
+        {
+          "src": "gameserver",
+          "dst": "orga"
+        },
+        {
+          "src": "gameserver",
+          "dst": "tische"
+        },
+        {
+          "src": "orga",
+          "dst": "gameserver"
+        },
+        {
+          "src": "orga",
+          "dst": "orga"
+        },
+        {
+          "src": "orga",
+          "dst": "tische"
+        },
+        {
+          "src": "tische",
+          "dst": "gameserver"
+        },
+        {
+          "src": "tische",
+          "dst": "orga"
+        },
+        {
+          "src": "tische",
+          "dst": "tische"
+        }
+      ],
+      "rate_pps": 5,
+      "rate_burst": 10,
+      "payload_max": 1472
+    },
+    {
+      "id": "bc:23757",
+      "kind": "broadcast",
+      "ports": "23757",
+      "specs": [
+        "flatout1",
+        "flatout2"
+      ],
+      "source_mode": "original",
+      "dst_mode": "keep",
+      "ttl_mode": "keep",
+      "flows": [
+        {
+          "src": "gameserver",
+          "dst": "gameserver"
+        },
+        {
+          "src": "gameserver",
+          "dst": "orga"
+        },
+        {
+          "src": "gameserver",
+          "dst": "tische"
+        },
+        {
+          "src": "orga",
+          "dst": "gameserver"
+        },
+        {
+          "src": "orga",
+          "dst": "orga"
+        },
+        {
+          "src": "orga",
+          "dst": "tische"
+        },
+        {
+          "src": "tische",
+          "dst": "gameserver"
+        },
+        {
+          "src": "tische",
+          "dst": "orga"
+        },
+        {
+          "src": "tische",
+          "dst": "tische"
+        }
+      ],
+      "rate_pps": 5,
+      "rate_burst": 10,
+      "payload_max": 1472
+    },
+    {
+      "id": "bc:26000",
+      "kind": "broadcast",
+      "ports": "26000",
+      "specs": [
+        "quake1",
+        "xonotic"
+      ],
+      "source_mode": "original",
+      "dst_mode": "keep",
+      "ttl_mode": "keep",
+      "flows": [
+        {
+          "src": "gameserver",
+          "dst": "gameserver"
+        },
+        {
+          "src": "gameserver",
+          "dst": "orga"
+        },
+        {
+          "src": "gameserver",
+          "dst": "tische"
+        },
+        {
+          "src": "orga",
+          "dst": "gameserver"
+        },
+        {
+          "src": "orga",
+          "dst": "orga"
+        },
+        {
+          "src": "orga",
+          "dst": "tische"
+        },
+        {
+          "src": "tische",
+          "dst": "gameserver"
+        },
+        {
+          "src": "tische",
+          "dst": "orga"
+        },
+        {
+          "src": "tische",
+          "dst": "tische"
+        }
+      ],
+      "rate_pps": 5,
+      "rate_burst": 10,
+      "payload_max": 1472
+    },
+    {
+      "id": "bc:26900-26905",
+      "kind": "broadcast",
+      "ports": "26900-26905",
+      "specs": [
+        "steam_lan_browser"
+      ],
+      "source_mode": "original",
+      "dst_mode": "keep",
+      "ttl_mode": "keep",
+      "flows": [
+        {
+          "src": "gameserver",
+          "dst": "gameserver"
+        },
+        {
+          "src": "gameserver",
+          "dst": "orga"
+        },
+        {
+          "src": "gameserver",
+          "dst": "tische"
+        },
+        {
+          "src": "orga",
+          "dst": "gameserver"
+        },
+        {
+          "src": "orga",
+          "dst": "orga"
+        },
+        {
+          "src": "orga",
+          "dst": "tische"
+        },
+        {
+          "src": "tische",
+          "dst": "gameserver"
+        },
+        {
+          "src": "tische",
+          "dst": "orga"
+        },
+        {
+          "src": "tische",
+          "dst": "tische"
+        }
+      ],
+      "rate_pps": 5,
+      "rate_burst": 10,
+      "payload_max": 1472
+    },
+    {
+      "id": "bc:27015-27020",
+      "kind": "broadcast",
+      "ports": "27015-27020",
+      "specs": [
+        "cs16",
+        "cs_source",
+        "csgo",
+        "dods",
+        "gmod",
+        "hl2dm",
+        "insurgency",
+        "l4d",
+        "l4d2",
+        "source_engine",
+        "steam_lan_browser",
+        "tf2"
+      ],
+      "source_mode": "original",
+      "dst_mode": "keep",
+      "ttl_mode": "keep",
+      "flows": [
+        {
+          "src": "gameserver",
+          "dst": "gameserver"
+        },
+        {
+          "src": "gameserver",
+          "dst": "orga"
+        },
+        {
+          "src": "gameserver",
+          "dst": "tische"
+        },
+        {
+          "src": "orga",
+          "dst": "gameserver"
+        },
+        {
+          "src": "orga",
+          "dst": "orga"
+        },
+        {
+          "src": "orga",
+          "dst": "tische"
+        },
+        {
+          "src": "tische",
+          "dst": "gameserver"
+        },
+        {
+          "src": "tische",
+          "dst": "orga"
+        },
+        {
+          "src": "tische",
+          "dst": "tische"
+        }
+      ],
+      "rate_pps": 5,
+      "rate_burst": 10,
+      "payload_max": 1472
+    },
+    {
+      "id": "bc:27215",
+      "kind": "broadcast",
+      "ports": "27215",
+      "specs": [
+        "steam_lan_browser"
+      ],
+      "source_mode": "original",
+      "dst_mode": "keep",
+      "ttl_mode": "keep",
+      "flows": [
+        {
+          "src": "gameserver",
+          "dst": "gameserver"
+        },
+        {
+          "src": "gameserver",
+          "dst": "orga"
+        },
+        {
+          "src": "gameserver",
+          "dst": "tische"
+        },
+        {
+          "src": "orga",
+          "dst": "gameserver"
+        },
+        {
+          "src": "orga",
+          "dst": "orga"
+        },
+        {
+          "src": "orga",
+          "dst": "tische"
+        },
+        {
+          "src": "tische",
+          "dst": "gameserver"
+        },
+        {
+          "src": "tische",
+          "dst": "orga"
+        },
+        {
+          "src": "tische",
+          "dst": "tische"
+        }
+      ],
+      "rate_pps": 5,
+      "rate_burst": 10,
+      "payload_max": 1472
+    },
+    {
+      "id": "bc:27910",
+      "kind": "broadcast",
+      "ports": "27910",
+      "specs": [
+        "quake2"
+      ],
+      "source_mode": "original",
+      "dst_mode": "keep",
+      "ttl_mode": "keep",
+      "flows": [
+        {
+          "src": "gameserver",
+          "dst": "gameserver"
+        },
+        {
+          "src": "gameserver",
+          "dst": "orga"
+        },
+        {
+          "src": "gameserver",
+          "dst": "tische"
+        },
+        {
+          "src": "orga",
+          "dst": "gameserver"
+        },
+        {
+          "src": "orga",
+          "dst": "orga"
+        },
+        {
+          "src": "orga",
+          "dst": "tische"
+        },
+        {
+          "src": "tische",
+          "dst": "gameserver"
+        },
+        {
+          "src": "tische",
+          "dst": "orga"
+        },
+        {
+          "src": "tische",
+          "dst": "tische"
+        }
+      ],
+      "rate_pps": 5,
+      "rate_burst": 10,
+      "payload_max": 1472
+    },
+    {
+      "id": "bc:27960-27963",
+      "kind": "broadcast",
+      "ports": "27960-27963",
+      "specs": [
+        "openarena",
+        "quake3",
+        "rtcw",
+        "urban_terror",
+        "wolfet"
+      ],
+      "source_mode": "original",
+      "dst_mode": "keep",
+      "ttl_mode": "keep",
+      "flows": [
+        {
+          "src": "gameserver",
+          "dst": "gameserver"
+        },
+        {
+          "src": "gameserver",
+          "dst": "orga"
+        },
+        {
+          "src": "gameserver",
+          "dst": "tische"
+        },
+        {
+          "src": "orga",
+          "dst": "gameserver"
+        },
+        {
+          "src": "orga",
+          "dst": "orga"
+        },
+        {
+          "src": "orga",
+          "dst": "tische"
+        },
+        {
+          "src": "tische",
+          "dst": "gameserver"
+        },
+        {
+          "src": "tische",
+          "dst": "orga"
+        },
+        {
+          "src": "tische",
+          "dst": "tische"
+        }
+      ],
+      "rate_pps": 5,
+      "rate_burst": 10,
+      "payload_max": 1472
+    },
+    {
+      "id": "bc:28070-28073",
+      "kind": "broadcast",
+      "ports": "28070-28073",
+      "specs": [
+        "jk2"
+      ],
+      "source_mode": "original",
+      "dst_mode": "keep",
+      "ttl_mode": "keep",
+      "flows": [
+        {
+          "src": "gameserver",
+          "dst": "gameserver"
+        },
+        {
+          "src": "gameserver",
+          "dst": "orga"
+        },
+        {
+          "src": "gameserver",
+          "dst": "tische"
+        },
+        {
+          "src": "orga",
+          "dst": "gameserver"
+        },
+        {
+          "src": "orga",
+          "dst": "orga"
+        },
+        {
+          "src": "orga",
+          "dst": "tische"
+        },
+        {
+          "src": "tische",
+          "dst": "gameserver"
+        },
+        {
+          "src": "tische",
+          "dst": "orga"
+        },
+        {
+          "src": "tische",
+          "dst": "tische"
+        }
+      ],
+      "rate_pps": 5,
+      "rate_burst": 10,
+      "payload_max": 1472
+    },
+    {
+      "id": "bc:28784",
+      "kind": "broadcast",
+      "ports": "28784",
+      "specs": [
+        "sauerbraten"
+      ],
+      "source_mode": "original",
+      "dst_mode": "keep",
+      "ttl_mode": "keep",
+      "flows": [
+        {
+          "src": "gameserver",
+          "dst": "gameserver"
+        },
+        {
+          "src": "gameserver",
+          "dst": "orga"
+        },
+        {
+          "src": "gameserver",
+          "dst": "tische"
+        },
+        {
+          "src": "orga",
+          "dst": "gameserver"
+        },
+        {
+          "src": "orga",
+          "dst": "orga"
+        },
+        {
+          "src": "orga",
+          "dst": "tische"
+        },
+        {
+          "src": "tische",
+          "dst": "gameserver"
+        },
+        {
+          "src": "tische",
+          "dst": "orga"
+        },
+        {
+          "src": "tische",
+          "dst": "tische"
+        }
+      ],
+      "rate_pps": 5,
+      "rate_burst": 10,
+      "payload_max": 1472
+    },
+    {
+      "id": "bc:28960-28963",
+      "kind": "broadcast",
+      "ports": "28960-28963",
+      "specs": [
+        "cod1",
+        "cod2",
+        "cod4"
+      ],
+      "source_mode": "original",
+      "dst_mode": "keep",
+      "ttl_mode": "keep",
+      "flows": [
+        {
+          "src": "gameserver",
+          "dst": "gameserver"
+        },
+        {
+          "src": "gameserver",
+          "dst": "orga"
+        },
+        {
+          "src": "gameserver",
+          "dst": "tische"
+        },
+        {
+          "src": "orga",
+          "dst": "gameserver"
+        },
+        {
+          "src": "orga",
+          "dst": "orga"
+        },
+        {
+          "src": "orga",
+          "dst": "tische"
+        },
+        {
+          "src": "tische",
+          "dst": "gameserver"
+        },
+        {
+          "src": "tische",
+          "dst": "orga"
+        },
+        {
+          "src": "tische",
+          "dst": "tische"
+        }
+      ],
+      "rate_pps": 5,
+      "rate_burst": 10,
+      "payload_max": 1472
+    },
+    {
+      "id": "bc:29070-29073",
+      "kind": "broadcast",
+      "ports": "29070-29073",
+      "specs": [
+        "jka"
+      ],
+      "source_mode": "original",
+      "dst_mode": "keep",
+      "ttl_mode": "keep",
+      "flows": [
+        {
+          "src": "gameserver",
+          "dst": "gameserver"
+        },
+        {
+          "src": "gameserver",
+          "dst": "orga"
+        },
+        {
+          "src": "gameserver",
+          "dst": "tische"
+        },
+        {
+          "src": "orga",
+          "dst": "gameserver"
+        },
+        {
+          "src": "orga",
+          "dst": "orga"
+        },
+        {
+          "src": "orga",
+          "dst": "tische"
+        },
+        {
+          "src": "tische",
+          "dst": "gameserver"
+        },
+        {
+          "src": "tische",
+          "dst": "orga"
+        },
+        {
+          "src": "tische",
+          "dst": "tische"
+        }
+      ],
+      "rate_pps": 5,
+      "rate_burst": 10,
+      "payload_max": 1472
+    },
+    {
+      "id": "bc:34196",
+      "kind": "broadcast",
+      "ports": "34196",
+      "specs": [
+        "factorio"
+      ],
+      "source_mode": "original",
+      "dst_mode": "keep",
+      "ttl_mode": "keep",
+      "flows": [
+        {
+          "src": "gameserver",
+          "dst": "gameserver"
+        },
+        {
+          "src": "gameserver",
+          "dst": "orga"
+        },
+        {
+          "src": "gameserver",
+          "dst": "tische"
+        },
+        {
+          "src": "orga",
+          "dst": "gameserver"
+        },
+        {
+          "src": "orga",
+          "dst": "orga"
+        },
+        {
+          "src": "orga",
+          "dst": "tische"
+        },
+        {
+          "src": "tische",
+          "dst": "gameserver"
+        },
+        {
+          "src": "tische",
+          "dst": "orga"
+        },
+        {
+          "src": "tische",
+          "dst": "tische"
+        }
+      ],
+      "rate_pps": 5,
+      "rate_burst": 10,
+      "payload_max": 1472
+    },
+    {
+      "id": "bc:42801",
+      "kind": "broadcast",
+      "ports": "42801",
+      "specs": [
+        "titan_quest"
+      ],
+      "source_mode": "original",
+      "dst_mode": "keep",
+      "ttl_mode": "keep",
+      "flows": [
+        {
+          "src": "gameserver",
+          "dst": "gameserver"
+        },
+        {
+          "src": "gameserver",
+          "dst": "orga"
+        },
+        {
+          "src": "gameserver",
+          "dst": "tische"
+        },
+        {
+          "src": "orga",
+          "dst": "gameserver"
+        },
+        {
+          "src": "orga",
+          "dst": "orga"
+        },
+        {
+          "src": "orga",
+          "dst": "tische"
+        },
+        {
+          "src": "tische",
+          "dst": "gameserver"
+        },
+        {
+          "src": "tische",
+          "dst": "orga"
+        },
+        {
+          "src": "tische",
+          "dst": "tische"
+        }
+      ],
+      "rate_pps": 5,
+      "rate_burst": 10,
+      "payload_max": 1472
+    },
+    {
+      "id": "bc:44400-44404",
+      "kind": "broadcast",
+      "ports": "44400-44404",
+      "specs": [
+        "warfork",
+        "warsow"
+      ],
+      "source_mode": "original",
+      "dst_mode": "keep",
+      "ttl_mode": "keep",
+      "flows": [
+        {
+          "src": "gameserver",
+          "dst": "gameserver"
+        },
+        {
+          "src": "gameserver",
+          "dst": "orga"
+        },
+        {
+          "src": "gameserver",
+          "dst": "tische"
+        },
+        {
+          "src": "orga",
+          "dst": "gameserver"
+        },
+        {
+          "src": "orga",
+          "dst": "orga"
+        },
+        {
+          "src": "orga",
+          "dst": "tische"
+        },
+        {
+          "src": "tische",
+          "dst": "gameserver"
+        },
+        {
+          "src": "tische",
+          "dst": "orga"
+        },
+        {
+          "src": "tische",
+          "dst": "tische"
+        }
+      ],
+      "rate_pps": 5,
+      "rate_burst": 10,
+      "payload_max": 1472
+    },
+    {
+      "id": "bc:47624",
+      "kind": "broadcast",
+      "ports": "47624",
+      "specs": [
+        "aoe1",
+        "aoe2",
+        "blobby_volley",
+        "directplay4",
+        "stronghold",
+        "total_annihilation"
+      ],
+      "source_mode": "original",
+      "dst_mode": "keep",
+      "ttl_mode": "keep",
+      "flows": [
+        {
+          "src": "gameserver",
+          "dst": "gameserver"
+        },
+        {
+          "src": "gameserver",
+          "dst": "orga"
+        },
+        {
+          "src": "gameserver",
+          "dst": "tische"
+        },
+        {
+          "src": "orga",
+          "dst": "gameserver"
+        },
+        {
+          "src": "orga",
+          "dst": "orga"
+        },
+        {
+          "src": "orga",
+          "dst": "tische"
+        },
+        {
+          "src": "tische",
+          "dst": "gameserver"
+        },
+        {
+          "src": "tische",
+          "dst": "orga"
+        },
+        {
+          "src": "tische",
+          "dst": "tische"
+        }
+      ],
+      "rate_pps": 5,
+      "rate_burst": 10,
+      "payload_max": 1472
+    },
+    {
+      "id": "bc:47777",
+      "kind": "broadcast",
+      "ports": "47777",
+      "specs": [
+        "unity_unet_mirror"
+      ],
+      "source_mode": "original",
+      "dst_mode": "keep",
+      "ttl_mode": "keep",
+      "flows": [
+        {
+          "src": "gameserver",
+          "dst": "gameserver"
+        },
+        {
+          "src": "gameserver",
+          "dst": "orga"
+        },
+        {
+          "src": "gameserver",
+          "dst": "tische"
+        },
+        {
+          "src": "orga",
+          "dst": "gameserver"
+        },
+        {
+          "src": "orga",
+          "dst": "orga"
+        },
+        {
+          "src": "orga",
+          "dst": "tische"
+        },
+        {
+          "src": "tische",
+          "dst": "gameserver"
+        },
+        {
+          "src": "tische",
+          "dst": "orga"
+        },
+        {
+          "src": "tische",
+          "dst": "tische"
+        }
+      ],
+      "rate_pps": 5,
+      "rate_burst": 10,
+      "payload_max": 1472
+    },
+    {
+      "id": "bc:50001",
+      "kind": "broadcast",
+      "ports": "50001",
+      "specs": [
+        "blur"
+      ],
+      "source_mode": "original",
+      "dst_mode": "keep",
+      "ttl_mode": "keep",
+      "flows": [
+        {
+          "src": "gameserver",
+          "dst": "gameserver"
+        },
+        {
+          "src": "gameserver",
+          "dst": "orga"
+        },
+        {
+          "src": "gameserver",
+          "dst": "tische"
+        },
+        {
+          "src": "orga",
+          "dst": "gameserver"
+        },
+        {
+          "src": "orga",
+          "dst": "orga"
+        },
+        {
+          "src": "orga",
+          "dst": "tische"
+        },
+        {
+          "src": "tische",
+          "dst": "gameserver"
+        },
+        {
+          "src": "tische",
+          "dst": "orga"
+        },
+        {
+          "src": "tische",
+          "dst": "tische"
+        }
+      ],
+      "rate_pps": 5,
+      "rate_burst": 10,
+      "payload_max": 1472
+    },
+    {
+      "id": "bc:54792",
+      "kind": "broadcast",
+      "ports": "54792",
+      "specs": [
+        "ipxwrapper"
+      ],
+      "source_mode": "original",
+      "dst_mode": "keep",
+      "ttl_mode": "keep",
+      "flows": [
+        {
+          "src": "gameserver",
+          "dst": "gameserver"
+        },
+        {
+          "src": "gameserver",
+          "dst": "orga"
+        },
+        {
+          "src": "gameserver",
+          "dst": "tische"
+        },
+        {
+          "src": "orga",
+          "dst": "gameserver"
+        },
+        {
+          "src": "orga",
+          "dst": "orga"
+        },
+        {
+          "src": "orga",
+          "dst": "tische"
+        },
+        {
+          "src": "tische",
+          "dst": "gameserver"
+        },
+        {
+          "src": "tische",
+          "dst": "orga"
+        },
+        {
+          "src": "tische",
+          "dst": "tische"
+        }
+      ],
+      "rate_pps": 5,
+      "rate_burst": 10,
+      "payload_max": 1472
+    },
+    {
+      "id": "mc:224.0.2.60:4445",
+      "kind": "multicast",
+      "group": "224.0.2.60",
+      "ports": "4445",
+      "specs": [
+        "minecraft_java"
+      ],
+      "source_mode": "original",
+      "dst_mode": "keep",
+      "ttl_mode": "keep",
+      "flows": [
+        {
+          "src": "gameserver",
+          "dst": "gameserver"
+        },
+        {
+          "src": "gameserver",
+          "dst": "orga"
+        },
+        {
+          "src": "gameserver",
+          "dst": "tische"
+        },
+        {
+          "src": "orga",
+          "dst": "gameserver"
+        },
+        {
+          "src": "orga",
+          "dst": "orga"
+        },
+        {
+          "src": "orga",
+          "dst": "tische"
+        },
+        {
+          "src": "tische",
+          "dst": "gameserver"
+        },
+        {
+          "src": "tische",
+          "dst": "orga"
+        },
+        {
+          "src": "tische",
+          "dst": "tische"
+        }
+      ],
+      "rate_pps": 5,
+      "rate_burst": 10,
+      "payload_max": 1472
+    }
+  ],
+  "limits": {
+    "vlan_pps": 200,
+    "vlan_burst": 400,
+    "storm_pps": 5000,
+    "dedup_ms": 200
+  },
+  "peers": [],
+  "warnings": [
+    "shared_port: broadcast port 14001 is used by unreal_engine_4_5_lan, ut3",
+    "shared_port: broadcast port 2302 is used by arma2, halo_ce",
+    "shared_port: broadcast port 2350 is used by arma2, maniaplanet, tmnf",
+    "shared_port: broadcast port 2351-2360 is used by maniaplanet, tmnf",
+    "shared_port: broadcast port 23757 is used by flatout1, flatout2",
+    "shared_port: broadcast port 26000 is used by quake1, xonotic",
+    "shared_port: broadcast port 27015-27020 is used by cs16, cs_source, csgo, dods, gmod, hl2dm, insurgency, l4d, l4d2, source_engine, steam_lan_browser, tf2",
+    "shared_port: broadcast port 27960-27963 is used by openarena, quake3, rtcw, urban_terror, wolfet",
+    "shared_port: broadcast port 28960-28963 is used by cod1, cod2, cod4",
+    "shared_port: broadcast port 44400-44404 is used by warfork, warsow",
+    "shared_port: broadcast port 47624 is used by aoe1, aoe2, blobby_volley, directplay4, stronghold, total_annihilation",
+    "shared_port: broadcast port 6112 is used by starcraft1, warcraft3",
+    "shared_port: broadcast port 8086 is used by cnc3, cnc_generals",
+    "shared_port: broadcast port 9999 is used by nfsmw2005, nfsu2"
+  ]
+}
