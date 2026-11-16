@@ -1,5 +1,9 @@
 # Netsession Relay
 
+[![ci](https://github.com/Netsession2024/Netsession-Relay/actions/workflows/ci.yml/badge.svg)](https://github.com/Netsession2024/Netsession-Relay/actions/workflows/ci.yml)
+[![release](https://img.shields.io/github/v/release/Netsession2024/Netsession-Relay?include_prereleases)](https://github.com/Netsession2024/Netsession-Relay/releases)
+[![license](https://img.shields.io/github/license/Netsession2024/Netsession-Relay)](LICENSE)
+
 A UDP broadcast/multicast relay for LAN parties, with a web UI.
 
 At a LAN party every table usually gets its own VLAN and subnet. Many games, however, find LAN servers only by
@@ -7,7 +11,7 @@ broadcast or multicast, and those packets do not cross a router. Netsession Rela
 the discovery packets between them, so players at different tables see each other's LAN games.
 
 Built by [Netsession](https://netsession.net) to replace a set of OPNsense boxes running `udpbroadcastrelay`.
-Documentation inside the repository is mostly in German.
+The web UI and the research notes behind the game database are in German; the documentation is in English.
 
 ## Features
 
@@ -26,7 +30,17 @@ Documentation inside the repository is mostly in German.
 - **Network-namespace lab** (`lab/`) that tests the real engine with VLANs, broadcasts, multicast, rate limits,
   a second relay and restarts — runs in a privileged Docker container and in CI.
 
+## Documentation
+
+**[Getting started tutorial](docs/getting-started.md)** · [How it works](docs/architecture.md) ·
+[Game database](docs/game-database.md) · [Operating during an event](docs/operations.md) ·
+[Troubleshooting](docs/troubleshooting.md) · [Development and lab](docs/development.md) — also in the
+[wiki](https://github.com/Netsession2024/Netsession-Relay/wiki).
+
 ## Quick start
+
+Release binaries (linux amd64/arm64) and the image `ghcr.io/netsession2024/netsession-relay` are on the
+[releases page](https://github.com/Netsession2024/Netsession-Relay/releases).
 
 Requirements: a Linux VM with one trunk interface carrying the game VLANs (untagged frames not needed) and one
 management interface. Docker with host networking.
@@ -53,6 +67,21 @@ bash lab/run-docker.sh      # network lab in a privileged container
 
 Add an entry to `games/games.yaml` (format in the file header), run `go test ./internal/gamedb`, and open a pull
 request with your sources. Captures from real LAN sessions are very welcome.
+
+## Contributing
+
+Verified game ports are the most valuable contribution — see [CONTRIBUTING.md](CONTRIBUTING.md) and the issue
+template "New game / port correction". Changes are listed in [CHANGELOG.md](CHANGELOG.md).
+
+## Acknowledgements
+
+- [udpbroadcastrelay](https://github.com/marjohn56/udpbroadcastrelay) (marjohn56, nomeata) — the relay Netsession
+  used before and whose limits shaped this design.
+- [service-discovery-helper](https://github.com/OpenSourceLAN/service-discovery-helper) (OpenSourceLAN) and
+  [gamebridge](https://github.com/netwarlan/gamebridge) (NETWAR) — port lists tested at large LAN parties.
+- The FlatOut community, especially the open-source multiplayer plugins by gaycoderprincess, for documenting the
+  FlatOut LAN protocol.
+- Netsession e.V. crew — development, testing at our events.
 
 ## License
 

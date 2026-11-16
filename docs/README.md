@@ -1,0 +1,13 @@
+# Netsession Relay documentation
+
+| Page | For whom |
+|---|---|
+| [Getting started](getting-started.md) | Tutorial: from an empty VM to games being found across VLANs |
+| [How it works](architecture.md) | Data path, loop protection, components, design decisions |
+| [Game database](game-database.md) | Which games are supported, the YAML format, how to add or verify a game |
+| [Operating during an event](operations.md) | Web UI, switching games, observe mode, emergency stop, rollback, backup |
+| [Troubleshooting](troubleshooting.md) | "Players don't see my game" and other questions |
+| [Development and lab](development.md) | Building, tests, the network-namespace lab, demo mode |
+
+Research notes behind the game database are in German in [`docs/research/`](research/).
+These pages are also published to the [project wiki](https://github.com/Netsession2024/Netsession-Relay/wiki).
