@@ -1,0 +1,58 @@
+/* Netsession design tokens - generated from tokens.json by _build/build_tokens.py. Do not edit by hand. */
+/* Version 1.0.0 */
+
+@font-face { font-family: 'Anton'; src: url('fonts/anton-v27-latin-regular.woff2') format('woff2'); font-weight: 400; font-display: swap; }
+@font-face { font-family: 'Inter'; src: url('fonts/InterVariable.woff2') format('woff2'); font-weight: 100 900; font-style: normal; font-display: swap; }
+@font-face { font-family: 'Inter'; src: url('fonts/InterVariable-Italic.woff2') format('woff2'); font-weight: 100 900; font-style: italic; font-display: swap; }
+@font-face { font-family: 'JetBrains Mono'; src: url('fonts/JetBrainsMono-Regular.woff2') format('woff2'); font-weight: 400; font-display: swap; }
+@font-face { font-family: 'JetBrains Mono'; src: url('fonts/JetBrainsMono-Bold.woff2') format('woff2'); font-weight: 700; font-display: swap; }
+
+:root {
+  --ns-red-500: #FF2222; /* Netsession Rot */
+  --ns-red-600: #E62804; /* Glut */
+  --ns-red-700: #C8101A; /* Rot Dunkel */
+  --ns-ink-950: #0B0D12; /* Nacht */
+  --ns-ink-900: #101523; /* Tiefblau */
+  --ns-ink-850: #14161A; /* Graphit */
+  --ns-ink-700: #1E2535; /* Linie */
+  --ns-ink-600: #2A2F3D; /* Stahl */
+  --ns-gray-400: #9AA3B2; /* Nebel */
+  --ns-gray-300: #C7C7C7; /* Silber */
+  --ns-gray-100: #E7EBF4; /* Eis */
+  --ns-white: #FFFFFF; /* Weiß */
+  --ns-status-success: #2ECC71; /* Erfolg */
+  --ns-status-warning: #FF9D2D; /* Warnung */
+  --ns-status-info: #4DB8FF; /* Info */
+  --ns-status-danger: #FF2222; /* Fehler */
+  --ns-gradient-cta: linear-gradient(180deg, #FF2222 0%, #E62804 100%);
+  --ns-gradient-glow: radial-gradient(60% 60% at 50% 0%, rgba(255,34,34,.25) 0%, rgba(11,13,18,0) 100%);
+  --ns-font-display: 'Anton', Impact, 'Arial Narrow Bold', sans-serif;
+  --ns-font-body: 'Inter', 'Segoe UI', Arial, Helvetica, sans-serif;
+  --ns-font-mono: 'JetBrains Mono', Consolas, 'Courier New', monospace;
+  --ns-font-email: 'Arial', Helvetica, sans-serif;
+  --ns-text-display-xl: 96px;
+  --ns-text-display-l: 64px;
+  --ns-text-h1: 40px;
+  --ns-text-h2: 30px;
+  --ns-text-h3: 22px;
+  --ns-text-lead: 19px;
+  --ns-text-body: 16px;
+  --ns-text-small: 14px;
+  --ns-text-label: 12px;
+  --ns-space-1: 4px;
+  --ns-space-2: 8px;
+  --ns-space-3: 12px;
+  --ns-space-4: 16px;
+  --ns-space-5: 24px;
+  --ns-space-6: 32px;
+  --ns-space-7: 48px;
+  --ns-space-8: 64px;
+  --ns-space-9: 96px;
+  --ns-radius-sm: 6px;
+  --ns-radius-md: 10px;
+  --ns-radius-lg: 14px;
+  --ns-radius-pill: 999px;
+  --ns-shadow-card: 0 8px 30px rgba(0,0,0,.35);
+  --ns-shadow-cta: 0 10px 24px rgba(230,40,4,.35);
+  --ns-content-max: 980px;
+}

@@ -1,0 +1,83 @@
+# Netsession Relay. Start:  docker compose up -d   then open http://<this server>:8080 and follow the setup.
+# Nothing has to be set. Every variable below is optional; put the ones you want into a file ".env" next to this one.
+#
+# The image comes from the registry; without access to it, it is built from this directory.
+# Host networking is required: the engine works on the network interfaces of the host. It shields the host itself
+# (no routing between the game networks, host firewall for the relay interfaces), see docs/getting-started.md.
+
+x-common: &common
+  image: ${NSRELAY_IMAGE:-ghcr.io/netsession2024/netsession-relay:latest}
+  build: .
+  network_mode: host
+  read_only: true
+  restart: unless-stopped
+  security_opt: ["no-new-privileges:true"]
+  logging:
+    driver: json-file
+    options: {max-size: "10m", max-file: "3"}
+
+services:
+  engine:
+    <<: *common
+    command: ["engine"]
+    user: "0:0"
+    cap_drop: [ALL]
+    cap_add: [NET_RAW, NET_ADMIN, CHOWN]
+    environment:
+      NSRELAY_SNAPSHOT: /var/lib/nsrelay/active.json
+      NSRELAY_SOCKET: /run/nsrelay/engine.sock
+      NSRELAY_SOCKET_GID: "10001"
+      NSRELAY_BEACON_KEY: ${NSRELAY_BEACON_KEY:-}         # shared secret of relays that must recognise each other; default: own key in the state volume
+      NSRELAY_ALLOWED_IFACES: ${NSRELAY_ALLOWED_IFACES:-} # only these interfaces (names or globs); default: all but the default-route one
+    volumes:
+      - state:/var/lib/nsrelay
+      - run:/run/nsrelay
+    healthcheck:
+      test: ["CMD", "/usr/local/bin/nsrelay", "admin", "status"]
+      interval: 30s
+      timeout: 5s
+      retries: 3
+
+  web:
+    <<: *common
+    command: ["web"]
+    user: "10001:10001"
+    cap_drop: [ALL]
+    # a password check takes 64 MiB (Argon2id), at most three run at once; the limit keeps a flood of logins
+    # from starving the engine on the same host
+    mem_limit: 512m
+    environment:
+      GOMEMLIMIT: 400MiB
+      # ":8080" = every address of the host except the relay addresses in the game networks (those connections
+      # are closed). To bind one address only: NSRELAY_HTTP_ADDR=192.0.2.10:8080
+      NSRELAY_HTTP_ADDR: ${NSRELAY_HTTP_ADDR:-:8080}
+      NSRELAY_DB: /var/lib/nsrelay-web/nsrelay.db
+      NSRELAY_SOCKET: /run/nsrelay/engine.sock
+      NSRELAY_BACKUP_DIR: /backups                      # a backup every day, the last 14 are kept
+      NSRELAY_BACKUP_AUTO: ${NSRELAY_BACKUP_AUTO:-}     # 0 = no automatic backup
+      NSRELAY_LANG: ${NSRELAY_LANG:-}                   # en = English until a user chooses; default German
+      NSRELAY_INSTANCE: ${NSRELAY_INSTANCE:-}           # name of a second relay instance (e.g. "mDNS"), shown in the UI
+      # single sign-on (OpenID Connect), all four or none
+      NSRELAY_OIDC_ISSUER: ${NSRELAY_OIDC_ISSUER:-}
+      NSRELAY_OIDC_CLIENT_ID: ${NSRELAY_OIDC_CLIENT_ID:-}
+      NSRELAY_OIDC_CLIENT_SECRET: ${NSRELAY_OIDC_CLIENT_SECRET:-}
+      NSRELAY_OIDC_REDIRECT_URL: ${NSRELAY_OIDC_REDIRECT_URL:-}
+      NSRELAY_TRUSTED_PROXIES: ${NSRELAY_TRUSTED_PROXIES:-} # reverse proxy address(es); only then X-Forwarded-* count
+      NSRELAY_PUBLIC_URL: ${NSRELAY_PUBLIC_URL:-}           # https://… the users open (default: host of the OIDC redirect URL)
+      NSRELAY_COOKIE_SECURE: ${NSRELAY_COOKIE_SECURE:-}     # empty = per request, 1 = always Secure, 0 = never
+    volumes:
+      - data:/var/lib/nsrelay-web
+      - run:/run/nsrelay
+      - ${NSRELAY_BACKUP_VOLUME:-backups}:/backups        # a named volume; a path on the host works too (owner 10001)
+    depends_on: [engine]
+    healthcheck:
+      test: ["CMD", "/usr/local/bin/nsrelay", "health"]
+      interval: 30s
+      timeout: 5s
+      retries: 3
+
+volumes:
+  state:
+  data:
+  run:
+  backups:

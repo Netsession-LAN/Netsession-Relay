@@ -1,0 +1,33 @@
+{{define "content"}}
+<span class="bar"></span>
+{{if and (not .Live.State.CanStop) .Data.Resume}}<h1>{{th "Relay <em>einschalten</em>"}}</h1>{{else}}<h1>{{th "Not-<em>Aus</em>"}}</h1>{{end}}
+<div class="narrow">
+  {{if .Live.State.CanStop}}
+  <p class="lead">{{t "Das Relay hört sofort auf, Spiele zwischen den Netzen zu verteilen."}}</p>
+  <ul class="plain">
+    <li>{{t "Laufende Partien bleiben bestehen."}}</li>
+    <li>{{t "Neue Spiele werden nur noch am eigenen Tisch gefunden."}}</li>
+    <li>{{t "Wieder einschalten geht hier, ab Operator."}}</li>
+  </ul>
+  <form method="post" action="/system/notaus" class="row">
+    <input type="hidden" name="csrf" value="{{.CSRF}}">
+    <button class="btn" type="submit">{{icon "power"}}{{t "Relay pausieren"}}</button>
+    <a class="btn-outline" href="/">{{t "Abbrechen"}}</a>
+  </form>
+  {{else if .Data.Resume}}
+  <p class="lead">{{th "Das Relay ist durch Not-Aus pausiert. Vorher lief es im Modus <b>%s</b>." (t .Data.ResumeName)}}</p>
+  <ul class="plain">
+    <li>{{t "Ist die Ursache behoben (Schleife, fremdes Relay, Sturm)? Sonst kommt das Problem sofort zurück."}}</li>
+    <li>{{t "Wieder einschalten stellt den Modus %s her und steht im Verlauf." (t .Data.ResumeName)}}</li>
+  </ul>
+  <form method="post" action="/system/wieder-an" class="row" data-confirm="{{t "Das Relay läuft dann wieder im Modus %s und verteilt Spiele zwischen den Netzen." (t .Data.ResumeName)}}" data-confirm-title="{{t "Relay wieder einschalten?"}}" data-confirm-ok="{{t "Einschalten"}}">
+    <input type="hidden" name="csrf" value="{{.CSRF}}">
+    <button class="btn" type="submit">{{icon "power"}}{{t "Relay wieder einschalten"}}</button>
+    <a class="btn-outline" href="/">{{t "Abbrechen"}}</a>
+  </form>
+  {{else}}
+  <p class="note" data-tone="neutral">{{icon "info"}}<span class="note-body"><b>{{t .Live.State.Headline}}.</b> {{t .Live.State.Text}}</span></p>
+  <p><a class="btn-outline" href="/">{{t "Zur Übersicht"}}</a></p>
+  {{end}}
+</div>
+{{end}}

@@ -1,0 +1,35 @@
+{{define "content"}}
+{{$csrf := .CSRF}}{{$hash := .Live.Hash}}
+<span class="bar"></span>
+<h1>{{th "Relay-<em>Verlauf</em>"}}</h1>
+<p class="lead">{{t "Jede Änderung erzeugt einen Stand. Läuft etwas schief, roll auf einen älteren zurück."}}</p>
+
+<section class="section section-first">
+  <h2>{{t "Stände"}}</h2>
+  <div class="tablewrap"><table class="stack">
+    <thead><tr><th>{{t "Nr."}}</th><th>{{t "Zeit"}}</th><th>{{t "Wer"}}</th><th>{{t "Was"}}</th><th class="col-opt">{{t "Prüfsumme"}}</th><th>{{t "Zustand"}}</th><th><span class="sr">{{t "Aktion"}}</span></th></tr></thead>
+    <tbody>{{range .Data.Revisions}}<tr>
+      <td class="mono stack-main"><span class="sr">{{t "Stand"}} </span>{{.ID}}</td><td class="nowrap" data-th="{{t "Zeit"}}">{{ts .TS "datetime"}}</td><td data-th="{{t "Wer"}}">{{.User}}</td><td data-th="{{t "Was"}}">{{if .Note}}{{.Note}}{{else}}<span class="muted">–</span>{{end}}</td>
+      <td class="mono small col-opt" data-th="{{t "Prüfsumme"}}">{{short .Hash}}</td>
+      <td data-th="{{t "Zustand"}}">{{if not .AppliedOK}}<span class="tag tag-danger">{{icon "alert"}}{{t "Abgelehnt"}}</span>{{else if eq .Hash $hash}}<span class="tag tag-ok">{{icon "check"}}{{t "Läuft"}}</span>{{else}}<span class="muted">{{t "älter"}}</span>{{end}}</td>
+      <td class="num col-act">{{if and .AppliedOK (ne .Hash $hash)}}<form method="post" action="/system/rollback/{{.ID}}" class="inline" data-confirm="{{t "Spiele, Netze und Betriebsart werden auf Stand %d gesetzt und sofort angewendet. Der jetzige Stand bleibt in der Liste." .ID}}" data-confirm-title="{{t "Auf Stand %d zurückrollen?" .ID}}" data-confirm-ok="{{t "Zurückrollen"}}"><input type="hidden" name="csrf" value="{{$csrf}}"><button class="btn-outline btn-sm" type="submit">{{t "Zurückrollen"}}<span class="sr">{{t " auf Stand %d" .ID}}</span></button></form>{{end}}</td>
+    </tr>{{else}}<tr><td colspan="7" class="muted">{{t "Noch kein Stand. Der erste entsteht, sobald du ein Spiel schaltest."}}</td></tr>{{end}}</tbody>
+  </table></div>
+</section>
+
+<section class="section">
+  <div class="sechead">
+    <h2>{{t "Protokoll"}}</h2>
+    {{if .Data.Logins}}<a class="small" href="/verlauf">{{t "Anmeldungen ausblenden"}}</a>{{else if .Data.Hidden}}<a class="small" href="/verlauf?anmeldungen=1">{{if eq .Data.Hidden 1}}{{t "1 Anmeldung einblenden"}}{{else}}{{t "%d Anmeldungen einblenden" .Data.Hidden}}{{end}}</a>{{end}}
+  </div>
+  <div class="tablewrap"><table class="stack">
+    <thead><tr><th>{{t "Zeit"}}</th><th>{{t "Wer"}}</th><th>{{t "Was"}}</th><th>{{t "Betrifft"}}</th></tr></thead>
+    <tbody>{{range .Data.Audit}}<tr>
+      <td class="nowrap" data-th="{{t "Zeit"}}">{{ts .TS "datetime"}}</td><td data-th="{{t "Wer"}}">{{.User}}</td>
+      <td class="stack-main">{{if .Tone}}<span class="tone-{{.Tone}}">{{icon "alert"}}{{.Text}}</span>{{else}}{{.Text}}{{end}}</td>
+      <td{{if .Mono}} class="mono small"{{end}} data-th="{{t "Betrifft"}}">{{.Object}}</td>
+    </tr>{{else}}<tr><td colspan="4" class="muted">{{t "Noch keine Einträge."}}</td></tr>{{end}}</tbody>
+  </table></div>
+  <p class="small muted">{{t "Die letzten 100 Einträge."}}</p>
+</section>
+{{end}}

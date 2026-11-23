@@ -1,0 +1,132 @@
+{{define "content"}}
+{{$f := .Data}}
+{{if eq $f.Step "konto"}}
+<section class="login">
+  <img class="watermark" src="{{static "ns/logo/netsession_bildmarke_negativ.svg"}}" alt="" aria-hidden="true">
+  <div class="login-card card">
+    <div class="login-brand"><img class="login-logo" src="{{static "ns/logo/netsession_logo-horizontal_negativ.svg"}}" alt="Netsession" width="200" height="44">{{with .Logo}}<img class="login-ev" src="{{.URL}}" alt="{{.Alt}}" width="{{.Width}}" height="{{.Height}}">{{end}}</div>
+    <p class="setup-step"><span class="setup-dots" aria-hidden="true"><i data-on></i><i></i></span><span class="label">{{t "Schritt 1 von 2 · Konto"}}</span></p>
+    <span class="bar"></span>
+    <h1>{{th "Relay <em>einrichten</em>"}}</h1>
+    <p class="muted">{{t "Dieses Relay ist neu. Leg zuerst das Admin-Konto an, danach kommt das Netz."}}</p>
+    {{with $f.Err}}<p class="note" data-tone="danger" role="alert">{{icon "alert"}}<span class="note-body">{{.}}</span></p>{{end}}
+    <form method="post" action="/einrichten/konto" class="form">
+      <input type="hidden" name="csrf" value="{{$f.LoginCSRF}}">
+      <label class="field"><span class="label">{{t "Name"}}</span>
+        <input name="name" value="{{$f.Name}}" autocomplete="username" autocapitalize="none" spellcheck="false" required minlength="2" maxlength="32" pattern="[A-Za-z0-9][A-Za-z0-9._\-]+"{{if $f.ErrName}} aria-invalid="true"{{end}}{{if not $f.ErrPassword}} autofocus{{end}}></label>
+      <label class="field"><span class="label">{{t "Passwort"}}</span>
+        <input name="password" type="password" autocomplete="new-password" required minlength="{{$f.MinPassword}}" maxlength="200" aria-describedby="pw-hint"{{if $f.ErrPassword}} aria-invalid="true" autofocus{{end}}>
+        <span class="hint" id="pw-hint">{{t "Mindestens %d Zeichen. Ein langer Satz ist besser als ein kurzes Rätsel." $f.MinPassword}}</span></label>
+      <label class="field"><span class="label">{{t "Passwort wiederholen"}}</span>
+        <input name="password2" type="password" autocomplete="new-password" required minlength="{{$f.MinPassword}}" maxlength="200"{{if $f.ErrPassword}} aria-invalid="true"{{end}}></label>
+      <button class="btn" type="submit">{{t "Konto anlegen und weiter"}}</button>
+    </form>
+    <p class="small muted setup-open">{{icon "info"}}<span>{{t "Diese Seite ist offen, bis das erste Konto angelegt ist. Danach gibt es sie nicht mehr."}}</span></p>
+    <div class="setup-lang"><span class="label" id="setup-lang">{{t "Sprache"}}</span>
+      <span class="seg" role="group" aria-labelledby="setup-lang">
+        <a class="seg-item" href="/sprache/de?zurueck=/einrichten" lang="de" hreflang="de"{{if eq .Lang "de"}} aria-current="true"{{end}}>Deutsch</a>
+        <a class="seg-item" href="/sprache/en?zurueck=/einrichten" lang="en" hreflang="en"{{if eq .Lang "en"}} aria-current="true"{{end}}>English</a>
+      </span></div>
+  </div>
+</section>
+{{else}}
+<div class="setup">
+  <header class="setup-head">
+    <span class="setup-brand"><img class="setup-logo" src="{{static "ns/logo/netsession_logo-horizontal_negativ.svg"}}" alt="Netsession" width="168" height="37">{{with .Logo}}<img class="setup-ev" src="{{.URL}}" alt="{{.Alt}}" width="{{.Width}}" height="{{.Height}}">{{end}}</span>
+    <span class="setup-who small muted">{{.User.Name}} · {{template "langswitch" .}}</span>
+  </header>
+  <p class="setup-step"><span class="setup-dots" aria-hidden="true"><i data-on></i><i data-on></i></span><span class="label">{{t "Schritt 2 von 2 · Netz"}}</span></p>
+  <span class="bar"></span>
+  <h1>{{th "Netz <em>einrichten</em>"}}</h1>
+  <p class="lead">{{t "Sag dem Relay, wo die Netze der Spieler anliegen. Es bekommt in jedem Netz eine Adresse und verteilt die Spielsuche zwischen ihnen. Alles hier lässt sich später unter Netz und System ändern."}}</p>
+  {{with $f.Err}}<p class="note section-first" data-tone="danger" role="alert">{{icon "alert"}}<span class="note-body">{{.}}</span></p>{{end}}
+  <form method="post" action="/einrichten/netz" class="section-first">
+    <input type="hidden" name="csrf" value="{{.CSRF}}">
+    {{/* Enter in a field must finish the setup, not press "load example": the first submit button of a form is its default. */}}
+    <button class="sr" type="submit" tabindex="-1" aria-hidden="true">{{t "Einrichtung abschließen"}}</button>
+
+    <section class="panel" aria-labelledby="s-trunk">
+      <h2 id="s-trunk"><span class="setup-num">1</span>{{t "Schnittstelle"}}</h2>
+      <p class="muted">{{t "An welcher Netzwerkschnittstelle dieses Servers liegen die Spieler-Netze an? Üblich ist ein Trunk: eine Leitung zum Switch, auf der jedes Netz als VLAN mit eigener Nummer ankommt."}}</p>
+      {{if $f.Ifaces}}
+      <fieldset class="radios setup-ifs">
+        <legend class="sr">{{t "Schnittstelle wählen"}}</legend>
+        {{range $f.Ifaces}}
+        <label class="radio{{if .Blocked}} is-off{{end}}">
+          <input type="radio" name="trunk" value="{{.Name}}"{{if .Blocked}} disabled{{else if eq .Name $f.Trunk}} checked{{end}}>
+          <span class="setup-if">
+            <b class="mono">{{.Name}}</b>
+            {{if .Carrier}}<span class="flag" data-tone="ok">{{icon "check"}}{{t "Kabel steckt"}}</span>{{else if .Up}}<span class="flag">{{icon "dash"}}{{t "kein Kabel"}}</span>{{else}}<span class="flag">{{icon "dash"}}{{t "noch aus"}}</span>{{end}}
+            <span class="mono small setup-addrs">{{if .Addrs}}{{join .Addrs ", "}}{{else}}{{t "keine Adresse"}}{{end}}</span>
+            {{with .Blocked}}<span class="small setup-why">{{t .}}</span>{{else}}{{with .Note}}<span class="small setup-why">{{t .}}</span>{{end}}{{end}}
+          </span>
+        </label>
+        {{end}}
+      </fieldset>
+      <details class="fold"{{if $f.TrunkOther}} open{{end}}>
+        <summary><span class="label">{{t "Schnittstelle fehlt in der Liste?"}}</span></summary>
+        <div class="form">
+          <div class="field"><label class="label" for="trunk_other">{{t "Name der Schnittstelle"}}</label>
+            <input id="trunk_other" name="trunk_other" value="{{$f.TrunkOther}}" class="mono" placeholder="ens19" autocomplete="off" spellcheck="false" maxlength="15">
+            <p class="hint">{{t "Ein Name hier gilt statt der Auswahl oben."}}</p></div>
+        </div>
+      </details>
+      {{else}}
+      <div class="form">
+        <div class="field"><label class="label" for="trunk_other">{{t "Name der Schnittstelle"}}</label>
+          <input id="trunk_other" name="trunk_other" value="{{$f.TrunkOther}}" class="mono" placeholder="ens19" autocomplete="off" spellcheck="false" maxlength="15" required>
+          <p class="hint">{{t "So wie sie auf dem Server heißt (ip link)."}}</p></div>
+      </div>
+      {{end}}
+    </section>
+
+    <section class="panel" aria-labelledby="s-nets">
+      <div class="panel-head">
+        <h2 id="s-nets"><span class="setup-num">2</span>{{t "Netze"}}</h2>
+        <button class="btn-outline btn-sm" type="submit" name="aktion" value="beispiel" formnovalidate>{{t "Beispiel laden"}}</button>
+      </div>
+      <p class="muted">{{t "Eine Zeile pro Netz, mindestens zwei. Leere Zeilen zählen nicht. Die Gruppe bestimmt, wer wessen Spiele sieht: Tische, Gameserver und Orga sehen sich gegenseitig, WLAN bleibt zunächst außen vor."}}</p>
+      <div class="setup-nets" role="group" aria-labelledby="s-nets">
+        <span class="label setup-nets-head">{{t "VLAN-ID"}}</span><span class="label setup-nets-head">{{t "Name"}}</span><span class="label setup-nets-head">{{t "Adressen"}}</span><span class="label setup-nets-head">{{t "Gruppe"}}</span>
+        {{range $i, $r := $f.Rows}}
+        <div class="setup-net">
+          <input name="vid" value="{{$r.VID}}" class="mono" inputmode="numeric" pattern="[0-9]{1,4}" placeholder="{{add 11 $i}}" autocomplete="off" aria-label="{{t "VLAN-ID, Zeile %d" (add $i 1)}}">
+          <input name="name" value="{{$r.Name}}" maxlength="40" placeholder="{{t "Tisch %d" (add $i 1)}}" autocomplete="off" aria-label="{{t "Name, Zeile %d" (add $i 1)}}">
+          <input name="cidr" value="{{$r.CIDR}}" class="mono" placeholder="10.10.{{add $i 1}}.0/24" autocomplete="off" spellcheck="false" aria-label="{{t "Adressen, Zeile %d" (add $i 1)}}">
+          <select name="group" aria-label="{{t "Gruppe, Zeile %d" (add $i 1)}}">{{range $f.Groups}}<option value="{{.}}"{{if eq . $r.Group}} selected{{end}}>{{group .}}</option>{{end}}</select>
+        </div>
+        {{end}}
+      </div>
+      <p><button class="btn-link" type="submit" name="aktion" value="mehr" formnovalidate>{{icon "plus"}}{{t "Weitere Zeilen"}}</button></p>
+      <div class="setup-pair">
+        <div class="field"><label class="label" for="host">{{t "Adresse des Relays: letzte Stelle"}}</label>
+          <input id="host" name="host" value="{{$f.Host}}" class="mono" inputmode="numeric" pattern="[0-9]{1,5}" required autocomplete="off" aria-describedby="host-hint">
+          <p class="hint" id="host-hint">{{t "Mit 250 bekommt das Relay im Netz 10.10.1.0/24 die 10.10.1.250. Die Adresse muss in jedem Netz frei sein, also außerhalb des DHCP-Bereichs."}}</p></div>
+        <div class="field"><label class="label" for="event">{{t "Name der LAN"}}</label>
+          <input id="event" name="event" value="{{$f.Event}}" maxlength="60" required autocomplete="off" aria-describedby="event-hint">
+          <p class="hint" id="event-hint">{{t "Steht auf der Übersicht."}}</p></div>
+      </div>
+    </section>
+
+    <section class="panel" aria-labelledby="s-mode">
+      <h2 id="s-mode"><span class="setup-num">3</span>{{t "Betriebsart"}}</h2>
+      <fieldset class="radios">
+        <legend class="sr">{{t "Betriebsart wählen"}}</legend>
+        <label class="radio"><input type="radio" name="mode" value="observe"{{if eq $f.Mode "observe"}} checked{{end}}><span><b>{{t "Beobachten"}}</b> <span class="tag">{{t "empfohlen für den Anfang"}}</span><br><span class="small muted">{{t "Das Relay zählt mit und zeigt, was es weiterleiten würde, sendet aber nichts. So siehst du gefahrlos, ob alle Netze ankommen."}}</span></span></label>
+        <label class="radio"><input type="radio" name="mode" value="active"{{if eq $f.Mode "active"}} checked{{end}}><span><b>{{t "Aktiv"}}</b><br><span class="small muted">{{t "Das Relay leitet sofort weiter. Nur wenn kein anderes Relay dieselben Spiele zwischen diesen Netzen verteilt, sonst kommen Pakete doppelt an."}}</span></span></label>
+      </fieldset>
+      <p class="quiet setup-games">{{icon "info"}}<span>{{th `<b>%s Spiele</b> sind von Anfang an eingeschaltet, die üblichen LAN-Spiele. Weitere schaltest du danach unter Spiele ein.` $f.Games}}</span></p>
+    </section>
+
+    <div class="actions setup-actions">
+      <button class="btn" type="submit">{{t "Einrichtung abschließen"}}</button>
+      {{if $f.HasEvent}}<a class="btn-outline" href="/netz/neu">{{t "Netze lieber einzeln anlegen"}}</a>{{end}}
+    </div>
+  </form>
+  <form method="post" action="/logout" class="setup-out">
+    <input type="hidden" name="csrf" value="{{.CSRF}}">
+    <button class="btn-link small" type="submit">{{t "Abmelden und später weitermachen"}}</button>
+  </form>
+</div>
+{{end}}
+{{end}}

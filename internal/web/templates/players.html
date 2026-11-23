@@ -1,0 +1,68 @@
+{{define "players-table"}}
+{{if .Err}}<p class="note" data-tone="danger">{{icon "alert"}}<span class="note-body">{{t "Die Engine antwortet nicht. Die Liste kommt wieder, sobald sie läuft."}}</span></p>
+{{else if .Groups}}
+<p class="small muted">{{if eq .Players 1}}{{t "1 PC"}}{{else}}{{t "%d PCs" .Players}}{{end}} {{if eq (len .Groups) 1}}{{t "in 1 Spiel"}}{{else}}{{t "in %d Spielen" (len .Groups)}}{{end}}, {{t "letzte 15 Minuten."}}</p>
+<div class="pgroups">
+{{range .Groups}}
+<section class="panel pgroup">
+  <div class="pg-head">
+    <h2 class="pg-title">
+      {{if .GameID}}<a class="rowlink" href="/spiele/{{.GameID}}">{{.Title}}</a>{{else}}<span class="mono">{{.Title}}</span>{{end}}
+      {{if .More}}<details class="more" data-key="more-{{.Rule}}">
+        <summary aria-label="{{t "%d weitere Spiele auf demselben Port" (len .More)}}">+{{len .More}}</summary>
+        <div class="more-body">
+          <p>{{t "Gleicher Port"}}{{if .Ports}} <span class="mono">{{.Ports}}</span>{{end}}. {{t "Am Paket nicht zu unterscheiden:"}}</p>
+          <ul>{{range .More}}<li><a class="rowlink" href="/spiele/{{.ID}}">{{.Name}}</a></li>{{end}}</ul>
+        </div>
+      </details>{{end}}
+    </h2>
+    <p class="pg-sum">
+      {{if .HostAt}}<span class="flag" data-tone="ok">{{icon "check"}}{{t "Server offen:"}} {{.HostAt}}</span>{{end}}
+      <span>{{if eq .PCs 1}}{{t "1 PC"}}{{else}}{{t "%d PCs" .PCs}}{{end}} · {{if eq .Tables 1}}{{t "1 Netz"}}{{else}}{{t "%d Netze" .Tables}}{{end}}</span>
+    </p>
+  </div>
+  <ul class="plist">
+    {{range .Players}}
+    <li class="prow">
+      <span class="netname"><span class="key key-sm" aria-hidden="true">{{.Key}}</span><span>{{.VLAN}}<span class="sr">, VLAN {{.VID}}</span></span></span>
+      <span class="mono prow-ip">{{.IP}}{{if .Server}}<span class="muted">:{{.Port}}</span>{{end}}</span>
+      <span class="role" data-role="{{.Role}}"><i class="dot" aria-hidden="true"></i>{{t .Role}}</span>
+      <span class="prow-time" title="{{t "%s Pakete" (num .Count)}}"><span class="prow-since">{{t "seit"}} {{ts .First "time"}} · </span>{{.Ago}}</span>
+      {{if .Server}}<span class="prow-srv small" title="{{t "Vom Relay abgefragt: Der Server meldet sich nicht selbst, er antwortet nur auf Suchanfragen"}}">{{if .SrvName}}<span class="prow-srvname">{{.SrvName}}</span>{{if .SrvMap}} · <span class="mono">{{.SrvMap}}</span>{{end}}{{if .Slots}} · {{t "%s Spieler" .Slots}}{{end}}{{else}}{{t "antwortet auf die Abfrage des Relays"}}{{end}}</span>{{end}}
+      {{if ge .Spread 3}}<span class="prow-svc small">{{t "fragt %d Spiele ab" .Spread}}{{if $.Admin}} · <a href="{{serviceURL .IP}}" title="{{t "Als Dienst markieren (z. B. Discord-Notifier), zählt dann nicht mehr mit"}}">{{t "Dienst?"}}</a>{{end}}</span>{{end}}
+    </li>
+    {{end}}
+  </ul>
+</section>
+{{end}}
+</div>
+{{else}}<p class="quiet">{{icon "info"}}<span>{{t "Gerade sucht oder hostet niemand. Sobald jemand den LAN-Browser öffnet, steht es hier."}}</span></p>{{end}}
+{{if and .Services (not .Err)}}
+<details class="fold pservices" data-key="dienste">
+  <summary><span class="label">{{t "Dienste, zählen nicht mit (%d)" (len .Services)}}</span></summary>
+  <ul class="plist">
+    {{range .Services}}
+    <li class="prow">
+      <span class="netname"><span class="key key-sm" aria-hidden="true">{{.Key}}</span><span><b>{{.Name}}</b><br><span class="small muted">{{.VLAN}}</span></span></span>
+      <span class="mono prow-ip">{{.IP}}</span>
+      <span class="small">{{if eq (len .Games) 1}}{{t "fragt 1 Spiel ab:"}}{{else}}{{t "fragt %d Spiele ab:" (len .Games)}}{{end}} {{join .Games ", "}}</span>
+      <span class="prow-time" title="{{t "%s Pakete" (num .Count)}}">{{.Ago}}</span>
+    </li>
+    {{end}}
+  </ul>
+  {{if $.Admin}}<p class="small muted">{{th `Verwalten unter <a href="/system#dienste">System → Dienste im Netz</a>.`}}</p>{{end}}
+</details>
+{{end}}
+{{end}}
+
+{{define "content"}}
+<span class="bar"></span>
+<h1>{{th `Wer <em>spielt</em> was`}}</h1>
+<p class="lead">{{t "Wer in den letzten 15 Minuten ein Spiel gesucht oder angeboten hat, nach Spiel sortiert."}}</p>
+<div id="players" class="section-first" data-refresh="/spieler?teil=tabelle">{{template "players-table" .Data}}</div>
+<dl class="rolekey">
+  <div><dt><span class="role" data-role="hostet"><i class="dot" aria-hidden="true"></i>{{t "hostet"}}</span></dt><dd>{{t "offener Server, selbst gemeldet oder vom Relay abgefragt (z. B. CS2)"}}</dd></div>
+  <div><dt><span class="role" data-role="sucht"><i class="dot" aria-hidden="true"></i>{{t "sucht"}}</span></dt><dd>{{t "LAN-Browser offen"}}</dd></div>
+  <div><dt><span class="role" data-role="aktiv"><i class="dot" aria-hidden="true"></i>{{t "aktiv"}}</span></dt><dd>{{t "sucht oder hostet, am Paket nicht zu unterscheiden (z. B. FlatOut)"}}</dd></div>
+</dl>
+{{end}}

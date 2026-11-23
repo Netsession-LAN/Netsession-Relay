@@ -1,0 +1,30 @@
+# Secrets - never commit
+*.secret
+.env
+.env.*
+!.env.example
+
+# Python
+__pycache__/
+*.pyc
+.venv/
+
+# Node
+node_modules/
+dist/
+
+# Config exports and packet captures (may contain participant data); test fixtures live in testdata/
+*.xml
+!**/testdata/**/*.xml
+*.pcap
+*.pcapng
+!**/testdata/**/*.pcap
+!**/testdata/**/*.pcapng
+
+# Go build output
+/nsrelay
+/nsrelay.exe
+/.go/
+
+# lab build output
+/lab/.bin/

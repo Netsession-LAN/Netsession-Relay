@@ -1,0 +1,236 @@
+<!doctype html>
+<html lang="{{lang}}"{{if and (eq .Theme "98") (ne .Nav "setup")}} data-theme="98"{{end}}{{if .W98}} data-w98="{{.W98}}"{{end}}>
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<meta name="color-scheme" content="{{if eq .Theme "98"}}light{{else}}dark{{end}}">
+<title>{{.Title}} · Netsession Relay{{with .Instance}} · {{.}}{{end}}</title>
+<link rel="icon" href="{{static "ns/logo/favicon.svg"}}" type="image/svg+xml">
+<link rel="apple-touch-icon" href="{{static "ns/logo/app-icon-dark-180.png"}}">
+<link rel="stylesheet" href="{{static "ns/tokens.css"}}">
+<link rel="stylesheet" href="{{static "app.css"}}">
+{{if and (eq .Theme "98") (ne .Nav "setup")}}<link rel="stylesheet" href="{{static "theme98.css"}}">{{end}}
+<script type="application/json" id="i18n">{{jsCatalog}}</script>
+<script src="{{static "app.js"}}" defer></script>
+{{if and (eq .Theme "98") .User.Name (ne .Nav "setup")}}{{if not .W98}}<script src="{{static "w98mode.js"}}"></script>{{end}}{{if ne .W98 "frame"}}<script src="{{static "w98.js"}}" defer></script>{{end}}{{end}}
+</head>
+<body{{if .CSRF}} data-csrf="{{.CSRF}}"{{end}}{{if and .Live (ne .Nav "setup")}} data-live-url="/api/v1/events"{{end}}>
+{{if and (eq .W98 "shell") (ne .Nav "setup")}}{{template "w98-shell" .}}{{else}}
+{{if and .User.Name (ne .Nav "setup")}}
+<a class="skip" href="#inhalt">{{t "Zum Inhalt springen"}}</a>
+{{if eq .W98 "frame"}}{{template "connband" .}}{{else}}
+{{if eq .Theme "98"}}{{template "w98-desk" .}}{{end}}
+<header class="top">
+  {{if eq .Theme "98"}}{{template "w98-title" .}}{{end}}
+  <div class="top-in">
+    <a class="mark" href="/" aria-label="{{t "Netsession Relay, zur Übersicht"}}"><img src="{{static "ns/logo/netsession_bildmarke_negativ.svg"}}" alt="" width="36" height="26"></a>
+    {{with .Logo}}<span class="top-ev"><span class="top-ev-in"><img src="{{.URL}}" alt="{{.Alt}}" width="{{.Width}}" height="{{.Height}}"></span></span>{{end}}
+    <nav class="nav" aria-label="{{t "Hauptnavigation"}}">
+      <a href="/"{{if eq .Nav "overview"}} aria-current="page"{{end}}>{{t "Übersicht"}}</a>
+      <a href="/spiele"{{if eq .Nav "games"}} aria-current="page"{{end}}>{{t "Spiele"}}</a>
+      <a href="/spieler"{{if eq .Nav "players"}} aria-current="page"{{end}}>{{t "Spieler"}}</a>
+      {{if hasRole .User "operator"}}<a href="/finder"{{if eq .Nav "finder"}} aria-current="page"{{end}}>{{t "Port-Finder"}}</a>{{end}}
+      {{if hasRole .User "admin"}}
+      <a href="/netz"{{if eq .Nav "network"}} aria-current="page"{{end}}>{{t "Netz"}}</a>
+      <a href="/verlauf"{{if eq .Nav "history"}} aria-current="page"{{end}}>{{t "Verlauf"}}</a>
+      <a href="/system"{{if eq .Nav "system"}} aria-current="page"{{end}}>{{t "System"}}</a>
+      {{end}}
+    </nav>
+    <div class="top-side">
+      {{with .Instance}}<span class="tag" title="{{t "Diese Relay-Instanz"}}">{{.}}</span>{{end}}
+      {{if .Demo}}<span class="tag tag-warn demo-tag" title="{{t "Erfundene Daten, es wird nichts weitergeleitet"}}">Demo</span>{{end}}
+      <a class="state" id="engine-state" href="/" data-tone="{{.Live.State.Tone}}" data-tone-live title="{{t "Betriebsart. Zur Übersicht"}}">
+        <span data-icon-live>{{icon .Live.State.Icon}}</span><span class="sr">{{t "Betriebsart:"}} </span><span data-live="state.label">{{t .Live.State.Label}}</span>
+      </a>
+      {{if ne .Theme "98"}}{{template "liveclock" .}}{{end}}
+      {{if hasRole .User "operator"}}
+      <a class="btn-outline btn-stop" id="stop-link" href="/notaus"{{if not .Live.State.CanStop}} hidden{{end}}>{{icon "power"}}<span>{{t "Not-Aus"}}</span></a>
+      <a class="btn-outline btn-resume" id="resume-link" href="/notaus"{{if ne .Live.State.Key "paused"}} hidden{{end}}>{{icon "power"}}<span>{{t "Wieder an"}}</span></a>
+      {{end}}
+      {{if ne .Theme "98"}}<details class="account">
+        <summary aria-label="{{t "Konto %s" .User.Name}}">{{icon "user"}}<span class="account-name">{{.User.Name}}</span></summary>
+        <div class="menu">
+          <p class="menu-who"><b>{{.User.Name}}</b><br><span class="label">{{roleName .User.Role}}</span></p>
+          <form method="post" action="/logout">
+            <input type="hidden" name="csrf" value="{{.CSRF}}">
+            <button class="btn-outline btn-block" type="submit">{{icon "logout"}}<span>{{t "Abmelden"}}</span></button>
+          </form>
+          <div class="menu-set"><span class="label" id="menu-lang">{{t "Sprache"}}</span>
+            <span class="seg menu-seg" role="group" aria-labelledby="menu-lang">
+              <a class="seg-item" href="/sprache/de?zurueck={{.Path}}" lang="de" hreflang="de"{{if eq .Lang "de"}} aria-current="true"{{end}}>Deutsch</a>
+              <a class="seg-item" href="/sprache/en?zurueck={{.Path}}" lang="en" hreflang="en"{{if eq .Lang "en"}} aria-current="true"{{end}}>English</a>
+            </span></div>
+          <div class="menu-set"><span class="label" id="menu-theme">{{t "Aussehen"}}</span>
+            <span class="seg menu-seg" role="group" aria-labelledby="menu-theme">
+              <a class="seg-item" href="/aussehen/netsession?zurueck={{.Path}}"{{if ne .Theme "98"}} aria-current="true"{{end}}>Netsession</a>
+              <a class="seg-item" href="/aussehen/98?zurueck={{.Path}}" title="{{t "Zum Spaß: wie ein Desktop von 1998"}}"{{if eq .Theme "98"}} aria-current="true"{{end}}>98</a>
+            </span></div>
+        </div>
+      </details>{{end}}
+    </div>
+  </div>
+  {{template "connband" .}}
+</header>
+{{end}}
+{{end}}
+<main class="wrap{{if eq .Nav "login"}} wrap-login{{end}}{{if eq .Nav "setup"}} wrap-setup{{end}}" id="inhalt" tabindex="-1">
+  {{if .Flash}}<p class="note" data-tone="ok" role="status">{{icon "check"}}<span class="note-body">{{.Flash}}</span></p>{{end}}
+  {{if .Error}}<p class="note" data-tone="danger" role="alert">{{icon "alert"}}<span class="note-body">{{.Error}}</span></p>{{end}}
+  {{template "content" .}}
+</main>
+{{end}}
+{{if .User.Name}}
+{{if eq .Nav "setup"}}{{else if .W98}}{{else if eq .Theme "98"}}{{template "w98-taskbar" .}}{{else}}<footer class="foot"><div class="foot-in">
+  <span>Netsession Relay{{with .Instance}} · {{.}}{{end}} <span class="mono">{{.Version}}</span>{{if .Demo}} · {{t "Demo mit erfundenen Daten"}}{{end}}</span>
+  <span>{{.User.Name}} · {{roleName .User.Role}}</span>
+</div></footer>{{end}}
+{{if hasRole .User "operator"}}
+<form method="post" action="/system/notaus" id="stop-form" hidden
+      data-confirm="{{t "Das Relay hört sofort auf, Spiele zwischen den Netzen zu verteilen. Laufende Partien bleiben bestehen, neue Spiele werden nur noch am eigenen Tisch gefunden. Wieder einschalten: Knopf „Wieder an“ oben, ab Operator."}}"
+      data-confirm-title="{{t "Relay jetzt pausieren?"}}" data-confirm-ok="{{t "Relay pausieren"}}">
+  <input type="hidden" name="csrf" value="{{.CSRF}}">
+</form>
+{{end}}
+<dialog class="dialog" id="confirm" aria-labelledby="confirm-title" aria-describedby="confirm-text">
+  <form method="dialog">
+    <h2 id="confirm-title">{{t "Sicher?"}}</h2>
+    <p id="confirm-text"></p>
+    <div class="dialog-actions">
+      <button class="btn-outline" type="submit" value="cancel" id="confirm-cancel">{{t "Abbrechen"}}</button>
+      <button class="btn" type="submit" value="ok" id="confirm-ok">{{t "Ja, weiter"}}</button>
+    </div>
+  </form>
+</dialog>
+<div class="toast" id="toast" data-tone="ok" hidden>
+  <span id="toast-icon">{{icon "check"}}</span><span id="toast-text" role="status" aria-live="polite"></span>
+  <button class="icon-btn" type="button" id="toast-close" aria-label="{{t "Meldung schließen"}}">{{icon "close"}}</button>
+</div>
+<p class="sr" id="announce" aria-live="polite"></p>
+{{end}}
+</body>
+</html>
+{{define "langswitch"}}<span class="langs">{{if eq .Lang "de"}}<b aria-current="true">DE</b>{{else}}<a href="/sprache/de?zurueck={{.Path}}" lang="de" hreflang="de" title="Deutsch">DE</a>{{end}}<span aria-hidden="true">·</span>{{if eq .Lang "en"}}<b aria-current="true">EN</b>{{else}}<a href="/sprache/en?zurueck={{.Path}}" lang="en" hreflang="en" title="English">EN</a>{{end}}</span>{{end}}
+{{define "liveclock"}}<span class="live" id="live" data-state="static" title="{{t "Stand vom Seitenaufruf. Mit JavaScript aktualisiert sich die Seite alle 2 Sekunden."}}">
+        <i class="dot" aria-hidden="true"></i><span id="live-text">{{ts .Live.TS "time"}}</span>
+      </span>{{end}}
+{{/* ---- theme "98" (theme98.css): desktop icons, window title bar, status bar, taskbar with the Start menu ----
+     The two checkboxes are the state of the window (minimised, maximised); labels switch them, so it works without
+     JavaScript. The header and <main> sit inside .w98-win, which w98-desk opens and w98-taskbar closes. */}}
+{{define "w98-desk"}}<input class="sr" type="checkbox" id="w98-min" aria-label="{{t "Fenster minimieren"}}">
+<input class="sr" type="checkbox" id="w98-max" aria-label="{{t "Fenster maximieren"}}">
+{{template "w98-icons" .}}
+{{template "w98-wall" .}}
+<div class="w98-win">{{end}}
+{{define "w98-title"}}<div class="w98-title">
+    {{icon98 "relay"}}<span class="w98-title-text">{{.Title}} – Netsession Relay{{with .Instance}} · {{.}}{{end}}</span>
+    <span class="w98-title-btns">
+      <label class="w98-tb" for="w98-min" title="{{t "Minimieren"}}">{{icon98 "min"}}</label>
+      <label class="w98-tb w98-tb-max" for="w98-max" title="{{t "Maximieren"}}">{{icon98 "max"}}</label>
+      <a class="w98-tb w98-tb-close" href="/" title="{{t "Schließen, zur Übersicht"}}" aria-label="{{t "Schließen, zur Übersicht"}}">{{icon98 "close"}}</a>
+    </span>
+  </div>{{end}}
+{{define "w98-taskbar"}}<div class="w98-status">
+  <span>Netsession Relay{{with .Instance}} · {{.}}{{end}} <span class="mono">{{.Version}}</span>{{if .Demo}} · {{t "Demo mit erfundenen Daten"}}{{end}}</span>
+  <span>{{.User.Name}} · {{roleName .User.Role}}</span>
+</div>
+</div>
+{{template "w98-tpls" .}}
+<nav class="w98-taskbar" aria-label="{{t "Taskleiste"}}">
+  {{template "w98-start" .}}
+  <label class="w98-task" for="w98-min" title="{{.Title}} – Netsession Relay">{{icon98 "relay"}}<span>{{.Title}}</span></label>
+  {{template "w98-tray" .}}
+</nav>{{end}}
+{{define "w98-start"}}<details class="w98-start" id="w98-start">
+    <summary>{{icon98 "relay"}}<b>Start</b></summary>
+    <div class="w98-menu">
+      <div class="w98-band" aria-hidden="true"><span><b>Netsession</b> Relay</span></div>
+      <ul class="w98-items">
+        <li><a href="/" data-app{{if eq .Nav "overview"}} aria-current="page"{{end}}>{{icon98 "overview"}}<span>{{t "Übersicht"}}</span></a></li>
+        <li><a href="/spiele" data-app{{if eq .Nav "games"}} aria-current="page"{{end}}>{{icon98 "games"}}<span>{{t "Spiele"}}</span></a></li>
+        <li><a href="/spieler" data-app{{if eq .Nav "players"}} aria-current="page"{{end}}>{{icon98 "players"}}<span>{{t "Spieler"}}</span></a></li>
+        {{if hasRole .User "operator"}}<li><a href="/finder" data-app{{if eq .Nav "finder"}} aria-current="page"{{end}}>{{icon98 "finder"}}<span>{{t "Port-Finder"}}</span></a></li>{{end}}
+        {{if hasRole .User "admin"}}
+        <li><a href="/netz" data-app{{if eq .Nav "network"}} aria-current="page"{{end}}>{{icon98 "network"}}<span>{{t "Netz"}}</span></a></li>
+        <li><a href="/verlauf" data-app{{if eq .Nav "history"}} aria-current="page"{{end}}>{{icon98 "history"}}<span>{{t "Verlauf"}}</span></a></li>
+        <li><a href="/system" data-app{{if eq .Nav "system"}} aria-current="page"{{end}}>{{icon98 "system"}}<span>{{t "System"}}</span></a></li>
+        {{end}}
+        <li class="w98-sep" role="separator"></li>
+        <li><details class="w98-sub" name="w98-sub">
+          <summary>{{icon98 "lang"}}<span>{{t "Sprache"}}</span>{{icon98 "arrow"}}</summary>
+          <ul class="w98-fly">
+            <li>{{if eq .Lang "de"}}<b aria-current="true">Deutsch</b>{{else}}<a href="/sprache/de?zurueck={{.Path}}" data-back lang="de" hreflang="de">Deutsch</a>{{end}}</li>
+            <li>{{if eq .Lang "en"}}<b aria-current="true">English</b>{{else}}<a href="/sprache/en?zurueck={{.Path}}" data-back lang="en" hreflang="en">English</a>{{end}}</li>
+          </ul>
+        </details></li>
+        <li><details class="w98-sub" name="w98-sub">
+          <summary>{{icon98 "theme"}}<span>{{t "Aussehen"}}</span>{{icon98 "arrow"}}</summary>
+          <ul class="w98-fly">
+            <li><a href="/aussehen/netsession?zurueck={{.Path}}" data-back>Netsession</a></li>
+            <li><b aria-current="true">98</b></li>
+          </ul>
+        </details></li>
+        <li class="w98-sep" role="separator"></li>
+        {{if hasRole .User "operator"}}
+        <li data-stop-link{{if not .Live.State.CanStop}} hidden{{end}}><a href="/notaus">{{icon98 "stop"}}<span>{{t "Not-Aus…"}}</span></a></li>
+        <li data-resume-link{{if ne .Live.State.Key "paused"}} hidden{{end}}><a href="/notaus">{{icon98 "resume"}}<span>{{t "Wieder an…"}}</span></a></li>
+        {{end}}
+        <li><form method="post" action="/logout">
+          <input type="hidden" name="csrf" value="{{.CSRF}}">
+          <button type="submit">{{icon98 "logout"}}<span>{{t "%s abmelden…" .User.Name}}</span></button>
+        </form></li>
+      </ul>
+    </div>
+  </details>{{end}}
+{{define "w98-tray"}}<div class="w98-tray">
+    <a class="w98-tray-state" href="/" data-app data-tone="{{.Live.State.Tone}}" data-tone-live title="{{t "Betriebsart. Zur Übersicht"}}">
+      <span data-icon-live>{{icon .Live.State.Icon}}</span><span class="sr">{{t "Betriebsart:"}} <span data-live="state.label">{{t .Live.State.Label}}</span></span>
+    </a>
+    {{template "liveclock" .}}
+  </div>{{end}}
+{{define "connband"}}<div class="conn" id="conn" role="status" hidden>
+    <div class="conn-in">{{icon "alert"}}<span id="conn-text">{{t "Keine Verbindung zum Relay-Server. Die Zahlen sind veraltet. Neuer Versuch läuft."}}</span>
+    <a class="btn-outline btn-sm" href="">{{t "Neu laden"}}</a></div>
+  </div>{{end}}
+{{/* ---- theme "98", the desktop shell: what a top-level request gets (theme.go w98Mode, .W98 "shell"). The window
+     manager static/w98.js opens every page as a program in its own window, an iframe that gets the page without
+     chrome (.W98 "frame"). Without JavaScript the requested page fills the desktop.
+     Browsers send Sec-Fetch-Dest only to https and localhost. Without it the server cannot tell the two apart and
+     sends the single-window page (.W98 ""); there static/w98mode.js decides in the browser: inside a window the
+     chrome is hidden by CSS, at the top w98.js turns the page into the same desktop. ---- */}}
+{{define "w98-tpls"}}<template id="w98-win-tpl"><section class="w98-window">
+  <div class="w98-title">
+    {{icon98 "relay"}}<span class="w98-title-text"></span>
+    <span class="w98-title-btns">
+      <button class="w98-tb" type="button" data-act="min" title="{{t "Minimieren"}}" aria-label="{{t "Minimieren"}}">{{icon98 "min"}}</button>
+      <button class="w98-tb w98-tb-max" type="button" data-act="max" title="{{t "Maximieren"}}" aria-label="{{t "Maximieren"}}" data-max="{{t "Maximieren"}}" data-restore="{{t "Wiederherstellen"}}">{{icon98 "max"}}{{icon98 "restore"}}</button>
+      <button class="w98-tb w98-tb-close" type="button" data-act="close" title="{{t "Schließen"}}" aria-label="{{t "Schließen"}}">{{icon98 "close"}}</button>
+    </span>
+  </div>
+  <iframe class="w98-frame"></iframe>
+  <div class="w98-grip" aria-hidden="true"></div>
+</section></template>
+<template id="w98-task-tpl"><button class="w98-task" type="button" aria-pressed="false">{{icon98 "relay"}}<span></span></button></template>{{end}}
+{{define "w98-shell"}}<div class="w98-desktop" id="w98-desktop" data-start="{{.Path}}">
+  {{template "w98-icons" .}}
+  {{template "w98-wall" .}}
+  <noscript><iframe class="w98-noscript" src="{{.Path}}" title="{{.Title}}"></iframe></noscript>
+</div>
+{{template "w98-tpls" .}}
+<nav class="w98-taskbar" aria-label="{{t "Taskleiste"}}">
+  {{template "w98-start" .}}
+  <div class="w98-tasks" id="w98-tasks"></div>
+  {{template "w98-tray" .}}
+</nav>{{end}}
+{{/* the event logo as the picture on the desktop */}}
+{{define "w98-wall"}}{{with .Logo}}<img class="w98-wall" src="{{.URL}}" alt="{{.Alt}}" width="{{.Width}}" height="{{.Height}}">{{end}}{{end}}
+{{define "w98-icons"}}<nav class="w98-desk" aria-label="{{t "Desktop"}}">
+    <a href="/" data-app>{{icon98 "overview"}}<span>{{t "Übersicht"}}</span></a>
+    <a href="/spiele" data-app>{{icon98 "games"}}<span>{{t "Spiele"}}</span></a>
+    <a href="/spieler" data-app>{{icon98 "players"}}<span>{{t "Spieler"}}</span></a>
+    {{if hasRole .User "operator"}}<a href="/finder" data-app>{{icon98 "finder"}}<span>{{t "Port-Finder"}}</span></a>{{end}}
+    {{if hasRole .User "admin"}}
+    <a href="/netz" data-app>{{icon98 "network"}}<span>{{t "Netz"}}</span></a>
+    <a href="/verlauf" data-app>{{icon98 "history"}}<span>{{t "Verlauf"}}</span></a>
+    <a href="/system" data-app>{{icon98 "system"}}<span>{{t "System"}}</span></a>
+    {{end}}
+  </nav>{{end}}

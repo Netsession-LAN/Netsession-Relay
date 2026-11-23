@@ -1,0 +1,10 @@
+.git
+.go
+lab/.bin
+docs
+*.db
+*.pcap
+*.pcapng
+backups
+.env
+.env.*

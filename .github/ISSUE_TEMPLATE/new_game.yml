@@ -1,0 +1,46 @@
+name: New game / port correction
+description: A game that is missing, or ports that are wrong in games/games.yaml
+title: "[game] "
+labels: [game-database]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Thanks! Verified facts help most. If you can, capture UDP on a client while it opens the LAN browser:
+        `udp and (broadcast or multicast)` and tell us what you saw.
+  - type: input
+    id: game
+    attributes:
+      label: Game and version / store
+      placeholder: "FlatOut: Ultimate Carnage, ZOOM Platform build from 2026-11"
+    validations:
+      required: true
+  - type: textarea
+    id: ports
+    attributes:
+      label: Discovery ports
+      description: Destination port(s), broadcast or multicast (group), who sends first (client asks / host announces)
+      placeholder: "UDP 23757 broadcast to 255.255.255.255, client asks, host answers by broadcast"
+    validations:
+      required: true
+  - type: dropdown
+    id: source
+    attributes:
+      label: Does the host answer the sender's IP directly (unicast)?
+      options: ["Yes – original sender IP needed", "No – address is in the payload / answer is a broadcast", "Don't know"]
+  - type: input
+    id: gameports
+    attributes:
+      label: Game traffic ports after joining (unicast)
+      placeholder: "UDP 23756"
+  - type: dropdown
+    id: evidence
+    attributes:
+      label: How do you know?
+      options: [Packet capture, Source code, Official documentation, Forum / other source]
+    validations:
+      required: true
+  - type: textarea
+    id: links
+    attributes:
+      label: Sources, capture summary, notes

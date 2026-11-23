@@ -1,0 +1,179 @@
+{{define "diagnose"}}
+<p class="note note-lead" data-tone="{{.Verdict.Tone}}">{{icon .Verdict.Icon}}<span class="note-body"><b>{{.Verdict.Title}}.</b> {{.Verdict.Text}}</span></p>
+{{if .Steps}}
+<ol class="steps">
+  {{range .Steps}}
+  <li class="step" data-tone="{{.Tone}}">{{icon .Icon}}<div><b>{{.Title}}</b><p>{{if eq .Title $.Verdict.Title}}{{t "Hier hakt es, siehe oben."}}{{else}}{{.Text}}{{end}}</p></div></li>
+  {{end}}
+</ol>
+{{end}}
+{{end}}
+
+{{define "content"}}
+{{$d := .Data}}{{$g := .Data.Game}}{{$last := ""}}{{range $i, $v := $d.Verifications}}{{if eq $i 0}}{{$last = $v.Result}}{{end}}{{end}}
+<p class="crumbs"><a href="/spiele">{{icon "back"}}{{t "Alle Spiele"}}</a></p>
+<div class="pagehead pagehead-top">
+  <div>
+    <span class="bar"></span>
+    <h1>{{$g.Name}}</h1>
+    <p class="tags">
+      {{if $last}}<span class="flag" data-tone="{{resultTone $last}}">{{icon (resultIcon $last)}}{{resultBadge $last}}</span>{{end}}
+      {{if eq $g.RelayNeeded "no"}}<span class="flag">{{t "Kein LAN-Broadcast"}}</span>
+      {{else if eq $g.RelayNeeded "unknown"}}<span class="flag" data-tone="warn">{{icon "alert"}}{{t "Ports nicht belegt"}}</span>
+      {{else if eq $g.Confidence "low"}}{{if not $last}}<span class="flag" data-tone="warn">{{icon "alert"}}{{t "Unsicher, vor Ort prüfen"}}</span>{{end}}
+      {{else if eq $g.Confidence "high"}}<span class="flag" data-tone="ok">{{icon "check"}}{{t "Ports belegt"}}</span>
+      {{else}}<span class="flag">Ports {{confName $g.Confidence}}</span>{{end}}
+      {{if $g.Pinned}}<span class="flag">{{t "Priorität"}}</span>{{end}}
+      <span class="mono small muted">{{$g.ID}}</span>
+    </p>
+    {{if $g.Aliases}}<p class="small muted">{{t "Auch bekannt als:"}} {{join $g.Aliases " · "}}</p>{{end}}
+  </div>
+  <div class="pagehead-act">
+    {{if ne $g.RelayNeeded "no"}}
+    <div class="bigswitch" data-id="{{$g.ID}}" data-game-switch>
+      <span class="label">{{t "Weiterleiten"}}</span>
+      {{if $d.CanSwitch}}
+      <form method="post" action="/spiele/{{$g.ID}}" class="toggle-form">
+        <input type="hidden" name="csrf" value="{{.CSRF}}">
+        <input type="hidden" name="back" value="/spiele/{{$g.ID}}">
+        <input type="hidden" name="on" value="{{if $g.Enabled}}0{{else}}1{{end}}">
+        <button class="switch switch-lg" type="submit" role="switch" aria-checked="{{if $g.Enabled}}true{{else}}false{{end}}" aria-label="{{t "%s weiterleiten" $g.Name}}"><span class="track" aria-hidden="true"><i></i></span><span class="switch-word" aria-hidden="true">{{if $g.Enabled}}{{t "An"}}{{else}}{{t "Aus"}}{{end}}</span></button>
+      </form>
+      {{else}}<span class="onoff" data-onoff>{{if $g.Enabled}}{{t "An"}}{{else}}{{t "Aus"}}{{end}}</span>{{end}}
+    </div>
+    {{end}}
+    {{if $d.CanSwitch}}<a class="btn-outline" href="/spiele/{{$g.ID}}/bearbeiten">{{icon "edit"}}<span>{{t "Bearbeiten"}}</span></a>{{end}}
+  </div>
+</div>
+
+<section class="section" aria-labelledby="diag-h">
+  <h2 id="diag-h">{{t "Wird es gefunden?"}}</h2>
+  <div id="diagnose" data-fragment="/spiele/{{$g.ID}}?teil=diagnose" data-id="{{$g.ID}}" data-rules="{{$g.RuleIDs}}">{{template "diagnose" $d}}</div>
+</section>
+
+<section class="section" id="tests" aria-labelledby="tests-h">
+  <div class="sechead">
+    <h2 id="tests-h">{{t "Bei Events getestet"}}</h2>
+    <a class="btn-outline btn-sm" href="/spiele/{{$g.ID}}/export.yaml" title="{{t "Format der Spiele-Datenbank (games.yaml)"}}">{{icon "download"}}<span>{{t "Als YAML exportieren"}}</span></a>
+  </div>
+  {{if $d.Verifications}}
+  <ul class="vlist">
+    {{range $d.Verifications}}
+    <li class="vrow">
+      <span class="flag" data-tone="{{resultTone .Result}}">{{icon (resultIcon .Result)}}{{resultName .Result}}</span>
+      <div>
+        <p><b>{{.Event}}</b>{{if .Variant}} · {{.Variant}}{{end}}</p>
+        {{if .Note}}<p class="small muted">{{.Note}}</p>{{end}}
+      </div>
+      <div class="vrow-meta small muted">
+        <span>{{.User}} · <span class="mono">{{slice .TS 0 10}}</span></span>
+        {{if $d.CanSwitch}}<form method="post" action="/spiele/{{$g.ID}}/verifikation/{{.ID}}/loeschen" data-confirm="{{t "Der Eintrag verschwindet."}}" data-confirm-title="{{t "Test löschen?"}}" data-confirm-ok="{{t "Löschen"}}"><input type="hidden" name="csrf" value="{{$.CSRF}}"><button class="icon-btn" type="submit" aria-label="{{t "Eintrag vom %s löschen" (slice .TS 0 10)}}">{{icon "trash"}}</button></form>{{end}}
+      </div>
+    </li>
+    {{end}}
+  </ul>
+  {{else}}<p class="quiet">{{icon "info"}}<span>{{t "Noch nie getestet."}}{{if $d.CanSwitch}} {{t "Trag ein, ob es auf der LAN geklappt hat."}}{{end}}</span></p>{{end}}
+  {{if $d.CanSwitch}}
+  <details class="fold"{{if not $d.Verifications}} open{{end}}><summary><span class="label">{{t "Test eintragen"}}</span></summary>
+  <form method="post" action="/spiele/{{$g.ID}}/verifikation" class="form">
+    <input type="hidden" name="csrf" value="{{.CSRF}}">
+    <fieldset><legend class="label">{{t "Ergebnis"}}</legend>
+      <div class="seg seg-wide">
+        <label class="seg-item" data-tone="ok"><input type="radio" name="result" value="works" required>{{icon "check"}}<span>{{t "Geht"}}</span></label>
+        <label class="seg-item" data-tone="warn"><input type="radio" name="result" value="partial">{{icon "alert"}}<span>{{t "Teilweise"}}</span></label>
+        <label class="seg-item" data-tone="danger"><input type="radio" name="result" value="fails">{{icon "alert"}}<span>{{t "Geht nicht"}}</span></label>
+      </div>
+    </fieldset>
+    <div class="field"><label class="label" for="variant">{{t "Variante (optional)"}}</label><input id="variant" name="variant" placeholder="Steam, GOG, CD 1.2" autocomplete="off"></div>
+    <div class="field"><label class="label" for="vnote">{{t "Notiz (optional)"}}</label><input id="vnote" name="note" placeholder="{{t "Tisch 3 nach Tisch 7, Beitritt klappt"}}" autocomplete="off" aria-describedby="vnote-hint">
+      <p class="hint" id="vnote-hint">{{t "Was getestet wurde. Bei „teilweise“: was nicht ging. Der Eintrag gilt für das laufende Event."}}</p></div>
+    <div class="actions"><button class="btn-outline" type="submit">{{t "Eintragen"}}</button></div>
+  </form>
+  </details>
+  {{end}}
+</section>
+
+<section class="section grid2">
+  <div class="panel">
+    <h2>{{t "LAN-Suche"}}</h2>
+    {{if $g.Discovery}}
+    <div class="tablewrap"><table>
+      <thead><tr><th>{{t "Art"}}</th><th>{{t "UDP-Ports"}}</th><th>{{t "Wer sendet"}}</th></tr></thead>
+      <tbody>{{range $g.Discovery}}<tr>
+        <td>{{kindName .Kind}}{{if .Group}} <span class="mono small">{{.Group}}</span>{{end}}</td>
+        <td class="mono">{{.Ports}}</td>
+        <td>{{dirName .Direction}}</td>
+      </tr>{{end}}</tbody>
+    </table></div>
+    {{else}}<p class="muted">{{t "Keine Broadcast-Suche bekannt."}}{{if $d.CanSwitch}} {{th `Ports mit dem <a href="/finder">Port-Finder</a> messen.`}}{{end}}</p>{{end}}
+
+    {{if $d.Profiles}}
+    <div class="actrow">
+      {{if and $d.CanAdmin $g.Enabled (gt (len $d.Profiles) 1)}}
+      <form method="post" action="/spiele/{{$g.ID}}/profil" class="row" data-autosubmit>
+        <input type="hidden" name="csrf" value="{{.CSRF}}">
+        <label class="label" for="profile">{{t "Profil"}}</label>
+        <select id="profile" name="profile" aria-describedby="profile-hint"><option value="">{{t "Standard (%s)" $d.Default}}</option>{{range $d.Profiles}}<option value="{{.}}"{{if eq . $d.Profile}} selected{{end}}>{{.}}</option>{{end}}</select>
+        <button class="btn-outline btn-sm" type="submit">{{t "Übernehmen"}}</button>
+      </form>
+      {{else}}
+      <p><span class="label">{{t "Profil"}}</span> {{if $d.Profile}}{{$d.Profile}}{{else}}{{t "%s (Standard)" $d.Default}}{{end}}{{if and $d.CanAdmin (not $g.Enabled) (gt (len $d.Profiles) 1)}} <span class="small muted">{{t "· Auswahl geht, wenn das Spiel an ist."}}</span>{{end}}</p>
+      {{end}}
+      {{if $d.CanAdmin}}<a class="small" id="profile-hint" href="/netz#profile">{{t "Wer sieht wessen Spiele"}}</a>{{end}}
+    </div>
+    {{end}}
+
+    {{if and (ne $g.RelayNeeded "no") (or $d.Sources $d.CanAdmin)}}
+    <div class="actrow" id="absender">
+      {{if $d.Sources}}
+      <p><span class="label">{{t "Nur diese Absender"}}</span>
+        {{range $d.Sources}}<span class="mono">{{.Source}}</span> {{if .Net}}<span class="small muted">({{.Net}})</span>{{else}}<span class="flag" data-tone="warn">{{icon "alert"}}{{t "trifft kein Netz"}}</span>{{end}} {{end}}</p>
+      {{else if not $g.Enabled}}
+      <p><span class="label">{{t "Nur diese Absender"}}</span> {{t "alle"}} <span class="small muted">{{t "· Auswahl geht, wenn das Spiel an ist."}}</span></p>
+      {{end}}
+      {{if and $d.CanAdmin $g.Enabled}}
+      <form method="post" action="/spiele/{{$g.ID}}/absender" class="form">
+        <input type="hidden" name="csrf" value="{{.CSRF}}">
+        <div class="field"><label class="label" for="sources">{{t "Nur diese Absender (optional)"}}</label>
+          <input id="sources" name="sources" class="mono" value="{{range $i, $s := $d.Sources}}{{if $i}} {{end}}{{$s.Source}}{{end}}" placeholder="10.10.5.20, 10.10.5.21" autocomplete="off" spellcheck="false" aria-describedby="sources-hint">
+          <span class="hint" id="sources-hint">{{t "Leer = alle Absender. Mehrere Adressen oder Netze mit Komma oder Leerzeichen trennen, z. B. 10.10.5.20, 10.10.5.21, 10.10.7.0/28. Ein Eintrag beschränkt nur das Netz, in dem er liegt: von dort werden nur noch die eingetragenen Absender weitergeleitet, die anderen Netze bleiben offen."}}</span></div>
+        <div class="actions"><button class="btn-outline btn-sm" type="submit">{{t "Übernehmen"}}</button></div>
+      </form>
+      {{end}}
+    </div>
+    {{end}}
+
+    {{if $d.Rules}}
+    <h3>{{t "Zähler im Relay"}}</h3>
+    <div class="tablewrap"><table>
+      <thead><tr><th>{{t "Regel"}}</th><th class="num">{{t "Empfangen"}}</th><th class="num">{{t "Kopiert"}}</th></tr></thead>
+      <tbody>{{range $d.Rules}}<tr data-rule="{{.ID}}">
+        <td class="mono small">{{.ID}}</td>
+        <td class="num mono" data-f="rx">{{num .RX}}</td><td class="num mono" data-f="relayed">{{num .Relayed}}</td>
+      </tr>{{end}}</tbody>
+    </table></div>
+    <p class="hint">{{t "Seit dem Start der Engine. Teilen sich mehrere Spiele einen Port, gelten die Zahlen für alle zusammen."}}</p>
+    {{end}}
+  </div>
+  <div class="panel">
+    <h2>{{t "Danach: Spielverkehr"}}</h2>
+    {{if $g.GamePorts}}
+    <p>{{t "Ist das Spiel gefunden, läuft die Partie direkt zwischen den PCs. Diese Ports müssen zwischen den Netzen erlaubt sein:"}}</p>
+    <ul class="ports">{{range $proto, $ports := $g.GamePorts}}<li><span class="label">{{$proto}}</span> <span class="mono">{{$ports}}</span></li>{{end}}</ul>
+    {{else}}<p class="muted">{{t "Keine Spiel-Ports hinterlegt."}}</p>{{end}}
+  </div>
+</section>
+
+{{if or $g.Notes $g.Sources}}
+<section class="section">
+  <h2>{{t "Notizen"}}</h2>
+  {{if $g.Notes}}<p class="prose">{{$g.Notes}}</p>{{end}}
+  {{if $g.Sources}}
+  <details class="fold">
+    <summary><span class="label">{{t "Quellen (%d)" (len $g.Sources)}}</span></summary>
+    <ul class="sources">{{range $g.Sources}}<li><a href="{{.}}" rel="noreferrer noopener" target="_blank" class="small">{{.}}</a></li>{{end}}</ul>
+  </details>
+  {{end}}
+</section>
+{{end}}
+{{end}}

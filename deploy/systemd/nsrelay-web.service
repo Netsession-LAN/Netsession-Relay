@@ -1,0 +1,26 @@
+# Fallback without Docker. Needs a system user with UID/GID 10001:
+#   useradd --system --uid 10001 --user-group --home /var/lib/nsrelay-web nsrelay
+[Unit]
+Description=Netsession Relay web (UI, API, configuration database)
+After=nsrelay-engine.service
+Wants=nsrelay-engine.service
+
+[Service]
+EnvironmentFile=-/srv/nsrelay/.env
+Environment=NSRELAY_DB=/var/lib/nsrelay-web/nsrelay.db
+Environment=NSRELAY_SOCKET=/run/nsrelay/engine.sock
+Environment=NSRELAY_BACKUP_DIR=/srv/nsrelay/backups
+ExecStart=/usr/local/bin/nsrelay web
+Restart=always
+RestartSec=2
+User=nsrelay
+Group=nsrelay
+StateDirectory=nsrelay-web
+NoNewPrivileges=yes
+ProtectSystem=strict
+ProtectHome=yes
+ReadWritePaths=/srv/nsrelay/backups
+PrivateTmp=yes
+
+[Install]
+WantedBy=multi-user.target

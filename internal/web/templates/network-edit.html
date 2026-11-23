@@ -1,0 +1,71 @@
+{{define "content"}}
+{{$f := .Data}}{{$csrf := .CSRF}}
+<p class="crumbs"><a href="/netz">{{icon "back"}}{{t "Netze"}}</a></p>
+<span class="bar"></span>
+{{if $f.New}}<h1>{{th "Netz <em>anlegen</em>"}}</h1>
+<p class="lead">{{t "Ein VLAN, in das das Relay Spiele verteilt. Es muss am Trunk der Relay-VM anliegen, sonst kommt nichts an."}}</p>
+{{else}}<h1>{{th "%s <em>bearbeiten</em>" $f.Name}}</h1>
+<p class="lead">{{t "Änderungen gelten sofort. Ein- und ausschalten geht in der Liste."}}</p>{{end}}
+{{with $f.Err}}<p class="note" data-tone="danger" role="alert">{{icon "alert"}}<span class="note-body">{{.}}</span></p>{{end}}
+<form method="post" action="{{if $f.New}}/netz/neu{{else}}/netz/{{$f.VID}}/bearbeiten{{end}}" class="section-first">
+  <input type="hidden" name="csrf" value="{{$csrf}}">
+  <div class="grid2">
+    <section class="panel" aria-labelledby="n-h">
+      <h2 id="n-h">{{t "Netz"}}</h2>
+      <div class="form">
+        <div class="field">{{if $f.New}}<label class="label" for="vid">{{t "VLAN-ID"}}</label>
+          <input id="vid" name="vid" required value="{{$f.VID}}" class="mono" inputmode="numeric" pattern="[0-9]{1,4}" placeholder="1115" autocomplete="off" aria-describedby="vid-hint">
+          <p class="hint" id="vid-hint">{{t "Der Tag auf dem Trunk, 1 bis 4094. Lässt sich später nicht ändern."}}</p>
+          {{else}}<span class="label">{{t "VLAN-ID"}}</span><p class="mono">{{$f.VID}}</p>{{end}}</div>
+        <div class="field"><label class="label" for="name">{{t "Name"}}</label>
+          <input id="name" name="name" required maxlength="40" value="{{$f.Name}}" placeholder="{{t "Tisch 15"}}" autocomplete="off"></div>
+        <div class="field"><label class="label" for="group">{{t "Gruppe"}}</label>
+          <select id="group" name="group" aria-describedby="group-hint">{{range $f.Groups}}<option value="{{.}}"{{if eq . $f.Group}} selected{{end}}>{{group .}}</option>{{end}}</select>
+          <p class="hint" id="group-hint">{{t "Bestimmt, wer wessen Spiele sieht (Matrix auf der Seite Netz)."}}</p></div>
+        {{if $f.New}}<label class="check"><input type="checkbox" name="enable" value="1"{{if $f.Enable}} checked{{end}}><span><b>{{t "Gleich einschalten"}}</b><small>{{t "gilt sofort im aktiven Event"}}</small></span></label>{{end}}
+      </div>
+    </section>
+    <section class="panel" aria-labelledby="a-h">
+      <h2 id="a-h">{{t "Anbindung"}}</h2>
+      <div class="form">
+        <div class="field"><label class="label" for="cidr">{{t "Adressen"}}</label>
+          <input id="cidr" name="cidr" required value="{{$f.CIDR}}" class="mono" placeholder="10.10.15.0/24" autocomplete="off" spellcheck="false" aria-describedby="cidr-hint">
+          <p class="hint" id="cidr-hint">{{t "IPv4-Netz mit Maske. Darf sich mit keinem anderen Netz überschneiden."}}</p></div>
+        <div class="field"><label class="label" for="relay_ip">{{t "Relay-IP"}}</label>
+          <input id="relay_ip" name="relay_ip" required value="{{$f.RelayIP}}" class="mono" inputmode="decimal" placeholder="10.10.15.55" autocomplete="off" spellcheck="false" aria-describedby="relay-hint">
+          <p class="hint" id="relay-hint">{{t "Adresse des Relays in diesem Netz. Muss frei sein, also nicht im DHCP-Bereich."}}</p></div>
+        <div class="field"><label class="label" for="attach">{{t "Anbindung"}}</label>
+          <select id="attach" name="attach" data-toggles="parent-field" data-toggles-on="trunk" data-toggles-else="device-field">
+            <option value="trunk"{{if eq $f.Attach "trunk"}} selected{{end}}>{{t "Über den Trunk (VLAN-Tag)"}}</option>
+            <option value="device"{{if eq $f.Attach "device"}} selected{{end}}>{{t "Eigenes Interface"}}</option>
+          </select></div>
+        <div class="field" id="parent-field"><label class="label" for="parent">{{t "Trunk-Interface"}}</label>
+          <input id="parent" name="parent" required value="{{$f.Parent}}" class="mono" placeholder="ens19" autocomplete="off" spellcheck="false"></div>
+        <div class="field" id="device-field"><label class="label" for="device">Interface</label>
+          <input id="device" name="device" required value="{{$f.Device}}" class="mono" placeholder="ens20" autocomplete="off" spellcheck="false"></div>
+        <details class="fold">
+          <summary><span class="label">{{t "Grenzen (optional)"}}</span></summary>
+          <div class="form">
+            <div class="field"><label class="label" for="rate_pps">{{t "Pakete pro Sekunde"}}</label>
+              <input id="rate_pps" name="rate_pps" value="{{$f.Rate}}" class="mono" inputmode="numeric" pattern="[0-9]*" placeholder="{{t "Standard"}}" autocomplete="off"></div>
+            <div class="field"><label class="label" for="rate_burst">{{t "Spitze"}}</label>
+              <input id="rate_burst" name="rate_burst" value="{{$f.Burst}}" class="mono" inputmode="numeric" pattern="[0-9]*" placeholder="{{t "Standard"}}" autocomplete="off"></div>
+            <p class="hint">{{t "Leer: die Standardgrenze der Engine. Mehr kommt aus diesem Netz nicht ins Relay."}}</p>
+          </div>
+        </details>
+      </div>
+    </section>
+  </div>
+  <div class="actions section-first"><button class="btn" type="submit">{{if $f.New}}{{t "Netz anlegen"}}{{else}}{{t "Speichern"}}{{end}}</button> <a class="btn-outline" href="/netz">{{t "Abbrechen"}}</a></div>
+</form>
+{{if not $f.New}}
+<section class="section">
+  <h2>{{t "Netz löschen"}}</h2>
+  <p class="muted">{{t "Das Relay verteilt dann nichts mehr in dieses Netz und entfernt sein Interface. Ausschalten reicht meistens."}}</p>
+  <form method="post" action="/netz/{{$f.VID}}/loeschen" data-confirm="{{t "%s (VLAN %s) verschwindet aus allen Events. Das lässt sich nur über den Verlauf zurückholen." $f.Name $f.VID}}" data-confirm-title="{{t "%s löschen?" $f.Name}}" data-confirm-ok="{{t "Löschen"}}">
+    <input type="hidden" name="csrf" value="{{$csrf}}">
+    <button class="btn-outline btn-danger" type="submit">{{icon "trash"}}<span>{{t "Netz löschen"}}</span></button>
+  </form>
+</section>
+{{end}}
+{{end}}

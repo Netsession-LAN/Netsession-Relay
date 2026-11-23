@@ -1,0 +1,391 @@
+/* Theme "98": a joke theme in the look of a 1998 desktop, loaded after app.css when the user picks it in the
+   account menu (theme.go). Own rules in the spirit of 98.css (jdan.github.io/98.css), no code or fonts copied.
+   The brand rules of app.css (tokens only, no edge stripes) do not apply here: this file is deliberately off-brand.
+   Most of the work is done by remapping the brand tokens to the 98 palette; the rest gives controls their bevels.
+   The desktop (window with title bar, taskbar, Start menu, desktop icons) has its own markup, the "w98-…"
+   templates in layout.html, and its own colour icons (icons98.svg). */
+
+:root {
+  color-scheme: light;
+  --w98-silver: #c0c0c0;
+  --w98-light: #dfdfdf;
+  --w98-white: #ffffff;
+  --w98-gray: #808080;
+  --w98-dark: #0a0a0a;
+  --w98-navy: #000080;
+  --w98-blue: #1084d0;
+  --w98-teal: #008080;
+  --w98-raised: inset -1px -1px var(--w98-dark), inset 1px 1px var(--w98-white), inset -2px -2px var(--w98-gray), inset 2px 2px var(--w98-light);
+  --w98-pressed: inset -1px -1px var(--w98-white), inset 1px 1px var(--w98-dark), inset -2px -2px var(--w98-light), inset 2px 2px var(--w98-gray);
+  --w98-sunken: inset -1px -1px var(--w98-white), inset 1px 1px var(--w98-gray), inset -2px -2px var(--w98-light), inset 2px 2px var(--w98-dark);
+  --w98-window: inset -1px -1px var(--w98-dark), inset 1px 1px var(--w98-light), inset -2px -2px var(--w98-gray), inset 2px 2px var(--w98-white);
+  --w98-etched: inset 1px 1px var(--w98-white), 1px 1px var(--w98-white);
+  --w98-title: linear-gradient(90deg, var(--w98-navy), var(--w98-blue));
+
+  /* brand tokens -> 98 palette: "ink" were the dark surfaces, "gray" the light texts */
+  --ns-ink-950: var(--w98-white);
+  --ns-ink-900: var(--w98-silver);
+  --ns-ink-850: var(--w98-silver);
+  --ns-ink-700: var(--w98-gray);
+  --ns-ink-600: var(--w98-gray);
+  --ns-gray-100: #000000;
+  --ns-gray-300: #000000;
+  --ns-gray-400: #404040;
+  --ns-white: #000000;
+  --ns-red-500: var(--w98-navy);
+  --ns-red-600: var(--w98-navy);
+  --ns-red-700: var(--w98-navy);
+  --ns-status-success: #007000;
+  --ns-status-warning: #7a5a00;
+  --ns-status-danger: #b00000;
+  --ns-status-info: var(--w98-navy);
+  --ns-font-body: "Microsoft Sans Serif", "MS Sans Serif", Tahoma, Geneva, Arial, sans-serif;
+  --ns-font-display: "Microsoft Sans Serif", "MS Sans Serif", Tahoma, Geneva, Arial, sans-serif;
+  --ns-font-mono: "Lucida Console", "Courier New", monospace;
+  --ns-radius-sm: 0;
+  --ns-radius-md: 0;
+  --ns-radius-lg: 0;
+  --ns-radius-pill: 0;
+  --ns-shadow-card: 2px 2px 0 var(--w98-dark);
+  --ns-gradient-cta: var(--w98-silver);
+  --edge: var(--w98-gray);
+  --line-ctl: var(--w98-gray);
+  --head: 62px;
+  --w98-bar: 30px; /* height of the taskbar */
+  --w98-thin: inset -1px -1px var(--w98-white), inset 1px 1px var(--w98-gray);
+}
+@media (max-width: 1023px) {
+  :root { --head: 92px; }
+}
+@media (pointer: coarse) {
+  :root { --w98-bar: 40px; }
+}
+
+body {
+  background: var(--w98-teal);
+  font-size: 13px;
+  -webkit-font-smoothing: none;
+  padding-bottom: var(--w98-bar); /* room for the taskbar */
+}
+:focus-visible { outline: 1px dotted #000000; outline-offset: 2px; border-radius: 0; }
+
+/* headings: plain bold system font, no versals */
+h1, h2, h3, .fold-title, .pg-title { font-weight: 700; text-transform: none; letter-spacing: 0; }
+h1 { font-size: 22px; }
+h2 { font-size: 16px; }
+h3 { font-size: 13px; }
+.label, th, .glist-head { text-transform: none; letter-spacing: 0; }
+.bar { display: none; }
+
+/* ---- colour icons (icons98.svg): drawn on a 16 px grid, shown at 16 or 32 px with hard pixels ---- */
+.ic98 { width: 16px; height: 16px; flex: none; shape-rendering: crispEdges; vertical-align: -3px; }
+
+/* ---- the window: .w98-win holds the header (title bar + menu bar), main (window body) and the status bar ---- */
+.w98-win {
+  width: calc(100% - 16px); max-width: 1246px; margin: 10px auto; padding: 3px;
+  background: var(--w98-silver); box-shadow: var(--w98-window);
+}
+.top { background: var(--w98-silver); border-bottom: 0; }
+.w98-title {
+  display: flex; align-items: center; gap: 4px; height: 20px; padding: 0 2px 0 3px; color: var(--w98-white);
+  font: 700 13px/1 var(--ns-font-body); background: var(--w98-title);
+}
+.w98-title-text { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.w98-title-btns { display: flex; flex: none; }
+.w98-tb {
+  display: grid; place-items: center; width: 16px; height: 14px; cursor: pointer;
+  background: var(--w98-silver); box-shadow: var(--w98-raised);
+}
+.w98-tb .ic98 { width: 16px; height: 14px; }
+.w98-tb:active { box-shadow: var(--w98-pressed); }
+.w98-tb-close { margin-left: 2px; }
+/* the two checkboxes are invisible: show their keyboard focus on the title-bar button */
+#w98-min:focus-visible ~ .w98-win label[for="w98-min"],
+#w98-max:focus-visible ~ .w98-win label[for="w98-max"],
+.w98-tb:focus-visible { outline: 1px dotted var(--w98-white); outline-offset: 1px; }
+
+/* menu bar */
+.top-in { max-width: none; min-height: 40px; padding: 2px 6px; gap: 12px; box-shadow: inset 0 -1px var(--w98-gray), 0 1px var(--w98-white); }
+.mark { display: none; }
+/* the event logo sits at the end of the menu bar, in a dark box like the logo of a browser of the time */
+.top-ev { order: 9; margin: 0; }
+.top-ev-in { height: 26px; padding: 2px 6px; border: 0; background: #000000; box-shadow: var(--w98-sunken); }
+.top-ev img { height: 22px; max-width: 80px; object-position: center; }
+/* ... and is the picture on the desktop, in the corner above the tray */
+.w98-wall { position: fixed; right: 16px; bottom: calc(var(--w98-bar) + 14px); height: auto; width: auto; max-width: 180px; max-height: 96px; object-fit: contain; pointer-events: none; }
+.w98-desktop .w98-wall { position: absolute; bottom: 14px; }
+.w98-win { position: relative; }
+.login-ev, .logoset-prev, .pagehead-ev { background: #000000; box-shadow: var(--w98-sunken); }
+.login-ev, .pagehead-ev { padding: 4px 6px; box-sizing: content-box; }
+.logoset-prev { border: 0; border-radius: 0; }
+.logoset-prev[data-empty] { background: var(--w98-silver); color: #000000; }
+.logoset-body > p { color: #000000; }
+input[type="file"] { color: #000000; }
+input[type="file"]::file-selector-button { height: 23px; color: #000000; background: var(--w98-silver); border: 0; border-radius: 0; box-shadow: var(--w98-raised); }
+input[type="file"]::file-selector-button:hover { color: #000000; }
+.nav { align-self: center; height: 24px; gap: 0; }
+.nav a { font: 400 13px/1 var(--ns-font-body); text-transform: none; letter-spacing: 0; color: #000000; padding: 0 9px; }
+.nav a::after { display: none; }
+.nav a:hover { color: var(--w98-white); background: var(--w98-navy); }
+.nav a[aria-current="page"] { background: var(--w98-navy); color: var(--w98-white); }
+.top-side { gap: 12px; }
+.state { color: #000000; }
+.top .btn-outline { min-height: 28px; }
+.conn { border-top: 0; }
+.conn-in { max-width: none; padding: 4px 8px; }
+
+/* window body and status bar */
+.w98-win .wrap { max-width: none; margin: 0; padding: 20px 21px 28px; }
+.w98-status { display: flex; gap: 2px; padding-top: 2px; font-size: 12px; }
+.w98-status > span { padding: 3px 6px; box-shadow: var(--w98-thin); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.w98-status > span:first-child { flex: 1; min-width: 0; }
+.toolbar { position: static; background: transparent; border-bottom: 0; }
+
+/* window state: maximised = the whole desktop, minimised = only the button in the taskbar is left */
+body:has(#w98-max:checked) .w98-win { width: auto; max-width: none; margin: 0; }
+body:has(#w98-min:checked) .w98-win { display: none; }
+
+/* ---- desktop icons: where there is room beside the window, and always while it is minimised ---- */
+.w98-desk { display: none; position: fixed; left: 6px; top: 10px; flex-direction: column; gap: 14px; width: 84px; }
+.w98-desk a { display: flex; flex-direction: column; align-items: center; gap: 4px; padding: 2px; color: var(--w98-white); font-size: 12px; text-align: center; text-decoration: none; }
+.w98-desk .ic98 { width: 32px; height: 32px; }
+.w98-desk span { padding: 1px 3px; }
+.w98-desk a:hover span, .w98-desk a:focus-visible span { background: var(--w98-navy); outline: 1px dotted var(--w98-white); }
+.w98-desk a:focus-visible { outline: 0; }
+@media (min-width: 1440px) {
+  .w98-desk { display: flex; }
+}
+body:has(#w98-max:checked) .w98-desk { display: none; }
+body:has(#w98-min:checked) .w98-desk { display: flex; }
+
+/* ---- taskbar: Start, the button of the window, tray with operating state and clock ---- */
+.w98-taskbar {
+  position: fixed; left: 0; right: 0; bottom: 0; z-index: 25; height: var(--w98-bar);
+  display: flex; align-items: stretch; gap: 4px; padding: 4px 2px 2px; color: #000000;
+  background: var(--w98-silver); box-shadow: inset 0 1px var(--w98-light), inset 0 2px var(--w98-white);
+}
+.w98-start { position: relative; flex: none; }
+.w98-start > summary {
+  list-style: none; display: flex; align-items: center; gap: 4px; height: 100%; padding: 0 7px 0 4px; cursor: pointer;
+  font: 700 13px/1 var(--ns-font-body); box-shadow: var(--w98-raised); user-select: none;
+}
+.w98-start summary::-webkit-details-marker { display: none; }
+.w98-start[open] > summary { box-shadow: var(--w98-pressed); padding: 1px 6px 0 5px; }
+.w98-task {
+  flex: 0 1 190px; min-width: 0; display: flex; align-items: center; gap: 5px; padding: 1px 6px 0; cursor: pointer;
+  font: 700 12px/1 var(--ns-font-body); box-shadow: var(--w98-pressed);
+  background: repeating-conic-gradient(var(--w98-white) 0 25%, var(--w98-silver) 0 50%) 0 0 / 2px 2px;
+}
+.w98-task span { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+body:has(#w98-min:checked) .w98-task { font-weight: 400; padding-top: 0; background: var(--w98-silver); box-shadow: var(--w98-raised); }
+#w98-min:focus-visible ~ .w98-taskbar .w98-task { outline: 1px dotted #000000; outline-offset: -4px; }
+.w98-tray { flex: none; margin-left: auto; display: flex; align-items: center; gap: 7px; padding: 0 9px 0 7px; box-shadow: var(--w98-thin); }
+.w98-tray-state { display: inline-flex; color: var(--tone); }
+.w98-tray .live, .w98-tray #live { display: inline-flex; color: #000000; font: 400 12px/1 var(--ns-font-body); }
+
+/* ---- Start menu ---- */
+.w98-menu {
+  position: absolute; left: 0; bottom: calc(100% + 2px); display: flex; width: max-content; min-width: 210px;
+  max-width: calc(100vw - 4px); padding: 3px; background: var(--w98-silver); box-shadow: var(--w98-window), var(--ns-shadow-card);
+}
+.w98-band { position: relative; flex: none; width: 26px; background: linear-gradient(0deg, var(--w98-navy), var(--w98-blue)); }
+.w98-band span {
+  position: absolute; left: 0; bottom: 8px; width: 26px; writing-mode: vertical-rl; transform: rotate(180deg);
+  font: 400 18px/26px var(--ns-font-body); color: var(--w98-silver); white-space: nowrap;
+}
+.w98-band b { color: var(--w98-white); font-weight: 700; }
+.w98-items, .w98-fly { list-style: none; margin: 0; padding: 0; }
+.w98-items { flex: 1; min-width: 0; }
+.w98-items > li { position: relative; }
+.w98-items form { margin: 0; }
+.w98-items > li > a, .w98-sub > summary, .w98-items form button {
+  display: flex; align-items: center; gap: 10px; width: 100%; min-height: 38px; padding: 3px 30px 3px 8px; cursor: pointer;
+  font: 400 13px/1.2 var(--ns-font-body); color: #000000; text-align: left; text-decoration: none;
+  list-style: none; background: none; border: 0; box-shadow: none; border-radius: 0; user-select: none;
+}
+.w98-items > li > a .ic98, .w98-sub > summary .ic98:first-child, .w98-items form button .ic98 { width: 32px; height: 32px; }
+.w98-sub > summary .ic98:last-child { position: absolute; right: 8px; width: 8px; height: 8px; }
+.w98-items a[aria-current="page"] { font-weight: 700; }
+.w98-items > li > a:hover, .w98-items > li > a:focus-visible, .w98-sub > summary:hover, .w98-sub > summary:focus-visible,
+.w98-sub[open] > summary, .w98-items form button:hover, .w98-items form button:focus-visible, .w98-fly a:hover, .w98-fly a:focus-visible {
+  background: var(--w98-navy); color: var(--w98-white); outline: 0;
+}
+.w98-sep { height: 2px; margin: 3px 2px; box-shadow: inset 0 1px var(--w98-gray), inset 0 -1px var(--w98-white); }
+.w98-fly {
+  position: absolute; left: calc(100% - 3px); top: -3px; z-index: 1; min-width: 150px; padding: 3px;
+  background: var(--w98-silver); box-shadow: var(--w98-window), var(--ns-shadow-card);
+}
+.w98-fly a, .w98-fly b { position: relative; display: block; padding: 6px 18px 6px 26px; color: #000000; font-weight: 400; text-decoration: none; white-space: nowrap; }
+.w98-fly b::before { content: "\2713"; position: absolute; left: 9px; }
+@media (max-height: 620px) {
+  .w98-items > li > a, .w98-sub > summary, .w98-items form button { min-height: 26px; }
+  .w98-items > li > a .ic98, .w98-sub > summary .ic98:first-child, .w98-items form button .ic98 { width: 16px; height: 16px; }
+}
+
+/* ---- surfaces ---- */
+.panel, .status, .card, .pgroup { background: var(--w98-silver); border: 1px solid var(--w98-gray); box-shadow: var(--w98-etched); }
+.note, .steps, .vlist, .tile { background: var(--w98-silver); border: 1px solid var(--w98-gray); box-shadow: var(--w98-etched); }
+.panel .note, .login-card .note { background: var(--w98-silver); }
+.note[data-tone="danger"], .status[data-tone="danger"], .tile[data-status="Alarm"] { border-color: var(--ns-status-danger); }
+.login-card { --pad: 32px; box-shadow: var(--w98-window), var(--ns-shadow-card); border: 0; padding: 0 var(--pad) var(--pad); }
+@media (max-width: 560px) { .login-card { --pad: 24px; } }
+.login-card::before {
+  content: "Anmelden"; display: block; margin: 3px calc(3px - var(--pad)) 24px; padding: 3px 6px; color: var(--w98-white);
+  font: 700 13px/16px var(--ns-font-body); background: var(--w98-title);
+}
+html[lang="en"] .login-card::before { content: "Sign in"; }
+.login-logo { filter: brightness(0); }
+.watermark { display: none; }
+
+/* windows that pop up: menu, more, dialog, toast */
+.menu, .more-body, .toast { background: var(--w98-silver); border: 0; box-shadow: var(--w98-window), var(--ns-shadow-card); }
+.dialog { background: var(--w98-silver); border: 0; box-shadow: var(--w98-window), var(--ns-shadow-card); padding: 3px 20px 20px; }
+.dialog h2 {
+  margin: 0 -17px 16px; padding: 3px 6px; color: var(--w98-white); font-size: 13px; background: var(--w98-title);
+}
+.dialog p { color: #000000; }
+.dialog::backdrop { background: transparent; }
+
+/* list views and tables: white, sunken */
+.tablewrap, .glist, .hexdump { background: var(--w98-white); border: 0; box-shadow: var(--w98-sunken); padding: 2px; }
+.panel .tablewrap { border-top: 0; box-shadow: var(--w98-sunken); padding: 2px; background: var(--w98-white); }
+.panel .tablewrap th:first-child, .panel .tablewrap td:first-child { padding-left: var(--ns-space-3); }
+.panel .tablewrap th:last-child, .panel .tablewrap td:last-child { padding-right: var(--ns-space-3); }
+th, .panel .tablewrap th { background: var(--w98-silver); color: #000000; box-shadow: var(--w98-raised); border-bottom: 0; padding-top: 4px; padding-bottom: 4px; }
+td { border-bottom: 1px solid var(--w98-light); }
+tr.grouprow th { background: var(--w98-light); box-shadow: none; }
+.grow { border-bottom-color: var(--w98-light); }
+.grow:hover { background: var(--w98-navy); }
+.grow:hover .grow-name, .grow:hover .grow-ports, .grow:hover .grow-live, .grow:hover .grow-go, .grow:hover .flag { color: var(--w98-white); }
+.glist-head { background: var(--w98-silver); box-shadow: var(--w98-raised); }
+.plist, .prow, .actrow, .radio, .stat, .alarm-nets { border-color: var(--w98-gray); }
+.matrix td.same { background: var(--w98-light); }
+
+/* ---- controls ---- */
+.btn, .btn-outline, .seg-item, .more > summary, .account summary, kbd {
+  background: var(--w98-silver); color: #000000; border: 0; border-radius: 0; box-shadow: var(--w98-raised);
+  font: 400 13px/1 var(--ns-font-body); text-transform: none; letter-spacing: 0;
+}
+.btn { min-width: 75px; outline: 1px solid var(--w98-dark); outline-offset: -1px; } /* the default button */
+.btn:hover, .btn-outline:hover, .account summary:hover { background: var(--w98-silver); color: #000000; }
+.btn:active, .btn-outline:active, .seg-item:active, .account[open] summary, .more[open] > summary {
+  box-shadow: var(--w98-pressed); background: var(--w98-silver);
+}
+.btn-stop, .btn-resume, .btn-danger { border: 0; }
+.btn-stop:hover, .btn-danger:hover { background: var(--w98-silver); }
+.seg { border: 0; background: transparent; gap: 2px; overflow: visible; }
+.seg-item { border-right: 0; }
+.seg-item[aria-current="true"], .seg-item:has(input:checked) { box-shadow: var(--w98-pressed); background: var(--w98-light); }
+.seg-item[aria-current="true"]::after, .seg-item:has(input:checked)::after { display: none; }
+.icon-btn:hover { background: var(--w98-silver); box-shadow: var(--w98-raised); }
+
+input, select, textarea, .search {
+  background: var(--w98-white); color: #000000; border: 0; border-radius: 0; box-shadow: var(--w98-sunken);
+}
+.search input { box-shadow: none; }
+input:hover, select:hover, textarea:hover { border-color: transparent; }
+input[type="checkbox"], input[type="radio"] { background: var(--w98-white); border: 0; box-shadow: var(--w98-sunken); width: 13px; height: 13px; }
+input[type="radio"] { border-radius: 50%; }
+input[type="checkbox"]::before { background: #000000; width: 8px; height: 8px; }
+input[type="checkbox"]:checked { background: var(--w98-white); }
+input[type="radio"]::before { background: #000000; width: 5px; height: 5px; }
+.matrix .cell input:checked { background: var(--w98-white); }
+.matrix .cell input:checked::before { background: #000000; }
+
+/* switch as a little slider: sunken track, raised square knob */
+.track { border-radius: 0; border: 0; background: var(--w98-white); box-shadow: var(--w98-sunken); }
+.track i { border-radius: 0; background: var(--w98-silver); box-shadow: var(--w98-raised); top: 2px; height: 16px; width: 12px; }
+.switch[aria-checked="true"] .track { background: var(--w98-navy); border-color: transparent; }
+.switch[aria-checked="true"] .track i { background: var(--w98-silver); }
+.switch-lg .track i { height: 22px; width: 16px; }
+
+/* small framed things */
+.tag, .key, .howto li::before { border-radius: 0; background: var(--w98-silver); border: 0; box-shadow: var(--w98-raised); }
+.tag { padding: 3px 7px; }
+.status-ic { border-radius: 50%; background: var(--w98-white); box-shadow: var(--w98-sunken); }
+.tile-track { background: var(--w98-white); box-shadow: var(--w98-sunken); height: 8px; border-radius: 0; }
+.tile-track i { background: var(--w98-navy); }
+.stat b { font-weight: 700; }
+.live .dot, .dot { border-radius: 0; }
+.conn { background: var(--w98-light); }
+.toast { bottom: calc(var(--w98-bar) + 12px); }
+
+/* ---- narrow screens: the window is always maximised, sub-menus of the Start menu open in place ---- */
+@media (max-width: 1023px) {
+  .top-in { padding-top: 2px; gap: 0 8px; }
+  .top-ev { order: 0; } /* first row, left: after the navigation it would get a row of its own */
+  .nav { height: 26px; margin: 0; }
+}
+@media (pointer: coarse) {
+  .w98-title { height: 30px; }
+  .w98-tb { width: 28px; height: 24px; }
+  .w98-tb .ic98 { width: 16px; height: 14px; }
+}
+@media (max-width: 700px) {
+  .w98-win { width: auto; margin: 0; }
+  .w98-tb-max { display: none; }
+  .w98-win .wrap { padding: 14px 10px 20px; }
+  .top-in { padding-left: 4px; padding-right: 4px; }
+  .w98-status > span:last-child { display: none; }
+  .w98-task { flex: 1 1 0; }
+  .w98-menu { width: min(290px, calc(100vw - 4px)); max-height: calc(100vh - var(--w98-bar) - 8px); max-height: calc(100dvh - var(--w98-bar) - 8px); overflow-y: auto; }
+  .w98-band { position: sticky; top: 0; align-self: stretch; }
+  .w98-fly { position: static; min-width: 0; padding: 0 0 4px 50px; background: transparent; box-shadow: none; }
+  .w98-fly a, .w98-fly b { padding-top: 9px; padding-bottom: 9px; }
+}
+
+/* ---- the desktop shell (layout.html "w98-shell", w98.js): every page is a program in its own window ---- */
+html[data-w98="shell"], html[data-w98="shell"] body { height: 100%; overflow: hidden; }
+html[data-w98="shell"] body { padding: 0; }
+.w98-desktop { position: fixed; left: 0; top: 0; right: 0; bottom: var(--w98-bar); overflow: hidden; }
+.w98-desktop .w98-desk { display: flex; position: absolute; flex-wrap: wrap; max-height: calc(100% - 16px); gap: 12px 8px; }
+.w98-noscript { position: absolute; left: 0; top: 0; width: 100%; height: 100%; border: 0; background: var(--w98-silver); }
+.w98-window {
+  position: absolute; display: flex; flex-direction: column; padding: 3px;
+  background: var(--w98-silver); box-shadow: var(--w98-window), 2px 2px 0 color-mix(in srgb, var(--w98-dark) 35%, transparent);
+}
+.w98-window .w98-title { flex: none; cursor: default; touch-action: none; user-select: none; -webkit-user-select: none; }
+.w98-window:not(.is-active) .w98-title { color: var(--w98-silver); background: linear-gradient(90deg, var(--w98-gray), #b5b5b5); }
+button.w98-tb { padding: 0; border: 0; border-radius: 0; }
+.w98-tb:focus-visible { outline: 1px dotted #000000; outline-offset: -3px; }
+.w98-tb-max .ic98 + .ic98, .w98-window.is-max .w98-tb-max .ic98:first-child { display: none; }
+.w98-window.is-max .w98-tb-max .ic98 + .ic98 { display: block; }
+.w98-frame { flex: 1; min-height: 0; width: 100%; margin-top: 2px; border: 0; background: var(--w98-silver); }
+.w98-grip {
+  position: absolute; right: 3px; bottom: 3px; width: 15px; height: 15px; cursor: nwse-resize; touch-action: none;
+  background: linear-gradient(135deg, transparent 0 46%, var(--w98-white) 46% 52%, var(--w98-gray) 52% 62%, transparent 62% 68%,
+    var(--w98-white) 68% 74%, var(--w98-gray) 74% 84%, transparent 84% 90%, var(--w98-white) 90% 95%, var(--w98-gray) 95%);
+}
+.w98-window.is-min { display: none; }
+.w98-window.is-max, .w98-desktop.is-phone .w98-window {
+  left: 0 !important; top: 0 !important; width: 100% !important; height: 100% !important; padding: 0; box-shadow: none;
+}
+.w98-window.is-max .w98-grip, .w98-desktop.is-phone .w98-grip, .w98-desktop.is-phone .w98-tb-max { display: none; }
+.w98-desktop.is-phone .w98-window:not(.is-active) { display: none; }
+.w98-desktop.is-dragging iframe { pointer-events: none; }
+/* one taskbar button per window: raised, the one of the active window pressed */
+.w98-tasks { flex: 1; min-width: 0; display: flex; gap: 3px; overflow: hidden; }
+.w98-tasks .w98-task {
+  flex: 0 1 170px; min-width: 30px; border: 0; border-radius: 0; color: #000000; text-align: left;
+  font: 400 12px/1 var(--ns-font-body); padding: 0 6px; background: var(--w98-silver); box-shadow: var(--w98-raised);
+}
+.w98-tasks .w98-task.is-active {
+  font-weight: 700; padding-top: 1px; box-shadow: var(--w98-pressed);
+  background: repeating-conic-gradient(var(--w98-white) 0 25%, var(--w98-silver) 0 50%) 0 0 / 2px 2px;
+}
+.w98-tasks .w98-task:focus-visible { outline: 1px dotted #000000; outline-offset: -4px; }
+html[data-w98="shell"] .toast { z-index: 40; }
+
+/* a page inside a window: no desktop around it, the window is the frame */
+html[data-w98="frame"] { --head: 0px; }
+html[data-w98="frame"] body { background: var(--w98-silver); padding-bottom: 0; }
+html[data-w98="frame"] .wrap { max-width: none; margin: 0; padding: 16px 18px 24px; }
+html[data-w98="frame"] .toast { bottom: 12px; }
+@media (max-width: 700px) {
+  html[data-w98="frame"] .wrap { padding: 12px 10px 20px; }
+}
+/* the same two states set in the browser by w98mode.js, on the single-window page: hide what does not belong */
+html[data-w98="frame"] .w98-win { width: auto; max-width: none; margin: 0; padding: 0; background: transparent; box-shadow: none; }
+html[data-w98="frame"] .top { position: static; }
+html[data-w98="frame"] .w98-title, html[data-w98="frame"] .top-in, html[data-w98="frame"] .w98-status,
+html[data-w98="frame"] .w98-taskbar, html[data-w98="frame"] .w98-desk, html[data-w98="frame"] .w98-wall, html[data-w98="shell"] .w98-win { display: none !important; }
