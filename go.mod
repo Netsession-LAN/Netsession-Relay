@@ -5,11 +5,12 @@ go 1.26.0
 require (
 	github.com/coreos/go-oidc/v3 v3.21.0
 	github.com/go-jose/go-jose/v4 v4.1.4
+	github.com/google/nftables v0.3.0
 	github.com/gosnmp/gosnmp v1.47.0
 	github.com/vishvananda/netlink v1.3.1
 	go.opentelemetry.io/proto/otlp v1.11.1
 	golang.org/x/crypto v0.59.0
-	golang.org/x/net v0.62.0
+	golang.org/x/net v0.63.0
 	golang.org/x/oauth2 v0.38.0
 	golang.org/x/sys v0.50.0
 	google.golang.org/grpc v1.85.0
@@ -21,7 +22,6 @@ require (
 require (
 	github.com/dustin/go-humanize v1.1.0 // indirect
 	github.com/google/go-cmp v0.7.0 // indirect
-	github.com/google/nftables v0.3.0 // indirect
 	github.com/google/uuid v1.6.0 // indirect
 	github.com/grpc-ecosystem/grpc-gateway/v2 v2.31.0 // indirect
 	github.com/mattn/go-isatty v0.0.24 // indirect
