@@ -1,7 +1,7 @@
 # Scrutinizer (https://scrutinizer-ci.com): code rating and analysis. Tests, the race detector and the network lab
 # run in the GitHub workflows (.github/workflows/ci.yml), so here the code is only built and analysed.
 # The Go of Scrutinizer's build image is too old for Go modules, so the analysis node installs the Go version that
-# go.mod names and puts it first on the PATH of every command.
+# go.mod names and puts it first on the PATH of every command (with its GOROOT: the image's gvm sets an old one).
 checks:
   go: true
 
@@ -28,13 +28,13 @@ build:
       dependencies:
         override:
           - mkdir -p "$HOME/go1.27" && curl -fsSL https://go.dev/dl/go1.27.4.linux-amd64.tar.gz | tar -C "$HOME/go1.27" --strip-components=1 -xz
-          - PATH="$HOME/go1.27/bin:$PATH" go version
-          - PATH="$HOME/go1.27/bin:$PATH" go mod download
+          - GOROOT="$HOME/go1.27" PATH="$HOME/go1.27/bin:$PATH" go version
+          - GOROOT="$HOME/go1.27" PATH="$HOME/go1.27/bin:$PATH" go mod download
       tests:
         override:
-          - PATH="$HOME/go1.27/bin:$PATH" go build ./...
-          - PATH="$HOME/go1.27/bin:$PATH" go-scrutinizer-run
-          - PATH="$HOME/go1.27/bin:$PATH" govet-run
+          - GOROOT="$HOME/go1.27" PATH="$HOME/go1.27/bin:$PATH" go build ./...
+          - GOROOT="$HOME/go1.27" PATH="$HOME/go1.27/bin:$PATH" go-scrutinizer-run
+          - GOROOT="$HOME/go1.27" PATH="$HOME/go1.27/bin:$PATH" govet-run
     # the test node does nothing: the tests run in GitHub Actions
     tests:
       project_setup:
