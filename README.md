@@ -4,6 +4,8 @@
 [![release](https://img.shields.io/github/v/release/Netsession-LAN/Netsession-Relay)](https://github.com/Netsession-LAN/Netsession-Relay/releases)
 [![license](https://img.shields.io/github/license/Netsession-LAN/Netsession-Relay)](LICENSE)
 [![go](https://img.shields.io/github/go-mod/go-version/Netsession-LAN/Netsession-Relay)](go.mod)
+[![docs](https://readthedocs.org/projects/netsession-relay/badge/?version=latest)](https://netsession-relay.readthedocs.io/)
+[![coverage](https://qlty.sh/gh/Netsession-LAN/projects/Netsession-Relay/coverage.svg)](https://qlty.sh/gh/Netsession-LAN/projects/Netsession-Relay)
 
 **Every table sees every LAN game again.**
 
