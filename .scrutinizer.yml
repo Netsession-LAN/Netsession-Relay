@@ -15,7 +15,11 @@ filter:
 build:
   environment:
     variables:
+      # the build image sets these for the Go of 2017; the current Go needs its defaults back
       GOTOOLCHAIN: local
+      GO111MODULE: "on"
+      GOPROXY: https://proxy.golang.org,direct
+      GOFLAGS: -mod=mod
   nodes:
     analysis:
       project_setup:
