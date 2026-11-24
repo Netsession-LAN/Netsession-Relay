@@ -7,8 +7,8 @@ import (
 	"net/netip"
 	"slices"
 
-	"github.com/Netsession2024/Netsession-Relay/internal/compile"
-	"github.com/Netsession2024/Netsession-Relay/internal/gamedb"
+	"github.com/Netsession-LAN/Netsession-Relay/internal/compile"
+	"github.com/Netsession-LAN/Netsession-Relay/internal/gamedb"
 )
 
 // VLANs is the lab layout (the same networks as the preset "lab" of internal/control): gameserver 1100 and

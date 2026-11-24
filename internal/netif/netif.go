@@ -8,8 +8,8 @@ package netif
 import (
 	"fmt"
 
-	"github.com/Netsession2024/Netsession-Relay/internal/compile"
-	"github.com/Netsession2024/Netsession-Relay/internal/pkt"
+	"github.com/Netsession-LAN/Netsession-Relay/internal/compile"
+	"github.com/Netsession-LAN/Netsession-Relay/internal/pkt"
 )
 
 // Alias marks links created by the engine; Cleanup only ever deletes links carrying it.

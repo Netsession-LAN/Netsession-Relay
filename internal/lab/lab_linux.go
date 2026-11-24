@@ -10,7 +10,7 @@ import (
 
 	"golang.org/x/sys/unix"
 
-	"github.com/Netsession2024/Netsession-Relay/internal/pkt"
+	"github.com/Netsession-LAN/Netsession-Relay/internal/pkt"
 )
 
 func htons(v uint16) uint16 { return v<<8 | v>>8 }

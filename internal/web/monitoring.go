@@ -9,9 +9,9 @@ import (
 	"strings"
 	"time"
 
-	"github.com/Netsession2024/Netsession-Relay/internal/auth"
-	"github.com/Netsession2024/Netsession-Relay/internal/engineapi"
-	"github.com/Netsession2024/Netsession-Relay/internal/monitor"
+	"github.com/Netsession-LAN/Netsession-Relay/internal/auth"
+	"github.com/Netsession-LAN/Netsession-Relay/internal/engineapi"
+	"github.com/Netsession-LAN/Netsession-Relay/internal/monitor"
 )
 
 // settingMonitorToken holds the SHA-256 (hex) of the monitoring token; the token itself is shown once.

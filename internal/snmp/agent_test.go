@@ -9,8 +9,8 @@ import (
 
 	"github.com/gosnmp/gosnmp"
 
-	"github.com/Netsession2024/Netsession-Relay/internal/engineapi"
-	"github.com/Netsession2024/Netsession-Relay/internal/monitor"
+	"github.com/Netsession-LAN/Netsession-Relay/internal/engineapi"
+	"github.com/Netsession-LAN/Netsession-Relay/internal/monitor"
 )
 
 func freeUDP(t *testing.T) string {

@@ -19,9 +19,9 @@ import (
 	"sync/atomic"
 	"time"
 
-	"github.com/Netsession2024/Netsession-Relay/internal/compile"
-	"github.com/Netsession2024/Netsession-Relay/internal/pkt"
-	"github.com/Netsession2024/Netsession-Relay/internal/portspec"
+	"github.com/Netsession-LAN/Netsession-Relay/internal/compile"
+	"github.com/Netsession-LAN/Netsession-Relay/internal/pkt"
+	"github.com/Netsession-LAN/Netsession-Relay/internal/portspec"
 )
 
 // Guard holds the protection state shared by all receive goroutines:

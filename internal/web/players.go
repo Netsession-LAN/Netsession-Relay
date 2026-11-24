@@ -3,15 +3,15 @@ package web
 import (
 	"context"
 	"fmt"
-	"github.com/Netsession2024/Netsession-Relay/internal/compile"
-	"github.com/Netsession2024/Netsession-Relay/internal/engineapi"
+	"github.com/Netsession-LAN/Netsession-Relay/internal/compile"
+	"github.com/Netsession-LAN/Netsession-Relay/internal/engineapi"
 	"net/http"
 	"slices"
 	"sort"
 	"strings"
 	"time"
 
-	"github.com/Netsession2024/Netsession-Relay/internal/store"
+	"github.com/Netsession-LAN/Netsession-Relay/internal/store"
 )
 
 // playerRow is one sender of discovery packets as shown on /spieler.

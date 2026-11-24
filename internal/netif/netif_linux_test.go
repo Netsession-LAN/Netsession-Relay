@@ -7,7 +7,7 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/Netsession2024/Netsession-Relay/internal/compile"
+	"github.com/Netsession-LAN/Netsession-Relay/internal/compile"
 )
 
 // The parts that only read the state of the host run without privileges; creating and deleting interfaces is

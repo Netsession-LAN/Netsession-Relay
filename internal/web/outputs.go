@@ -5,9 +5,9 @@ import (
 	"strconv"
 	"time"
 
-	"github.com/Netsession2024/Netsession-Relay/internal/monitor"
-	"github.com/Netsession2024/Netsession-Relay/internal/notify"
-	"github.com/Netsession2024/Netsession-Relay/internal/store"
+	"github.com/Netsession-LAN/Netsession-Relay/internal/monitor"
+	"github.com/Netsession-LAN/Netsession-Relay/internal/notify"
+	"github.com/Netsession-LAN/Netsession-Relay/internal/store"
 )
 
 // The web part feeds the monitoring outputs (internal/outputs): audit entries and alarms become notify.Events in

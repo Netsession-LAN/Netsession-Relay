@@ -2,7 +2,7 @@
 
 package hostprep
 
-import "github.com/Netsession2024/Netsession-Relay/internal/compile"
+import "github.com/Netsession-LAN/Netsession-Relay/internal/compile"
 
 // Apply is only available on Linux.
 func Apply(*compile.Snapshot) []Issue { return nil }

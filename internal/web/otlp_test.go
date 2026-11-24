@@ -12,9 +12,9 @@ import (
 	logspb "go.opentelemetry.io/proto/otlp/logs/v1"
 	"google.golang.org/grpc"
 
-	"github.com/Netsession2024/Netsession-Relay/internal/notify"
-	"github.com/Netsession2024/Netsession-Relay/internal/outputs"
-	"github.com/Netsession2024/Netsession-Relay/internal/store"
+	"github.com/Netsession-LAN/Netsession-Relay/internal/notify"
+	"github.com/Netsession-LAN/Netsession-Relay/internal/outputs"
+	"github.com/Netsession-LAN/Netsession-Relay/internal/store"
 )
 
 type fakeCollector struct {

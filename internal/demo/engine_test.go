@@ -6,9 +6,9 @@ import (
 	"testing"
 	"time"
 
-	"github.com/Netsession2024/Netsession-Relay/internal/control"
-	"github.com/Netsession2024/Netsession-Relay/internal/engineapi"
-	"github.com/Netsession2024/Netsession-Relay/internal/store"
+	"github.com/Netsession-LAN/Netsession-Relay/internal/control"
+	"github.com/Netsession-LAN/Netsession-Relay/internal/engineapi"
+	"github.com/Netsession-LAN/Netsession-Relay/internal/store"
 )
 
 // The demo engine follows applied snapshots and its numbers move.

@@ -11,8 +11,8 @@ import (
 	"sync/atomic"
 	"time"
 
-	"github.com/Netsession2024/Netsession-Relay/internal/engineapi"
-	"github.com/Netsession2024/Netsession-Relay/internal/pkt"
+	"github.com/Netsession-LAN/Netsession-Relay/internal/engineapi"
+	"github.com/Netsession-LAN/Netsession-Relay/internal/pkt"
 )
 
 // Port finder limits.

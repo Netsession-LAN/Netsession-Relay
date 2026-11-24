@@ -3,8 +3,8 @@ package engine
 import (
 	"net"
 
-	"github.com/Netsession2024/Netsession-Relay/internal/pkt"
-	"github.com/Netsession2024/Netsession-Relay/internal/portspec"
+	"github.com/Netsession-LAN/Netsession-Relay/internal/pkt"
+	"github.com/Netsession-LAN/Netsession-Relay/internal/portspec"
 )
 
 func parseMAC(s string) (pkt.MAC, error) {

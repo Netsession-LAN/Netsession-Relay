@@ -5,7 +5,7 @@ package lab
 import (
 	"errors"
 
-	"github.com/Netsession2024/Netsession-Relay/internal/pkt"
+	"github.com/Netsession-LAN/Netsession-Relay/internal/pkt"
 )
 
 var errNotLinux = errors.New("lab: send/expect only work on Linux")

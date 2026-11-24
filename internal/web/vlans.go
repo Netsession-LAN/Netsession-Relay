@@ -10,8 +10,8 @@ import (
 	"strconv"
 	"strings"
 
-	"github.com/Netsession2024/Netsession-Relay/internal/compile"
-	"github.com/Netsession2024/Netsession-Relay/internal/store"
+	"github.com/Netsession-LAN/Netsession-Relay/internal/compile"
+	"github.com/Netsession-LAN/Netsession-Relay/internal/store"
 )
 
 // vlanForm is the create/edit form of a network. Values stay strings so a rejected form is shown again

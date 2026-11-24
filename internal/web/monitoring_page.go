@@ -9,12 +9,12 @@ import (
 	"strings"
 	"time"
 
-	"github.com/Netsession2024/Netsession-Relay/internal/notify"
-	"github.com/Netsession2024/Netsession-Relay/internal/otlp"
-	"github.com/Netsession2024/Netsession-Relay/internal/outputs"
-	"github.com/Netsession2024/Netsession-Relay/internal/snmp"
-	"github.com/Netsession2024/Netsession-Relay/internal/store"
-	"github.com/Netsession2024/Netsession-Relay/internal/syslog"
+	"github.com/Netsession-LAN/Netsession-Relay/internal/notify"
+	"github.com/Netsession-LAN/Netsession-Relay/internal/otlp"
+	"github.com/Netsession-LAN/Netsession-Relay/internal/outputs"
+	"github.com/Netsession-LAN/Netsession-Relay/internal/snmp"
+	"github.com/Netsession-LAN/Netsession-Relay/internal/store"
+	"github.com/Netsession-LAN/Netsession-Relay/internal/syslog"
 )
 
 // Page System → Monitoring (admin): the token for Zabbix/Prometheus, the host name, and the push targets.

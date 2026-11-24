@@ -17,7 +17,7 @@ import (
 	"github.com/go-jose/go-jose/v4"
 	"github.com/go-jose/go-jose/v4/jwt"
 
-	"github.com/Netsession2024/Netsession-Relay/internal/store"
+	"github.com/Netsession-LAN/Netsession-Relay/internal/store"
 )
 
 // fakeIdP is a minimal OIDC provider: discovery, JWKS and a token endpoint that returns an ID token with the

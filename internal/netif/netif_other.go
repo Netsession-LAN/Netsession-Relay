@@ -5,7 +5,7 @@ package netif
 import (
 	"errors"
 
-	"github.com/Netsession2024/Netsession-Relay/internal/compile"
+	"github.com/Netsession-LAN/Netsession-Relay/internal/compile"
 )
 
 var errNotLinux = errors.New("netif: only supported on Linux")

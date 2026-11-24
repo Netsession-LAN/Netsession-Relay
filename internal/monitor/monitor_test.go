@@ -7,7 +7,7 @@ import (
 	"testing"
 	"time"
 
-	"github.com/Netsession2024/Netsession-Relay/internal/engineapi"
+	"github.com/Netsession-LAN/Netsession-Relay/internal/engineapi"
 )
 
 func status(now time.Time) engineapi.Status {

@@ -12,7 +12,7 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/Netsession2024/Netsession-Relay/internal/gamedb"
+	"github.com/Netsession-LAN/Netsession-Relay/internal/gamedb"
 )
 
 var update = flag.Bool("update", false, "rewrite golden files in testdata/")

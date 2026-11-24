@@ -7,8 +7,8 @@ import (
 	"slices"
 	"testing"
 
-	"github.com/Netsession2024/Netsession-Relay/internal/compile"
-	"github.com/Netsession2024/Netsession-Relay/internal/pkt"
+	"github.com/Netsession-LAN/Netsession-Relay/internal/compile"
+	"github.com/Netsession-LAN/Netsession-Relay/internal/pkt"
 )
 
 // Lab layout: gs=1100 (gameserver), t1..t3=1101..1103 (tische), wlan=1253.

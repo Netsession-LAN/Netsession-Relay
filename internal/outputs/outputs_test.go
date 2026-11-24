@@ -11,10 +11,10 @@ import (
 	"testing"
 	"time"
 
-	"github.com/Netsession2024/Netsession-Relay/internal/engineapi"
-	"github.com/Netsession2024/Netsession-Relay/internal/monitor"
-	"github.com/Netsession2024/Netsession-Relay/internal/notify"
-	"github.com/Netsession2024/Netsession-Relay/internal/store"
+	"github.com/Netsession-LAN/Netsession-Relay/internal/engineapi"
+	"github.com/Netsession-LAN/Netsession-Relay/internal/monitor"
+	"github.com/Netsession-LAN/Netsession-Relay/internal/notify"
+	"github.com/Netsession-LAN/Netsession-Relay/internal/store"
 )
 
 func newService(t *testing.T, mgmt netip.Addr) (*Service, *store.Store) {

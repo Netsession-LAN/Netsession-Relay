@@ -6,8 +6,8 @@ import (
 	"path"
 	"strings"
 
-	"github.com/Netsession2024/Netsession-Relay/internal/compile"
-	"github.com/Netsession2024/Netsession-Relay/internal/netif"
+	"github.com/Netsession-LAN/Netsession-Relay/internal/compile"
+	"github.com/Netsession-LAN/Netsession-Relay/internal/netif"
 )
 
 // ErrIfaceNotAllowed marks a snapshot that names an interface the engine must not use.

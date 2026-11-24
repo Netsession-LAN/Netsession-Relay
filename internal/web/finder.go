@@ -11,10 +11,10 @@ import (
 	"strings"
 	"time"
 
-	"github.com/Netsession2024/Netsession-Relay/internal/engineapi"
-	"github.com/Netsession2024/Netsession-Relay/internal/gamedb"
-	"github.com/Netsession2024/Netsession-Relay/internal/portspec"
-	"github.com/Netsession2024/Netsession-Relay/internal/store"
+	"github.com/Netsession-LAN/Netsession-Relay/internal/engineapi"
+	"github.com/Netsession-LAN/Netsession-Relay/internal/gamedb"
+	"github.com/Netsession-LAN/Netsession-Relay/internal/portspec"
+	"github.com/Netsession-LAN/Netsession-Relay/internal/store"
 )
 
 // noisePorts are broadcasts every LAN has; the port finder can hide them.

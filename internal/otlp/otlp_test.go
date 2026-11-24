@@ -20,9 +20,9 @@ import (
 	"google.golang.org/grpc/metadata"
 	"google.golang.org/protobuf/proto"
 
-	"github.com/Netsession2024/Netsession-Relay/internal/engineapi"
-	"github.com/Netsession2024/Netsession-Relay/internal/monitor"
-	"github.com/Netsession2024/Netsession-Relay/internal/notify"
+	"github.com/Netsession-LAN/Netsession-Relay/internal/engineapi"
+	"github.com/Netsession-LAN/Netsession-Relay/internal/monitor"
+	"github.com/Netsession-LAN/Netsession-Relay/internal/notify"
 )
 
 type collector struct {

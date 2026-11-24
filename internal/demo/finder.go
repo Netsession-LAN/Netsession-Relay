@@ -7,7 +7,7 @@ import (
 	"net/netip"
 	"time"
 
-	"github.com/Netsession2024/Netsession-Relay/internal/engineapi"
+	"github.com/Netsession-LAN/Netsession-Relay/internal/engineapi"
 )
 
 // finderSession fakes a port finder session: a known game, Steam noise and, after a few seconds, an unknown port.

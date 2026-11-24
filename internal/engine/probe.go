@@ -10,7 +10,7 @@ import (
 	"sync"
 	"time"
 
-	"github.com/Netsession2024/Netsession-Relay/internal/pkt"
+	"github.com/Netsession-LAN/Netsession-Relay/internal/pkt"
 )
 
 // Server probe: many games (Steam/Source, Quake 3, Unreal, ...) only search by broadcast; the servers answer by

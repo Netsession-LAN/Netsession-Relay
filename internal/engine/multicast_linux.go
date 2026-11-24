@@ -9,7 +9,7 @@ import (
 
 	"golang.org/x/sys/unix"
 
-	"github.com/Netsession2024/Netsession-Relay/internal/gamedb"
+	"github.com/Netsession-LAN/Netsession-Relay/internal/gamedb"
 )
 
 // memberships keeps IGMP group memberships per VLAN interface so that IGMP snooping on the switches lets

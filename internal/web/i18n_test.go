@@ -18,9 +18,9 @@ import (
 	"sync"
 	"testing"
 
-	"github.com/Netsession2024/Netsession-Relay/internal/control"
-	"github.com/Netsession2024/Netsession-Relay/internal/monitor"
-	"github.com/Netsession2024/Netsession-Relay/internal/store"
+	"github.com/Netsession-LAN/Netsession-Relay/internal/control"
+	"github.com/Netsession-LAN/Netsession-Relay/internal/monitor"
+	"github.com/Netsession-LAN/Netsession-Relay/internal/store"
 )
 
 var verbRe = regexp.MustCompile(`%[-+# 0-9.]*[a-zA-Z%]`)

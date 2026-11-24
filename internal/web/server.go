@@ -20,14 +20,14 @@ import (
 	"sync/atomic"
 	"time"
 
-	"github.com/Netsession2024/Netsession-Relay/internal/auth"
-	"github.com/Netsession2024/Netsession-Relay/internal/compile"
-	"github.com/Netsession2024/Netsession-Relay/internal/control"
-	"github.com/Netsession2024/Netsession-Relay/internal/engineapi"
-	"github.com/Netsession2024/Netsession-Relay/internal/netif"
-	"github.com/Netsession2024/Netsession-Relay/internal/outputs"
-	"github.com/Netsession2024/Netsession-Relay/internal/store"
-	"github.com/Netsession2024/Netsession-Relay/internal/uimsg"
+	"github.com/Netsession-LAN/Netsession-Relay/internal/auth"
+	"github.com/Netsession-LAN/Netsession-Relay/internal/compile"
+	"github.com/Netsession-LAN/Netsession-Relay/internal/control"
+	"github.com/Netsession-LAN/Netsession-Relay/internal/engineapi"
+	"github.com/Netsession-LAN/Netsession-Relay/internal/netif"
+	"github.com/Netsession-LAN/Netsession-Relay/internal/outputs"
+	"github.com/Netsession-LAN/Netsession-Relay/internal/store"
+	"github.com/Netsession-LAN/Netsession-Relay/internal/uimsg"
 )
 
 //go:embed templates/*.html

@@ -8,9 +8,9 @@ import (
 	"net/http"
 	"time"
 
-	"github.com/Netsession2024/Netsession-Relay/internal/eventlogo"
-	"github.com/Netsession2024/Netsession-Relay/internal/store"
-	"github.com/Netsession2024/Netsession-Relay/internal/uimsg"
+	"github.com/Netsession-LAN/Netsession-Relay/internal/eventlogo"
+	"github.com/Netsession-LAN/Netsession-Relay/internal/store"
+	"github.com/Netsession-LAN/Netsession-Relay/internal/uimsg"
 )
 
 // The event logo: an installation may show the logo of its own LAN party next to the product mark (header,

@@ -18,10 +18,10 @@ import (
 	"testing"
 	"time"
 
-	"github.com/Netsession2024/Netsession-Relay/internal/compile"
-	"github.com/Netsession2024/Netsession-Relay/internal/gamedb"
-	"github.com/Netsession2024/Netsession-Relay/internal/netif"
-	"github.com/Netsession2024/Netsession-Relay/internal/store"
+	"github.com/Netsession-LAN/Netsession-Relay/internal/compile"
+	"github.com/Netsession-LAN/Netsession-Relay/internal/gamedb"
+	"github.com/Netsession-LAN/Netsession-Relay/internal/netif"
+	"github.com/Netsession-LAN/Netsession-Relay/internal/store"
 )
 
 // setupFresh is a relay as it comes out of the box: games from the seed, no account, no network.

@@ -1,8 +1,8 @@
 # Netsession Relay
 
-[![ci](https://github.com/Netsession2024/Netsession-Relay/actions/workflows/ci.yml/badge.svg)](https://github.com/Netsession2024/Netsession-Relay/actions/workflows/ci.yml)
-[![release](https://img.shields.io/github/v/release/Netsession2024/Netsession-Relay)](https://github.com/Netsession2024/Netsession-Relay/releases)
-[![license](https://img.shields.io/github/license/Netsession2024/Netsession-Relay)](LICENSE)
+[![ci](https://github.com/Netsession-LAN/Netsession-Relay/actions/workflows/ci.yml/badge.svg)](https://github.com/Netsession-LAN/Netsession-Relay/actions/workflows/ci.yml)
+[![release](https://img.shields.io/github/v/release/Netsession-LAN/Netsession-Relay)](https://github.com/Netsession-LAN/Netsession-Relay/releases)
+[![license](https://img.shields.io/github/license/Netsession-LAN/Netsession-Relay)](LICENSE)
 
 **Every table sees every LAN game again.**
 
@@ -21,7 +21,7 @@ can use at 3 a.m., and protection against the loops and broadcast storms that ma
 You need a Linux machine with Docker and one network port that carries your player VLANs (a trunk).
 
 ```sh
-git clone https://github.com/Netsession2024/Netsession-Relay.git
+git clone https://github.com/Netsession-LAN/Netsession-Relay.git
 cd Netsession-Relay
 docker compose up -d
 ```
@@ -90,13 +90,13 @@ minimise and close. Fully working, just for fun.
 **[Getting started](docs/getting-started.md)** · [How it works](docs/architecture.md) ·
 [Game database](docs/game-database.md) · [Running it at your LAN](docs/operations.md) ·
 [Troubleshooting](docs/troubleshooting.md) · [Development and lab](docs/development.md) – also in the
-[wiki](https://github.com/Netsession2024/Netsession-Relay/wiki).
+[wiki](https://github.com/Netsession-LAN/Netsession-Relay/wiki).
 
 Try the UI with invented data, without touching any network:
-`docker run --rm -p 8080:8080 ghcr.io/netsession2024/netsession-relay web -demo -addr :8080`, then open
+`docker run --rm -p 8080:8080 ghcr.io/netsession-lan/netsession-relay web -demo -addr :8080`, then open
 `http://localhost:8080` and sign in as `demo` / `demo`. Release binaries (linux amd64/arm64) and the image
-`ghcr.io/netsession2024/netsession-relay` are on the
-[releases page](https://github.com/Netsession2024/Netsession-Relay/releases).
+`ghcr.io/netsession-lan/netsession-relay` are on the
+[releases page](https://github.com/Netsession-LAN/Netsession-Relay/releases).
 
 ## Under the hood
 

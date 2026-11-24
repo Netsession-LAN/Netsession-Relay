@@ -9,7 +9,7 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/Netsession2024/Netsession-Relay/internal/compile"
+	"github.com/Netsession-LAN/Netsession-Relay/internal/compile"
 )
 
 func TestGameSources(t *testing.T) {

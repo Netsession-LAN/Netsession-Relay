@@ -6,7 +6,7 @@
 # (no routing between the game networks, host firewall for the relay interfaces), see docs/getting-started.md.
 
 x-common: &common
-  image: ${NSRELAY_IMAGE:-ghcr.io/netsession2024/netsession-relay:latest}
+  image: ${NSRELAY_IMAGE:-ghcr.io/netsession-lan/netsession-relay:latest}
   build: .
   network_mode: host
   read_only: true

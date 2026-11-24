@@ -12,9 +12,9 @@ import (
 	"github.com/coreos/go-oidc/v3/oidc"
 	"golang.org/x/oauth2"
 
-	"github.com/Netsession2024/Netsession-Relay/internal/auth"
-	"github.com/Netsession2024/Netsession-Relay/internal/store"
-	"github.com/Netsession2024/Netsession-Relay/internal/uimsg"
+	"github.com/Netsession-LAN/Netsession-Relay/internal/auth"
+	"github.com/Netsession-LAN/Netsession-Relay/internal/store"
+	"github.com/Netsession-LAN/Netsession-Relay/internal/uimsg"
 )
 
 // Single sign-on with OpenID Connect (authorization code flow with PKCE). The role of an account comes from

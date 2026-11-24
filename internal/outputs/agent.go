@@ -10,7 +10,7 @@ import (
 	"net/netip"
 	"strconv"
 
-	"github.com/Netsession2024/Netsession-Relay/internal/snmp"
+	"github.com/Netsession-LAN/Netsession-Relay/internal/snmp"
 )
 
 // The read-only SNMP agent of the web part. Its configuration is stored as two settings (JSON): the options and,

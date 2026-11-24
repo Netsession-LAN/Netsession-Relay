@@ -8,8 +8,8 @@ import (
 	"strings"
 	"time"
 
-	"github.com/Netsession2024/Netsession-Relay/internal/compile"
-	"github.com/Netsession2024/Netsession-Relay/internal/store"
+	"github.com/Netsession-LAN/Netsession-Relay/internal/compile"
+	"github.com/Netsession-LAN/Netsession-Relay/internal/store"
 )
 
 // icon renders an inline reference to the icon sprite.

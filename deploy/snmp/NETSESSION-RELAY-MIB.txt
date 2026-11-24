@@ -15,7 +15,7 @@ IMPORTS
 nsRelayMIB MODULE-IDENTITY
     LAST-UPDATED "202611160000Z"
     ORGANIZATION "Netsession e.V."
-    CONTACT-INFO "https://github.com/Netsession2024/Netsession-Relay"
+    CONTACT-INFO "https://github.com/Netsession-LAN/Netsession-Relay"
     DESCRIPTION  "Netsession Relay: UDP broadcast and multicast relay for LAN game discovery."
     REVISION     "202611160000Z"
     DESCRIPTION  "First version."

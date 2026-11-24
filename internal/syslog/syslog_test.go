@@ -17,7 +17,7 @@ import (
 	"testing"
 	"time"
 
-	"github.com/Netsession2024/Netsession-Relay/internal/notify"
+	"github.com/Netsession-LAN/Netsession-Relay/internal/notify"
 )
 
 var t0 = time.Date(2026, 11, 16, 12, 0, 0, 0, time.UTC)

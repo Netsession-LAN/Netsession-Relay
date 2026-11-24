@@ -16,8 +16,8 @@ import (
 
 	"gopkg.in/yaml.v3"
 
-	"github.com/Netsession2024/Netsession-Relay/games"
-	"github.com/Netsession2024/Netsession-Relay/internal/portspec"
+	"github.com/Netsession-LAN/Netsession-Relay/games"
+	"github.com/Netsession-LAN/Netsession-Relay/internal/portspec"
 )
 
 // Enumerations used in games.yaml and in the snapshot.

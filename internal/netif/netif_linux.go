@@ -9,8 +9,8 @@ import (
 
 	"github.com/vishvananda/netlink"
 
-	"github.com/Netsession2024/Netsession-Relay/internal/compile"
-	"github.com/Netsession2024/Netsession-Relay/internal/pkt"
+	"github.com/Netsession-LAN/Netsession-Relay/internal/compile"
+	"github.com/Netsession-LAN/Netsession-Relay/internal/pkt"
 )
 
 // Ensure creates (trunk) or adopts (device) the interface for v, brings it up and assigns the relay IP.

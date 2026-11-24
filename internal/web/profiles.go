@@ -8,9 +8,9 @@ import (
 	"net/url"
 	"strings"
 
-	"github.com/Netsession2024/Netsession-Relay/internal/compile"
-	"github.com/Netsession2024/Netsession-Relay/internal/store"
-	"github.com/Netsession2024/Netsession-Relay/internal/uimsg"
+	"github.com/Netsession-LAN/Netsession-Relay/internal/compile"
+	"github.com/Netsession-LAN/Netsession-Relay/internal/store"
+	"github.com/Netsession-LAN/Netsession-Relay/internal/uimsg"
 )
 
 // Flow profiles: which VLAN group sees the games of which group (admin, page "Netz"). A game uses the default

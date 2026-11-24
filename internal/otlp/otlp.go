@@ -28,7 +28,7 @@ import (
 	"google.golang.org/grpc/metadata"
 	"google.golang.org/protobuf/proto"
 
-	"github.com/Netsession2024/Netsession-Relay/internal/notify"
+	"github.com/Netsession-LAN/Netsession-Relay/internal/notify"
 )
 
 // Resource identifies this relay in every export.

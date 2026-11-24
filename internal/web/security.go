@@ -12,9 +12,9 @@ import (
 	"sync"
 	"time"
 
-	"github.com/Netsession2024/Netsession-Relay/internal/auth"
-	"github.com/Netsession2024/Netsession-Relay/internal/store"
-	"github.com/Netsession2024/Netsession-Relay/internal/uimsg"
+	"github.com/Netsession-LAN/Netsession-Relay/internal/auth"
+	"github.com/Netsession-LAN/Netsession-Relay/internal/store"
+	"github.com/Netsession-LAN/Netsession-Relay/internal/uimsg"
 )
 
 func (s *Server) isAdmin(r *http.Request) bool {

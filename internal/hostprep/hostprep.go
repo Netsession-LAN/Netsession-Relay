@@ -23,8 +23,8 @@ import (
 	"net/netip"
 	"sort"
 
-	"github.com/Netsession2024/Netsession-Relay/internal/compile"
-	"github.com/Netsession2024/Netsession-Relay/internal/netif"
+	"github.com/Netsession-LAN/Netsession-Relay/internal/compile"
+	"github.com/Netsession-LAN/Netsession-Relay/internal/netif"
 )
 
 // Issue codes.

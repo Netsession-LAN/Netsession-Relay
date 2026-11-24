@@ -33,7 +33,7 @@ between the table networks.
 ## 2. Start
 
 ```sh
-git clone https://github.com/Netsession2024/Netsession-Relay.git
+git clone https://github.com/Netsession-LAN/Netsession-Relay.git
 cd Netsession-Relay
 docker compose up -d
 ```

@@ -16,14 +16,14 @@ import (
 	"syscall"
 	"time"
 
-	"github.com/Netsession2024/Netsession-Relay/internal/auth"
-	"github.com/Netsession2024/Netsession-Relay/internal/control"
-	"github.com/Netsession2024/Netsession-Relay/internal/demo"
-	"github.com/Netsession2024/Netsession-Relay/internal/engineapi"
-	"github.com/Netsession2024/Netsession-Relay/internal/gamedb"
-	"github.com/Netsession2024/Netsession-Relay/internal/netif"
-	"github.com/Netsession2024/Netsession-Relay/internal/store"
-	"github.com/Netsession2024/Netsession-Relay/internal/web"
+	"github.com/Netsession-LAN/Netsession-Relay/internal/auth"
+	"github.com/Netsession-LAN/Netsession-Relay/internal/control"
+	"github.com/Netsession-LAN/Netsession-Relay/internal/demo"
+	"github.com/Netsession-LAN/Netsession-Relay/internal/engineapi"
+	"github.com/Netsession-LAN/Netsession-Relay/internal/gamedb"
+	"github.com/Netsession-LAN/Netsession-Relay/internal/netif"
+	"github.com/Netsession-LAN/Netsession-Relay/internal/store"
+	"github.com/Netsession-LAN/Netsession-Relay/internal/web"
 )
 
 func envInt(k string, def int) int {

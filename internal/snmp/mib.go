@@ -10,8 +10,8 @@ import (
 
 	"github.com/gosnmp/gosnmp"
 
-	"github.com/Netsession2024/Netsession-Relay/internal/monitor"
-	"github.com/Netsession2024/Netsession-Relay/internal/notify"
+	"github.com/Netsession-LAN/Netsession-Relay/internal/monitor"
+	"github.com/Netsession-LAN/Netsession-Relay/internal/notify"
 )
 
 // Enterprise is 1.3.6.1.4.1.<PEN>; Base the relay MIB (netsession.products(1).nsRelayMIB(1)).
@@ -260,7 +260,7 @@ func MIB() string {
 	w("nsRelayMIB MODULE-IDENTITY")
 	w("    LAST-UPDATED \"202611160000Z\"")
 	w("    ORGANIZATION \"Netsession e.V.\"")
-	w("    CONTACT-INFO \"https://github.com/Netsession2024/Netsession-Relay\"")
+	w("    CONTACT-INFO \"https://github.com/Netsession-LAN/Netsession-Relay\"")
 	w("    DESCRIPTION  \"Netsession Relay: UDP broadcast and multicast relay for LAN game discovery.\"")
 	w("    REVISION     \"202611160000Z\"")
 	w("    DESCRIPTION  \"First version.\"")

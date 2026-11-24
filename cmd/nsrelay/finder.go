@@ -8,7 +8,7 @@ import (
 	"time"
 	"unicode"
 
-	"github.com/Netsession2024/Netsession-Relay/internal/engineapi"
+	"github.com/Netsession-LAN/Netsession-Relay/internal/engineapi"
 )
 
 // The port finder and the server probe talk to the engine socket only; they need no database.

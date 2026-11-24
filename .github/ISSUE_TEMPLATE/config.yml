@@ -1,8 +1,8 @@
 blank_issues_enabled: true
 contact_links:
   - name: Security issue
-    url: https://github.com/Netsession2024/Netsession-Relay/security/advisories/new
+    url: https://github.com/Netsession-LAN/Netsession-Relay/security/advisories/new
     about: Please report vulnerabilities privately.
   - name: Documentation and tutorial
-    url: https://github.com/Netsession2024/Netsession-Relay/wiki
+    url: https://github.com/Netsession-LAN/Netsession-Relay/wiki
     about: Getting started, troubleshooting, game database format.

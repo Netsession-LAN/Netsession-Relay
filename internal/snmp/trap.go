@@ -14,7 +14,7 @@ import (
 
 	"github.com/gosnmp/gosnmp"
 
-	"github.com/Netsession2024/Netsession-Relay/internal/notify"
+	"github.com/Netsession-LAN/Netsession-Relay/internal/notify"
 )
 
 // TrapConfig of one trap receiver.

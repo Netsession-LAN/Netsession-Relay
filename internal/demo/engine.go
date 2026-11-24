@@ -13,8 +13,8 @@ import (
 	"sync"
 	"time"
 
-	"github.com/Netsession2024/Netsession-Relay/internal/compile"
-	"github.com/Netsession2024/Netsession-Relay/internal/engineapi"
+	"github.com/Netsession-LAN/Netsession-Relay/internal/compile"
+	"github.com/Netsession-LAN/Netsession-Relay/internal/engineapi"
 )
 
 // Engine implements what the web part needs from an engine (web.Engine) with invented, changing data: busy and

@@ -8,8 +8,8 @@ import (
 	"sync"
 	"time"
 
-	"github.com/Netsession2024/Netsession-Relay/internal/compile"
-	"github.com/Netsession2024/Netsession-Relay/internal/netif"
+	"github.com/Netsession-LAN/Netsession-Relay/internal/compile"
+	"github.com/Netsession-LAN/Netsession-Relay/internal/netif"
 )
 
 // The web part listens on every address of the host by default, so a fresh installation needs no setting. The

@@ -13,7 +13,7 @@ import (
 	"github.com/gosnmp/gosnmp"
 	"gopkg.in/yaml.v3"
 
-	"github.com/Netsession2024/Netsession-Relay/internal/notify"
+	"github.com/Netsession-LAN/Netsession-Relay/internal/notify"
 )
 
 // The MIB file in the repository is generated from the object list; both must agree.

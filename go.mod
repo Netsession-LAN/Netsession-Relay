@@ -1,4 +1,4 @@
-module github.com/Netsession2024/Netsession-Relay
+module github.com/Netsession-LAN/Netsession-Relay
 
 go 1.26.0
 

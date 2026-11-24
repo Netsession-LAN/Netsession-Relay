@@ -9,8 +9,8 @@ import (
 	"strconv"
 	"strings"
 
-	"github.com/Netsession2024/Netsession-Relay/internal/outputs"
-	"github.com/Netsession2024/Netsession-Relay/internal/snmp"
+	"github.com/Netsession-LAN/Netsession-Relay/internal/outputs"
+	"github.com/Netsession-LAN/Netsession-Relay/internal/snmp"
 )
 
 // The SNMP section of the monitoring page. The agent itself runs in internal/outputs.

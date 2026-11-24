@@ -13,7 +13,7 @@ import (
 	"sync"
 	"time"
 
-	"github.com/Netsession2024/Netsession-Relay/internal/store"
+	"github.com/Netsession-LAN/Netsession-Relay/internal/store"
 )
 
 // PEN is the IANA Private Enterprise Number used in syslog structured data and the SNMP tree. 32473 is the

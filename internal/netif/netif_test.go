@@ -3,7 +3,7 @@ package netif
 import (
 	"testing"
 
-	"github.com/Netsession2024/Netsession-Relay/internal/compile"
+	"github.com/Netsession-LAN/Netsession-Relay/internal/compile"
 )
 
 // The name of the interface of a VLAN: "<parent>.<vid>" on a trunk, the device itself otherwise. The fields of

@@ -15,7 +15,7 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/Netsession2024/Netsession-Relay/internal/eventlogo"
+	"github.com/Netsession-LAN/Netsession-Relay/internal/eventlogo"
 )
 
 func testPicture(w, h int) *image.NRGBA {

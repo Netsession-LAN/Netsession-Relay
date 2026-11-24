@@ -7,7 +7,7 @@ import (
 	"strings"
 	"time"
 
-	"github.com/Netsession2024/Netsession-Relay/internal/engineapi"
+	"github.com/Netsession-LAN/Netsession-Relay/internal/engineapi"
 )
 
 // Kinds are the alarm kinds always present in the report, so Zabbix items and triggers exist before the first incident.

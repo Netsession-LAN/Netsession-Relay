@@ -20,7 +20,7 @@ import (
 	"os"
 	"time"
 
-	"github.com/Netsession2024/Netsession-Relay/internal/compile"
+	"github.com/Netsession-LAN/Netsession-Relay/internal/compile"
 )
 
 // DefaultSocket is the engine socket path.

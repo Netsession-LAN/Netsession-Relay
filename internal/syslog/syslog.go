@@ -15,7 +15,7 @@ import (
 	"sync"
 	"time"
 
-	"github.com/Netsession2024/Netsession-Relay/internal/notify"
+	"github.com/Netsession-LAN/Netsession-Relay/internal/notify"
 )
 
 // Severities (RFC 5424 numbers).

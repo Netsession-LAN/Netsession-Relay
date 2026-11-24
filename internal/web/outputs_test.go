@@ -8,7 +8,7 @@ import (
 	"testing"
 	"time"
 
-	"github.com/Netsession2024/Netsession-Relay/internal/store"
+	"github.com/Netsession-LAN/Netsession-Relay/internal/store"
 )
 
 // udpSink is a syslog receiver on loopback that collects datagrams.
