@@ -30,7 +30,7 @@ All notable changes to Netsession Relay. Versions follow [Semantic Versioning](h
 - Go 1.27 for CI and the image (Go 1.26 is still enough to build).
 - golangci-lint (`.golangci.yml`: staticcheck, govet, errcheck, gosec, errorlint and more); every accepted gosec
   finding carries its reason in the code. govulncheck, CodeQL code scanning and qlty (`.qlty/qlty.toml`).
-- Test coverage of unit tests and the network lab together (`tools/coverage.sh`).
+- Test coverage of unit tests and the network lab together (`tools/coverage.sh`); Scrutinizer analysis (`.scrutinizer.yml`).
 - The container registry cleans itself after each release and weekly.
 
 ## [1.0.0] - 2026-11-23

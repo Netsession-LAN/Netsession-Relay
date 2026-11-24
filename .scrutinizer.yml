@@ -1,0 +1,31 @@
+# Scrutinizer (https://scrutinizer-ci.com): code rating and analysis. Tests, the race detector and the network lab
+# run in the GitHub workflows (.github/workflows/ci.yml), so here the code is only built and analysed.
+checks:
+  go: true
+
+filter:
+  excluded_paths:
+    - "*_test.go"
+    - "*/testdata/*"
+    - "lab/*"
+    - "docs/*"
+
+build:
+  environment:
+    # an older Go on the build machine is fine: the toolchain line in go.mod makes the go command fetch go1.27.4
+    go: go1.22
+    variables:
+      GOTOOLCHAIN: auto
+  nodes:
+    analysis:
+      project_setup:
+        override:
+          - "true"
+      dependencies:
+        override:
+          - go mod download
+      tests:
+        override:
+          - go build ./...
+          - go-scrutinizer-run
+          - govet-run

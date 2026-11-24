@@ -54,3 +54,5 @@ jobs:
           oidc: true
           format: coverprofile
           files: coverage.out
+          # the profile names files by import path; qlty wants them relative to the repository
+          strip-prefix: github.com/Netsession-LAN/Netsession-Relay
