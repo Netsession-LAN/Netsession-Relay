@@ -2,6 +2,13 @@
 
 All notable changes to Netsession Relay. Versions follow [Semantic Versioning](https://semver.org/).
 
+## [Unreleased]
+
+- Builds and CI use Go 1.27 (Go 1.26 is still enough to build); staticcheck v0.8.2, govulncheck v1.9.0.
+- The container registry cleans itself after each release and weekly (multi-architecture aware).
+- The wiki is rebuilt from `docs/` on every change.
+- A failed rollback says why (revision missing, or a game in it no longer exists).
+
 ## [1.0.0] - 2026-11-23
 
 First public release. In use at Netsession LAN parties.

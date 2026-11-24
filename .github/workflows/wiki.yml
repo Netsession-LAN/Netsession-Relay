@@ -1,9 +1,10 @@
 name: wiki
-# Publishes docs/*.md to the GitHub wiki (the wiki must exist, i.e. have at least one page).
+# Publishes docs/*.md to the GitHub wiki (the wiki must exist, i.e. have at least one page). Runs on every push to
+# main: a path filter misses pushes that replace the history. The wiki always gets the docs as one fresh commit,
+# so pages that are gone from docs/ do not linger in the wiki history either.
 on:
   push:
     branches: [main]
-    paths: ["docs/*.md", ".github/workflows/wiki.yml"]
   workflow_dispatch:
 permissions:
   contents: write
@@ -44,7 +45,10 @@ jobs:
           cd wiki
           git config user.name "Netsession Relay CI"
           git config user.email noreply@netsession.net
+          git checkout -q --orphan fresh
           git add -A
-          git diff --cached --quiet && echo "wiki up to date" && exit 0
-          git commit -q -m "Sync wiki from docs/ (${GITHUB_SHA::8})"
-          git push
+          if [ "$(git write-tree)" = "$(git rev-parse 'origin/master^{tree}' 2>/dev/null)" ] &&              [ "$(git rev-list --count origin/master 2>/dev/null)" = 1 ]; then
+            echo "wiki up to date"; exit 0
+          fi
+          git commit -q -m "Wiki from docs/ (${GITHUB_SHA::8})"
+          git push -q -f origin fresh:master

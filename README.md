@@ -51,9 +51,8 @@ before it sends a single packet.
 - **Shields its own host** – no routing between your player networks, and players reach neither SSH nor the web
   UI through the relay's addresses.
 - **Fits your monitoring** – JSON and Prometheus endpoint, Zabbix templates, SNMP, syslog and OpenTelemetry.
-- **Single sign-on** via OpenID Connect next to local accounts, with viewer, operator and admin roles.
-- **Your event's logo** – upload the logo of your LAN party under **System** and it shows next to the Netsession
-  Relay mark: in the header, on the overview and on the sign-in page.
+- **Single sign-on** via OpenID Connect next to local accounts, with viewer, operator and admin roles taken from
+  groups you name.
 
 ![Game page with the "can it be found?" diagnosis](docs/images/game.png)
 
