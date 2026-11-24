@@ -31,5 +31,14 @@ build:
           - PATH="$HOME/go1.27/bin:$PATH" go build ./...
           - PATH="$HOME/go1.27/bin:$PATH" go-scrutinizer-run
           - PATH="$HOME/go1.27/bin:$PATH" govet-run
-    # no separate test node: the tests run in GitHub Actions
-    tests: false
+    # the test node does nothing: the tests run in GitHub Actions
+    tests:
+      project_setup:
+        override:
+          - "true"
+      dependencies:
+        override:
+          - "true"
+      tests:
+        override:
+          - "true"
