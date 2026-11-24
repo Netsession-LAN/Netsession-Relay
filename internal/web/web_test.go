@@ -461,7 +461,15 @@ func TestBackupDownloadWithoutTmp(t *testing.T) {
 	if code != 200 || !strings.HasPrefix(body, "SQLite format 3") {
 		t.Fatalf("download with an unwritable TMPDIR = %d, %d bytes", code, len(body))
 	}
-	if left, _ := os.ReadDir(backups); len(left) != 0 {
+	// the handler removes its copy after the response is written, which can be a moment after the client has read
+	// the body (a slow CI runner showed it): wait for the clean-up instead of looking at once
+	var left []os.DirEntry
+	for deadline := time.Now().Add(5 * time.Second); time.Now().Before(deadline); time.Sleep(20 * time.Millisecond) {
+		if left, _ = os.ReadDir(backups); len(left) == 0 {
+			break
+		}
+	}
+	if len(left) != 0 {
 		t.Errorf("the download left files in the backup directory: %v", left)
 	}
 }
