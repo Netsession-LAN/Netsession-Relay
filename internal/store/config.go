@@ -1,0 +1,918 @@
+package store
+
+import (
+	"context"
+	"database/sql"
+	"encoding/json"
+	"errors"
+	"fmt"
+	"net/netip"
+	"regexp"
+	"slices"
+	"sort"
+	"strings"
+
+	"github.com/Netsession2024/Netsession-Relay/internal/compile"
+	"github.com/Netsession2024/Netsession-Relay/internal/gamedb"
+)
+
+// ---- games ----
+
+// SeedResult reports what SyncSeed changed.
+type SeedResult struct {
+	Added, Updated, Pending int
+}
+
+// SyncSeed brings the seed database into the store: new games are added, unchanged seed games are updated,
+// locally modified games keep their state and get seed_pending set (UI shows "seed differs").
+func (s *Store) SyncSeed(ctx context.Context, seed *gamedb.DB) (SeedResult, error) {
+	var res SeedResult
+	err := s.tx(ctx, func(tx *sql.Tx) error {
+		for _, g := range seed.Games {
+			h := gamedb.GameHash(g)
+			data, _ := json.Marshal(g)
+			var origin, cur string
+			var modified bool
+			err := tx.QueryRowContext(ctx, `SELECT origin, seed_hash, locally_modified FROM game WHERE id = ?`, g.ID).Scan(&origin, &cur, &modified)
+			switch {
+			case errors.Is(err, sql.ErrNoRows):
+				_, err = tx.ExecContext(ctx, `INSERT INTO game(id, name, category, relay_needed, default_enabled, confidence, origin, seed_hash, data)
+					VALUES (?,?,?,?,?,?,'seed',?,?)`, g.ID, g.Name, g.Category, g.RelayNeeded, g.DefaultEnabled, g.Confidence, h, string(data))
+				res.Added++
+			case err != nil:
+				return err
+			case origin != "seed" || cur == h:
+				continue
+			case modified:
+				_, err = tx.ExecContext(ctx, `UPDATE game SET seed_pending = ? WHERE id = ?`, h, g.ID)
+				res.Pending++
+			default:
+				_, err = tx.ExecContext(ctx, `UPDATE game SET name=?, category=?, relay_needed=?, default_enabled=?, confidence=?, seed_hash=?, seed_pending='', data=? WHERE id=?`,
+					g.Name, g.Category, g.RelayNeeded, g.DefaultEnabled, g.Confidence, h, string(data), g.ID)
+				res.Updated++
+			}
+			if err != nil {
+				return err
+			}
+		}
+		return nil
+	})
+	return res, err
+}
+
+// GameRow is a game with its store metadata and its state in the active event.
+type GameRow struct {
+	gamedb.Game
+	Origin          string
+	LocallyModified bool
+	SeedPending     bool
+	Enabled         bool     // switched on in the active event
+	SrcFilter       []string // source filter in the active event (empty = every sender)
+}
+
+// Games returns all games sorted by name.
+func (s *Store) Games(ctx context.Context) ([]GameRow, error) {
+	ev, _ := s.activeEventID(ctx)
+	rows, err := s.db.QueryContext(ctx, `SELECT g.data, g.origin, g.locally_modified, g.seed_pending != '',
+		EXISTS(SELECT 1 FROM event_game eg WHERE eg.event_id = ? AND eg.game_id = g.id AND eg.enabled = 1),
+		COALESCE((SELECT eg.sources FROM event_game eg WHERE eg.event_id = ? AND eg.game_id = g.id), '') FROM game g`, ev, ev)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var out []GameRow
+	for rows.Next() {
+		var r GameRow
+		var data, sources string
+		if err := rows.Scan(&data, &r.Origin, &r.LocallyModified, &r.SeedPending, &r.Enabled, &sources); err != nil {
+			return nil, err
+		}
+		r.SrcFilter = sourceList(sources)
+		if err := json.Unmarshal([]byte(data), &r.Game); err != nil {
+			return nil, err
+		}
+		out = append(out, r)
+	}
+	sort.Slice(out, func(i, j int) bool { return out[i].Name < out[j].Name })
+	return out, rows.Err()
+}
+
+// GameDB returns all stored games as a validated database for the compiler.
+func (s *Store) GameDB(ctx context.Context) (*gamedb.DB, error) {
+	rows, err := s.Games(ctx)
+	if err != nil {
+		return nil, err
+	}
+	list := make([]gamedb.Game, len(rows))
+	for i, r := range rows {
+		list[i] = r.Game
+	}
+	return gamedb.New(list)
+}
+
+// ---- events ----
+
+func (s *Store) activeEventID(ctx context.Context) (int64, error) {
+	var id int64
+	err := s.db.QueryRowContext(ctx, `SELECT id FROM event WHERE is_active = 1`).Scan(&id)
+	if errors.Is(err, sql.ErrNoRows) {
+		return 0, fmt.Errorf("%w: no active event (run `nsrelay admin init`)", ErrNotFound)
+	}
+	return id, err
+}
+
+// ActiveEvent returns the name of the active event.
+func (s *Store) ActiveEvent(ctx context.Context) (string, error) {
+	var name string
+	err := s.db.QueryRowContext(ctx, `SELECT name FROM event WHERE is_active = 1`).Scan(&name)
+	if errors.Is(err, sql.ErrNoRows) {
+		return "", fmt.Errorf("%w: no active event", ErrNotFound)
+	}
+	return name, err
+}
+
+// SetGameEnabled switches a game on or off in the active event.
+func (s *Store) SetGameEnabled(ctx context.Context, user, gameID string, on bool) error {
+	ev, err := s.activeEventID(ctx)
+	if err != nil {
+		return err
+	}
+	action := "game.disable"
+	if on {
+		action = "game.enable"
+	}
+	return s.audited(ctx, func(tx *sql.Tx) (AuditEntry, error) {
+		e := AuditEntry{User: user, Action: action, Object: gameID}
+		var exists int
+		if err := tx.QueryRowContext(ctx, `SELECT count(*) FROM game WHERE id = ?`, gameID).Scan(&exists); err != nil {
+			return e, err
+		}
+		if exists == 0 {
+			return e, fmt.Errorf("%w: game %q", ErrNotFound, gameID)
+		}
+		var err error
+		if on {
+			_, err = tx.ExecContext(ctx, `INSERT INTO event_game(event_id, game_id) VALUES (?, ?)
+				ON CONFLICT(event_id, game_id) DO UPDATE SET enabled = 1`, ev, gameID)
+		} else { // keep the row: profile, overrides and source filter are back when the game is switched on again
+			_, err = tx.ExecContext(ctx, `UPDATE event_game SET enabled = 0 WHERE event_id = ? AND game_id = ?`, ev, gameID)
+		}
+		return e, err
+	})
+}
+
+// SetMode stores the engine mode for the next apply.
+func (s *Store) SetMode(ctx context.Context, user, mode string) error {
+	switch mode {
+	case compile.ModeActive, compile.ModeObserve, compile.ModePaused:
+	default:
+		return fmt.Errorf("%w: mode %q (active|observe|paused)", ErrInvalid, mode)
+	}
+	return s.audited(ctx, func(tx *sql.Tx) (AuditEntry, error) {
+		e := AuditEntry{User: user, Action: "mode.set", Object: "engine", Before: compile.ModeActive, After: mode}
+		if err := tx.QueryRowContext(ctx, `SELECT value FROM setting WHERE key = ?`, SettingMode).Scan(&e.Before); err != nil && !errors.Is(err, sql.ErrNoRows) {
+			return e, err
+		}
+		_, err := tx.ExecContext(ctx, upsertSetting, SettingMode, mode)
+		return e, err
+	})
+}
+
+// ---- configuration export / import (backup, rollback) ----
+
+// VLANConfig is one VLAN in the configuration export.
+type VLANConfig struct {
+	VID     int    `json:"vid" yaml:"vid"`
+	Name    string `json:"name" yaml:"name"`
+	Group   string `json:"group" yaml:"group"`
+	CIDR    string `json:"cidr" yaml:"cidr"`
+	RelayIP string `json:"relay_ip,omitempty" yaml:"relay_ip,omitempty"`
+	Attach  string `json:"attach" yaml:"attach"`
+	Parent  string `json:"parent,omitempty" yaml:"parent,omitempty"`
+	Device  string `json:"device,omitempty" yaml:"device,omitempty"`
+	RatePPS int    `json:"rate_pps,omitempty" yaml:"rate_pps,omitempty"`
+	Burst   int    `json:"rate_burst,omitempty" yaml:"rate_burst,omitempty"`
+	Enabled bool   `json:"enabled" yaml:"enabled"` // in the active event
+}
+
+// ProfileConfig is a flow profile.
+type ProfileConfig struct {
+	Name    string         `json:"name" yaml:"name"`
+	Default bool           `json:"default,omitempty" yaml:"default,omitempty"`
+	Edges   []compile.Edge `json:"edges" yaml:"edges"`
+}
+
+// EventGameConfig is a game in the active event.
+type EventGameConfig struct {
+	ID          string           `json:"id" yaml:"id"`
+	FlowProfile string           `json:"flow_profile,omitempty" yaml:"flow_profile,omitempty"`
+	Override    compile.Override `json:"override,omitempty" yaml:"override,omitempty"`
+	// Sources is the optional source filter (compile.Selection.Sources); omitted when empty.
+	Sources []string `json:"sources,omitempty" yaml:"sources,omitempty"`
+	// Off: switched off, listed only to keep its settings (profile, overrides, sources) for switching on again.
+	Off bool `json:"off,omitempty" yaml:"off,omitempty"`
+}
+
+// Config is the complete configuration of the active event (backup export, revision content).
+type Config struct {
+	Version  int               `json:"version" yaml:"version"`
+	Event    string            `json:"event" yaml:"event"`
+	Mode     string            `json:"mode" yaml:"mode"`
+	VLANs    []VLANConfig      `json:"vlans" yaml:"vlans"`
+	Profiles []ProfileConfig   `json:"profiles" yaml:"profiles"`
+	Games    []EventGameConfig `json:"games" yaml:"games"`
+}
+
+// ExportConfig reads the active configuration.
+func (s *Store) ExportConfig(ctx context.Context) (Config, error) {
+	c := Config{Version: 1}
+	ev, err := s.activeEventID(ctx)
+	if err != nil {
+		return c, err
+	}
+	if c.Event, err = s.ActiveEvent(ctx); err != nil {
+		return c, err
+	}
+	if c.Mode, err = s.Setting(ctx, SettingMode, compile.ModeActive); err != nil {
+		return c, err
+	}
+	if c.VLANs, err = s.exportVLANs(ctx, ev); err != nil {
+		return c, err
+	}
+	if c.Profiles, err = s.exportProfiles(ctx); err != nil {
+		return c, err
+	}
+	c.Games, err = s.exportGames(ctx, ev)
+	return c, err
+}
+
+func (s *Store) exportVLANs(ctx context.Context, ev int64) ([]VLANConfig, error) {
+	rows, err := s.db.QueryContext(ctx, `SELECT v.vid, v.name, v.grp, v.cidr, v.relay_ip, v.attach, v.parent, v.device, v.rate_pps, v.rate_burst,
+		COALESCE(ev.enabled, 0) FROM vlan v LEFT JOIN event_vlan ev ON ev.vid = v.vid AND ev.event_id = ? ORDER BY v.vid`, ev)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var out []VLANConfig
+	for rows.Next() {
+		var v VLANConfig
+		if err := rows.Scan(&v.VID, &v.Name, &v.Group, &v.CIDR, &v.RelayIP, &v.Attach, &v.Parent, &v.Device, &v.RatePPS, &v.Burst, &v.Enabled); err != nil {
+			return nil, err
+		}
+		out = append(out, v)
+	}
+	return out, rows.Err()
+}
+
+func (s *Store) exportProfiles(ctx context.Context) ([]ProfileConfig, error) {
+	out, err := s.profileNames(ctx)
+	if err != nil {
+		return nil, err
+	}
+	// the database has one connection: the list of names is read completely before the edges are
+	for i := range out {
+		if out[i].Edges, err = profileEdges(ctx, s.db, out[i].Name); err != nil {
+			return nil, err
+		}
+	}
+	return out, nil
+}
+
+func (s *Store) profileNames(ctx context.Context) ([]ProfileConfig, error) {
+	rows, err := s.db.QueryContext(ctx, `SELECT name, is_default FROM flow_profile ORDER BY name`)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var out []ProfileConfig
+	for rows.Next() {
+		var p ProfileConfig
+		if err := rows.Scan(&p.Name, &p.Default); err != nil {
+			return nil, err
+		}
+		out = append(out, p)
+	}
+	return out, rows.Err()
+}
+
+// querier is what *sql.DB and *sql.Tx share for reading.
+type querier interface {
+	QueryContext(ctx context.Context, query string, args ...any) (*sql.Rows, error)
+}
+
+func profileEdges(ctx context.Context, q querier, profile string) ([]compile.Edge, error) {
+	rows, err := q.QueryContext(ctx, `SELECT src, dst FROM flow_profile_edge WHERE profile = ? ORDER BY src, dst`, profile)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var out []compile.Edge
+	for rows.Next() {
+		var e compile.Edge
+		if err := rows.Scan(&e.Src, &e.Dst); err != nil {
+			return nil, err
+		}
+		out = append(out, e)
+	}
+	return out, rows.Err()
+}
+
+func (s *Store) exportGames(ctx context.Context, ev int64) ([]EventGameConfig, error) {
+	rows, err := s.db.QueryContext(ctx, `SELECT game_id, flow_profile, override, sources, enabled FROM event_game WHERE event_id = ? ORDER BY game_id`, ev)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var out []EventGameConfig
+	for rows.Next() {
+		var g EventGameConfig
+		var ov, sources string
+		var enabled bool
+		if err := rows.Scan(&g.ID, &g.FlowProfile, &ov, &sources, &enabled); err != nil {
+			return nil, err
+		}
+		g.Sources = sourceList(sources)
+		_ = json.Unmarshal([]byte(ov), &g.Override)
+		g.Off = !enabled
+		if g.Off && g.FlowProfile == "" && len(g.Sources) == 0 && (ov == "" || ov == "{}" || ov == "null") {
+			continue // switched off and nothing to keep
+		}
+		out = append(out, g)
+	}
+	return out, rows.Err()
+}
+
+// ImportConfig replaces mode, VLANs, profiles and the active event's VLANs and games with c (one
+// transaction). The event is created if it does not exist and becomes the active one. Games referenced
+// by c must exist in the game table.
+func (s *Store) ImportConfig(ctx context.Context, user string, c Config) error {
+	before, _ := s.ExportConfig(ctx)
+	b, _ := json.Marshal(before)
+	a, _ := json.Marshal(c)
+	return s.audited(ctx, func(tx *sql.Tx) (AuditEntry, error) {
+		return AuditEntry{User: user, Action: "config.import", Object: c.Event, Before: string(b), After: string(a)}, s.importConfig(ctx, tx, c)
+	})
+}
+
+func (s *Store) importConfig(ctx context.Context, tx *sql.Tx, c Config) error {
+	if c.Mode != "" {
+		if _, err := tx.ExecContext(ctx, upsertSetting, SettingMode, c.Mode); err != nil {
+			return err
+		}
+	}
+	for _, stmt := range []string{`DELETE FROM flow_profile_edge`, `DELETE FROM flow_profile`, `DELETE FROM event_vlan`, `DELETE FROM vlan`} {
+		if _, err := tx.ExecContext(ctx, stmt); err != nil {
+			return err
+		}
+	}
+	for _, v := range c.VLANs {
+		if _, err := tx.ExecContext(ctx, `INSERT INTO vlan(vid, name, grp, cidr, relay_ip, attach, parent, device, rate_pps, rate_burst) VALUES (?,?,?,?,?,?,?,?,?,?)`,
+			v.VID, v.Name, v.Group, v.CIDR, v.RelayIP, v.Attach, v.Parent, v.Device, v.RatePPS, v.Burst); err != nil {
+			return fmt.Errorf("VLAN %d: %w", v.VID, err)
+		}
+	}
+	for _, p := range c.Profiles {
+		if _, err := tx.ExecContext(ctx, `INSERT INTO flow_profile(name, is_default) VALUES (?, ?)`, p.Name, p.Default); err != nil {
+			return err
+		}
+		for _, e := range p.Edges {
+			if _, err := tx.ExecContext(ctx, `INSERT OR IGNORE INTO flow_profile_edge(profile, src, dst) VALUES (?,?,?)`, p.Name, e.Src, e.Dst); err != nil {
+				return err
+			}
+		}
+	}
+	if _, err := tx.ExecContext(ctx, `UPDATE event SET is_active = 0`); err != nil {
+		return err
+	}
+	if _, err := tx.ExecContext(ctx, `INSERT INTO event(name, is_active, created) VALUES (?, 1, ?) ON CONFLICT(name) DO UPDATE SET is_active = 1`,
+		c.Event, s.ts()); err != nil {
+		return err
+	}
+	var ev int64
+	if err := tx.QueryRowContext(ctx, `SELECT id FROM event WHERE name = ?`, c.Event).Scan(&ev); err != nil {
+		return err
+	}
+	for _, v := range c.VLANs {
+		if _, err := tx.ExecContext(ctx, `INSERT INTO event_vlan(event_id, vid, enabled) VALUES (?,?,?)`, ev, v.VID, v.Enabled); err != nil {
+			return err
+		}
+	}
+	if _, err := tx.ExecContext(ctx, `DELETE FROM event_game WHERE event_id = ?`, ev); err != nil {
+		return err
+	}
+	for _, g := range c.Games {
+		ov, _ := json.Marshal(g.Override)
+		sources, err := compile.ParseSources(strings.Join(g.Sources, " "))
+		if err != nil {
+			return fmt.Errorf("game %q: sources: %w", g.ID, err)
+		}
+		if _, err := tx.ExecContext(ctx, `INSERT INTO event_game(event_id, game_id, flow_profile, override, sources, enabled) VALUES (?,?,?,?,?,?)`,
+			ev, g.ID, g.FlowProfile, string(ov), strings.Join(compile.FormatSources(sources), " "), !g.Off); err != nil {
+			return fmt.Errorf("game %q: %w", g.ID, err)
+		}
+	}
+	return nil
+}
+
+// SettingProbeServers switches the server probe ("1" default, "0" off), see compile.Input.Probe.
+const SettingProbeServers = "probe_servers"
+
+// BuildInput turns the active configuration into compiler input.
+func (s *Store) BuildInput(ctx context.Context) (compile.Input, error) {
+	c, err := s.ExportConfig(ctx)
+	if err != nil {
+		return compile.Input{}, err
+	}
+	return s.InputFor(ctx, c)
+}
+
+// InputFor turns a configuration the caller already read (ExportConfig) into compiler input, with the stored
+// games and settings.
+func (s *Store) InputFor(ctx context.Context, c Config) (compile.Input, error) {
+	db, err := s.GameDB(ctx)
+	if err != nil {
+		return compile.Input{}, err
+	}
+	probe, _ := s.Setting(ctx, SettingProbeServers, "1")
+	return ConfigInput(c, db, probe != "0")
+}
+
+// ConfigInput turns a configuration into compiler input without storing it (BuildInput, and the first-run
+// setup, which checks its configuration before it saves anything).
+func ConfigInput(c Config, db *gamedb.DB, probe bool) (compile.Input, error) {
+	in := compile.Input{DB: db, Mode: c.Mode, Probe: probe}
+	var err error
+	for _, v := range c.VLANs {
+		cv := compile.VLAN{VID: v.VID, Name: v.Name, Group: v.Group, Attach: v.Attach, Parent: v.Parent, Device: v.Device,
+			Enabled: v.Enabled, RatePPS: v.RatePPS, Burst: v.Burst}
+		if v.CIDR != "" {
+			if cv.CIDR, err = netip.ParsePrefix(v.CIDR); err != nil {
+				return in, fmt.Errorf("VLAN %d: %w", v.VID, err)
+			}
+		}
+		if v.RelayIP != "" {
+			if cv.RelayIP, err = netip.ParseAddr(v.RelayIP); err != nil {
+				return in, fmt.Errorf("VLAN %d: %w", v.VID, err)
+			}
+		}
+		in.VLANs = append(in.VLANs, cv)
+	}
+	for _, p := range c.Profiles {
+		in.Profiles = append(in.Profiles, compile.FlowProfile{Name: p.Name, Edges: p.Edges})
+		if p.Default {
+			in.DefaultProfile = p.Name
+		}
+	}
+	for _, g := range c.Games {
+		if g.Off {
+			continue
+		}
+		sources, err := compile.ParseSources(strings.Join(g.Sources, " "))
+		if err != nil {
+			return in, fmt.Errorf("game %q: sources: %w", g.ID, err)
+		}
+		in.Games = append(in.Games, compile.Selection{GameID: g.ID, FlowProfile: g.FlowProfile, Override: g.Override, Sources: sources})
+	}
+	return in, nil
+}
+
+// ---- revisions ----
+
+// Revision is one applied (or attempted) configuration state.
+type Revision struct {
+	ID            int64
+	TS, User      string
+	Note          string
+	Hash          string
+	Snapshot      string // JSON
+	Config        string // JSON (Config)
+	Warnings      []string
+	AppliedOK     bool
+	EngineMessage string
+}
+
+// AddRevision stores a revision and returns its ID.
+func (s *Store) AddRevision(ctx context.Context, r Revision) (int64, error) {
+	w, _ := json.Marshal(r.Warnings)
+	res, err := s.db.ExecContext(ctx, `INSERT INTO config_revision(ts, user, note, hash, snapshot, config, warnings, applied_ok, engine_message) VALUES (?,?,?,?,?,?,?,?,?)`,
+		s.ts(), r.User, r.Note, r.Hash, r.Snapshot, r.Config, string(w), r.AppliedOK, r.EngineMessage)
+	if err != nil {
+		return 0, err
+	}
+	return res.LastInsertId()
+}
+
+// Revisions returns the newest revisions (without snapshot/config bodies).
+func (s *Store) Revisions(ctx context.Context, limit int) ([]Revision, error) {
+	rows, err := s.db.QueryContext(ctx, `SELECT id, ts, user, note, hash, warnings, applied_ok, engine_message FROM config_revision ORDER BY id DESC LIMIT ?`, limit)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var out []Revision
+	for rows.Next() {
+		var r Revision
+		var w string
+		if err := rows.Scan(&r.ID, &r.TS, &r.User, &r.Note, &r.Hash, &w, &r.AppliedOK, &r.EngineMessage); err != nil {
+			return nil, err
+		}
+		_ = json.Unmarshal([]byte(w), &r.Warnings)
+		out = append(out, r)
+	}
+	return out, rows.Err()
+}
+
+// RevisionByID returns a revision with snapshot and config.
+func (s *Store) RevisionByID(ctx context.Context, id int64) (Revision, error) {
+	var r Revision
+	var w string
+	err := s.db.QueryRowContext(ctx, `SELECT id, ts, user, note, hash, snapshot, config, warnings, applied_ok, engine_message FROM config_revision WHERE id = ?`, id).
+		Scan(&r.ID, &r.TS, &r.User, &r.Note, &r.Hash, &r.Snapshot, &r.Config, &w, &r.AppliedOK, &r.EngineMessage)
+	if errors.Is(err, sql.ErrNoRows) {
+		return r, fmt.Errorf("%w: revision %d", ErrNotFound, id)
+	}
+	_ = json.Unmarshal([]byte(w), &r.Warnings)
+	return r, err
+}
+
+// SetVLANEnabled switches a VLAN on or off in the active event (number of tables changes per event).
+func (s *Store) SetVLANEnabled(ctx context.Context, user string, vid int, on bool) error {
+	ev, err := s.activeEventID(ctx)
+	if err != nil {
+		return err
+	}
+	action := "vlan.disable"
+	if on {
+		action = "vlan.enable"
+	}
+	return s.audited(ctx, func(tx *sql.Tx) (AuditEntry, error) {
+		e := AuditEntry{User: user, Action: action, Object: fmt.Sprint(vid)}
+		res, err := tx.ExecContext(ctx, `UPDATE event_vlan SET enabled = ? WHERE event_id = ? AND vid = ?`, on, ev, vid)
+		if err != nil {
+			return e, err
+		}
+		if n, _ := res.RowsAffected(); n == 0 {
+			return e, fmt.Errorf("%w: VLAN %d", ErrNotFound, vid)
+		}
+		return e, nil
+	})
+}
+
+// VLAN returns one VLAN with its state in the active event.
+func (s *Store) VLAN(ctx context.Context, vid int) (VLANConfig, error) {
+	c, err := s.ExportConfig(ctx)
+	if err != nil {
+		return VLANConfig{}, err
+	}
+	for _, v := range c.VLANs {
+		if v.VID == vid {
+			return v, nil
+		}
+	}
+	return VLANConfig{}, fmt.Errorf("%w: VLAN %d", ErrNotFound, vid)
+}
+
+// AddVLAN stores a new VLAN and adds it to the active event (switched on or off as v.Enabled says).
+// An existing VID is never overwritten (ErrExists).
+func (s *Store) AddVLAN(ctx context.Context, user string, v VLANConfig) error {
+	ev, err := s.activeEventID(ctx)
+	if err != nil {
+		return err
+	}
+	a, _ := json.Marshal(v)
+	return s.audited(ctx, func(tx *sql.Tx) (AuditEntry, error) {
+		e := AuditEntry{User: user, Action: "vlan.create", Object: fmt.Sprint(v.VID), After: string(a)}
+		var n int
+		if err := tx.QueryRowContext(ctx, `SELECT count(*) FROM vlan WHERE vid = ?`, v.VID).Scan(&n); err != nil {
+			return e, err
+		}
+		if n > 0 {
+			return e, fmt.Errorf("%w: VLAN %d", ErrExists, v.VID)
+		}
+		if _, err := tx.ExecContext(ctx, `INSERT INTO vlan(vid, name, grp, cidr, relay_ip, attach, parent, device, rate_pps, rate_burst) VALUES (?,?,?,?,?,?,?,?,?,?)`,
+			v.VID, v.Name, v.Group, v.CIDR, v.RelayIP, v.Attach, v.Parent, v.Device, v.RatePPS, v.Burst); err != nil {
+			return e, err
+		}
+		_, err := tx.ExecContext(ctx, `INSERT INTO event_vlan(event_id, vid, enabled) VALUES (?,?,?)`, ev, v.VID, v.Enabled)
+		return e, err
+	})
+}
+
+// UpdateVLAN changes name, group, addresses, interface and rate of an existing VLAN. The VID and the
+// on/off state in the event stay as they are.
+func (s *Store) UpdateVLAN(ctx context.Context, user string, v VLANConfig) error {
+	before, err := s.VLAN(ctx, v.VID)
+	if err != nil {
+		return err
+	}
+	v.Enabled = before.Enabled
+	b, _ := json.Marshal(before)
+	a, _ := json.Marshal(v)
+	return s.audited(ctx, func(tx *sql.Tx) (AuditEntry, error) {
+		_, err := tx.ExecContext(ctx, `UPDATE vlan SET name = ?, grp = ?, cidr = ?, relay_ip = ?, attach = ?, parent = ?, device = ?, rate_pps = ?, rate_burst = ? WHERE vid = ?`,
+			v.Name, v.Group, v.CIDR, v.RelayIP, v.Attach, v.Parent, v.Device, v.RatePPS, v.Burst, v.VID)
+		return AuditEntry{User: user, Action: "vlan.update", Object: fmt.Sprint(v.VID), Before: string(b), After: string(a)}, err
+	})
+}
+
+// DeleteVLAN removes a VLAN from the configuration and from all events.
+func (s *Store) DeleteVLAN(ctx context.Context, user string, vid int) error {
+	before, err := s.VLAN(ctx, vid)
+	if err != nil {
+		return err
+	}
+	b, _ := json.Marshal(before)
+	return s.audited(ctx, func(tx *sql.Tx) (AuditEntry, error) {
+		_, err := tx.ExecContext(ctx, `DELETE FROM vlan WHERE vid = ?`, vid) // event_vlan: ON DELETE CASCADE
+		return AuditEntry{User: user, Action: "vlan.delete", Object: fmt.Sprint(vid), Before: string(b)}, err
+	})
+}
+
+// ErrExists is returned when a new game would replace an existing one.
+var ErrExists = errors.New("exists")
+
+// AddGame stores a new game (origin "custom" or "sniffer"); existing IDs are never overwritten.
+func (s *Store) AddGame(ctx context.Context, user, origin string, g gamedb.Game) error {
+	if err := gamedb.Validate([]gamedb.Game{g}); err != nil {
+		return err
+	}
+	data, _ := json.Marshal(g)
+	return s.audited(ctx, func(tx *sql.Tx) (AuditEntry, error) {
+		e := AuditEntry{User: user, Action: "game.create", Object: g.ID, After: string(data)}
+		var n int
+		if err := tx.QueryRowContext(ctx, `SELECT count(*) FROM game WHERE id = ?`, g.ID).Scan(&n); err != nil {
+			return e, err
+		}
+		if n > 0 {
+			return e, fmt.Errorf("%w: game %q", ErrExists, g.ID)
+		}
+		_, err := tx.ExecContext(ctx, `INSERT INTO game(id, name, category, relay_needed, default_enabled, confidence, origin, data)
+			VALUES (?,?,?,?,?,?,?,?)`, g.ID, g.Name, g.Category, g.RelayNeeded, g.DefaultEnabled, g.Confidence, origin, string(data))
+		return e, err
+	})
+}
+
+// Game returns one game with its store metadata.
+func (s *Store) Game(ctx context.Context, id string) (GameRow, error) {
+	games, err := s.Games(ctx)
+	if err != nil {
+		return GameRow{}, err
+	}
+	for _, g := range games {
+		if g.ID == id {
+			return g, nil
+		}
+	}
+	return GameRow{}, fmt.Errorf("%w: game %q", ErrNotFound, id)
+}
+
+// UpdateGame replaces the data of an existing game. A seed game is marked locally modified, so a later seed
+// sync does not overwrite it (it gets "seed differs" instead).
+func (s *Store) UpdateGame(ctx context.Context, user string, g gamedb.Game) error {
+	if err := gamedb.Validate([]gamedb.Game{g}); err != nil {
+		return err
+	}
+	before, err := s.Game(ctx, g.ID)
+	if err != nil {
+		return err
+	}
+	data, _ := json.Marshal(g)
+	b, _ := json.Marshal(before.Game)
+	return s.audited(ctx, func(tx *sql.Tx) (AuditEntry, error) {
+		_, err := tx.ExecContext(ctx, `UPDATE game SET name=?, category=?, relay_needed=?, default_enabled=?, confidence=?, data=?,
+			locally_modified = CASE WHEN origin = 'seed' THEN 1 ELSE locally_modified END WHERE id=?`,
+			g.Name, g.Category, g.RelayNeeded, g.DefaultEnabled, g.Confidence, string(data), g.ID)
+		return AuditEntry{User: user, Action: "game.update", Object: g.ID, Before: string(b), After: string(data)}, err
+	})
+}
+
+// ErrSeedGame is returned when a game from the seed database would be deleted (it would come back with the
+// next seed sync; switch it off instead).
+var ErrSeedGame = errors.New("game comes from the game database")
+
+// DeleteGame removes a game that was created locally (custom, sniffer, import) from all events.
+func (s *Store) DeleteGame(ctx context.Context, user, id string) error {
+	before, err := s.Game(ctx, id)
+	if err != nil {
+		return err
+	}
+	if before.Origin == "seed" {
+		return fmt.Errorf("%w: %s", ErrSeedGame, id)
+	}
+	b, _ := json.Marshal(before.Game)
+	return s.audited(ctx, func(tx *sql.Tx) (AuditEntry, error) {
+		_, err := tx.ExecContext(ctx, `DELETE FROM game WHERE id = ?`, id) // event_game: CASCADE
+		return AuditEntry{User: user, Action: "game.delete", Object: id, Before: string(b)}, err
+	})
+}
+
+// ---- flow profiles (which group sees which group) ----
+
+var profileNameRE = regexp.MustCompile(`^[a-z0-9][a-z0-9_-]{0,31}$`)
+
+// ErrInvalid is returned for names or values the store refuses.
+var ErrInvalid = errors.New("invalid")
+
+// SetProfileEdges replaces the edges of a flow profile.
+func (s *Store) SetProfileEdges(ctx context.Context, user, name string, edges []compile.Edge) error {
+	a, _ := json.Marshal(edges)
+	return s.audited(ctx, func(tx *sql.Tx) (AuditEntry, error) {
+		e := AuditEntry{User: user, Action: "profile.edges", Object: name, After: string(a)}
+		var n int
+		if err := tx.QueryRowContext(ctx, `SELECT count(*) FROM flow_profile WHERE name = ?`, name).Scan(&n); err != nil {
+			return e, err
+		}
+		if n == 0 {
+			return e, fmt.Errorf("%w: profile %q", ErrNotFound, name)
+		}
+		before, err := profileEdges(ctx, tx, name)
+		if err != nil {
+			return e, err
+		}
+		b, _ := json.Marshal(before)
+		e.Before = string(b)
+		if _, err := tx.ExecContext(ctx, `DELETE FROM flow_profile_edge WHERE profile = ?`, name); err != nil {
+			return e, err
+		}
+		for _, edge := range edges {
+			if _, err := tx.ExecContext(ctx, `INSERT OR IGNORE INTO flow_profile_edge(profile, src, dst) VALUES (?,?,?)`, name, edge.Src, edge.Dst); err != nil {
+				return e, err
+			}
+		}
+		return e, nil
+	})
+}
+
+// AddProfile creates a flow profile, optionally as a copy of another one.
+func (s *Store) AddProfile(ctx context.Context, user, name, copyFrom string) error {
+	if !profileNameRE.MatchString(name) {
+		return fmt.Errorf("%w: profile name %q", ErrInvalid, name)
+	}
+	return s.audited(ctx, func(tx *sql.Tx) (AuditEntry, error) {
+		e := AuditEntry{User: user, Action: "profile.create", Object: name, Before: copyFrom}
+		var n int
+		if err := tx.QueryRowContext(ctx, `SELECT count(*) FROM flow_profile WHERE name = ?`, name).Scan(&n); err != nil {
+			return e, err
+		}
+		if n > 0 {
+			return e, fmt.Errorf("%w: profile %q", ErrExists, name)
+		}
+		if _, err := tx.ExecContext(ctx, `INSERT INTO flow_profile(name, is_default) VALUES (?, 0)`, name); err != nil {
+			return e, err
+		}
+		if copyFrom != "" {
+			if _, err := tx.ExecContext(ctx, `INSERT INTO flow_profile_edge(profile, src, dst) SELECT ?, src, dst FROM flow_profile_edge WHERE profile = ?`, name, copyFrom); err != nil {
+				return e, err
+			}
+		}
+		return e, nil
+	})
+}
+
+// ErrDefaultProfile is returned when the default profile would be deleted.
+var ErrDefaultProfile = errors.New("default profile")
+
+// DeleteProfile removes a flow profile; games that used it fall back to the default profile.
+func (s *Store) DeleteProfile(ctx context.Context, user, name string) error {
+	return s.audited(ctx, func(tx *sql.Tx) (AuditEntry, error) {
+		e := AuditEntry{User: user, Action: "profile.delete", Object: name}
+		var def bool
+		err := tx.QueryRowContext(ctx, `SELECT is_default FROM flow_profile WHERE name = ?`, name).Scan(&def)
+		if errors.Is(err, sql.ErrNoRows) {
+			return e, fmt.Errorf("%w: profile %q", ErrNotFound, name)
+		}
+		if err != nil {
+			return e, err
+		}
+		if def {
+			return e, fmt.Errorf("%w: %s", ErrDefaultProfile, name)
+		}
+		if _, err := tx.ExecContext(ctx, `UPDATE event_game SET flow_profile = '' WHERE flow_profile = ?`, name); err != nil {
+			return e, err
+		}
+		_, err = tx.ExecContext(ctx, `DELETE FROM flow_profile WHERE name = ?`, name)
+		return e, err
+	})
+}
+
+// SetDefaultProfile makes name the default flow profile.
+func (s *Store) SetDefaultProfile(ctx context.Context, user, name string) error {
+	return s.audited(ctx, func(tx *sql.Tx) (AuditEntry, error) {
+		e := AuditEntry{User: user, Action: "profile.default", Object: name}
+		if _, err := tx.ExecContext(ctx, `UPDATE flow_profile SET is_default = (name = ?)`, name); err != nil {
+			return e, err
+		}
+		var n int
+		if err := tx.QueryRowContext(ctx, `SELECT count(*) FROM flow_profile WHERE name = ? AND is_default = 1`, name).Scan(&n); err != nil {
+			return e, err
+		}
+		if n == 0 {
+			return e, fmt.Errorf("%w: profile %q", ErrNotFound, name)
+		}
+		return e, nil
+	})
+}
+
+// SetGameProfile sets the flow profile of a switched-on game in the active event ("" = default profile).
+func (s *Store) SetGameProfile(ctx context.Context, user, gameID, profile string) error {
+	ev, err := s.activeEventID(ctx)
+	if err != nil {
+		return err
+	}
+	return s.audited(ctx, func(tx *sql.Tx) (AuditEntry, error) {
+		e := AuditEntry{User: user, Action: "game.profile", Object: gameID, After: profile}
+		if profile != "" {
+			var n int
+			if err := tx.QueryRowContext(ctx, `SELECT count(*) FROM flow_profile WHERE name = ?`, profile).Scan(&n); err != nil {
+				return e, err
+			}
+			if n == 0 {
+				return e, fmt.Errorf("%w: profile %q", ErrNotFound, profile)
+			}
+		}
+		res, err := tx.ExecContext(ctx, `UPDATE event_game SET flow_profile = ? WHERE event_id = ? AND game_id = ? AND enabled = 1`, profile, ev, gameID)
+		if err != nil {
+			return e, err
+		}
+		if n, _ := res.RowsAffected(); n == 0 {
+			return e, fmt.Errorf("%w: game %q is not switched on", ErrNotFound, gameID)
+		}
+		return e, nil
+	})
+}
+
+// sourceList splits the stored source filter (nil when empty, so exports omit it).
+func sourceList(s string) []string {
+	if f := strings.Fields(s); len(f) > 0 {
+		return f
+	}
+	return nil
+}
+
+// SetGameSources sets the source filter of a switched-on game in the active event (empty = every sender).
+func (s *Store) SetGameSources(ctx context.Context, user, gameID string, sources []netip.Prefix) error {
+	ev, err := s.activeEventID(ctx)
+	if err != nil {
+		return err
+	}
+	sources = slices.Clone(sources)
+	compile.SortSources(sources)
+	val := strings.Join(compile.FormatSources(slices.Compact(sources)), " ")
+	return s.audited(ctx, func(tx *sql.Tx) (AuditEntry, error) {
+		var old string
+		err := tx.QueryRowContext(ctx, `SELECT sources FROM event_game WHERE event_id = ? AND game_id = ? AND enabled = 1`, ev, gameID).Scan(&old)
+		if errors.Is(err, sql.ErrNoRows) {
+			return AuditEntry{}, fmt.Errorf("%w: game %q is not switched on", ErrNotFound, gameID)
+		}
+		if err != nil || val == old {
+			return AuditEntry{}, err // unchanged: nothing to store, nothing to record
+		}
+		_, err = tx.ExecContext(ctx, `UPDATE event_game SET sources = ? WHERE event_id = ? AND game_id = ?`, val, ev, gameID)
+		return AuditEntry{User: user, Action: "game.sources", Object: gameID, Before: old, After: val}, err
+	})
+}
+
+// SetProfileEdge switches one edge of a flow profile on or off.
+func (s *Store) SetProfileEdge(ctx context.Context, user, name string, e compile.Edge, on bool) error {
+	c, err := s.ExportConfig(ctx)
+	if err != nil {
+		return err
+	}
+	for _, p := range c.Profiles {
+		if p.Name != name {
+			continue
+		}
+		edges := slices.DeleteFunc(slices.Clone(p.Edges), func(x compile.Edge) bool { return x == e })
+		if on {
+			edges = append(edges, e)
+		}
+		return s.SetProfileEdges(ctx, user, name, edges)
+	}
+	return fmt.Errorf("%w: profile %q", ErrNotFound, name)
+}
+
+// RenameProfile renames a flow profile; edges follow by ON UPDATE CASCADE, games of all events are updated.
+func (s *Store) RenameProfile(ctx context.Context, user, name, to string) error {
+	if !profileNameRE.MatchString(to) {
+		return fmt.Errorf("%w: profile name %q", ErrInvalid, to)
+	}
+	return s.audited(ctx, func(tx *sql.Tx) (AuditEntry, error) {
+		e := AuditEntry{User: user, Action: "profile.rename", Object: name, Before: name, After: to}
+		var n int
+		if err := tx.QueryRowContext(ctx, `SELECT count(*) FROM flow_profile WHERE name = ?`, to).Scan(&n); err != nil {
+			return e, err
+		}
+		if n > 0 {
+			return e, fmt.Errorf("%w: profile %q", ErrExists, to)
+		}
+		res, err := tx.ExecContext(ctx, `UPDATE flow_profile SET name = ? WHERE name = ?`, to, name)
+		if err != nil {
+			return e, err
+		}
+		if n, _ := res.RowsAffected(); n == 0 {
+			return e, fmt.Errorf("%w: profile %q", ErrNotFound, name)
+		}
+		_, err = tx.ExecContext(ctx, `UPDATE event_game SET flow_profile = ? WHERE flow_profile = ?`, to, name)
+		return e, err
+	})
+}

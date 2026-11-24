@@ -1,0 +1,156 @@
+{{define "content"}}
+{{$csrf := .CSRF}}{{$e := .Engine}}{{$l := .Live}}
+<span class="bar"></span>
+<h1>{{th "Relay-<em>System</em>"}}</h1>
+
+<div class="section-first grid2">
+  <section class="panel" aria-labelledby="mode-h">
+    <div class="panel-head">
+      <h2 id="mode-h">{{t "Betriebsart"}}</h2>
+      <span class="state state-box" data-tone="{{$l.State.Tone}}" data-tone-live><span data-icon-live>{{icon $l.State.Icon}}</span><span class="sr">{{t "Läuft gerade:"}} </span><span data-live="state.label">{{t $l.State.Label}}</span></span>
+    </div>
+    {{if .Data.Resume}}
+    <div class="note" data-tone="warn">{{icon "pause"}}<div class="note-body">
+      <p>{{th "<b>Not-Aus.</b> Das Relay ist pausiert. Vorher lief es im Modus %s." (t .Data.ResumeName)}}</p>
+      <p><a class="btn-outline btn-resume" href="/notaus">{{icon "power"}}<span>{{t "Relay wieder einschalten"}}</span></a></p>
+    </div></div>
+    {{end}}
+    <form method="post" action="/system/mode" class="form" data-confirm="{{t "Die Betriebsart gilt sofort für alle Netze."}}" data-confirm-title="{{t "Betriebsart wechseln?"}}" data-confirm-ok="{{t "Wechseln"}}">
+      <input type="hidden" name="csrf" value="{{$csrf}}">
+      <fieldset class="radios">
+        <legend class="sr">{{t "Betriebsart wählen"}}</legend>
+        <label class="radio"><input type="radio" name="mode" value="active"{{if eq .Data.Mode "active"}} checked{{end}}><span><b>{{t "Aktiv"}}</b><br><span class="small muted">{{t "Leitet weiter. Nur wenn kein anderes Relay dieselben Ports weiterleitet."}}</span></span></label>
+        <label class="radio"><input type="radio" name="mode" value="observe"{{if eq .Data.Mode "observe"}} checked{{end}}><span><b>{{t "Beobachten"}}</b><br><span class="small muted">{{t "Zählt mit, sendet nichts. Für den Parallelbetrieb mit einem anderen Relay."}}</span></span></label>
+        <label class="radio"><input type="radio" name="mode" value="paused"{{if eq .Data.Mode "paused"}} checked{{end}}><span><b>{{t "Pausiert"}}</b><br><span class="small muted">{{t "Wie Not-Aus. Nichts wird weitergeleitet."}}</span></span></label>
+      </fieldset>
+      <div class="actions"><button class="btn" type="submit">{{t "Betriebsart wechseln"}}</button><span class="small muted">{{t "Eingestellt: %s" (modeName .Data.Mode)}}</span></div>
+    </form>
+  </section>
+
+  <section class="panel" aria-labelledby="engine-h">
+    <h2 id="engine-h">Engine</h2>
+    {{if .EngErr}}<p class="note" data-tone="danger">{{icon "alert"}}<span class="note-body">{{th `Die Engine antwortet nicht. Prüfe ihren Container: <span class="mono">docker compose logs engine</span>`}}</span></p>{{else}}
+    <dl class="facts">
+      <dt>Version</dt><dd class="mono">{{$e.Version}}</dd>
+      <dt>{{t "Läuft seit"}}</dt><dd>{{ts $e.Started "datetime"}}</dd>
+      <dt>{{t "Stand"}}</dt><dd><span class="mono">{{short $e.SnapshotHash}}</span> · {{th `<span data-live="vlan_count">%s</span> Netze · <span data-live="rule_count">%s</span> Regeln` $e.VLANs $e.Rules}}</dd>
+      <dt>{{t "Empfangen"}}</dt><dd class="mono" data-live="rx">{{num $e.RX}}</dd>
+      <dt>{{t "Gesendet"}}</dt><dd class="mono" data-live="sent">{{num $e.Sent}}</dd>
+      <dt>{{t "Relay-Signal"}}</dt><dd>{{if eq $e.BeaconAuth "env"}}{{t "signiert, Schlüssel aus NSRELAY_BEACON_KEY"}}{{else if eq $e.BeaconAuth "file"}}{{t "signiert, eigener Schlüssel dieser Installation"}}{{else}}{{t "nicht signiert"}}{{end}}</dd>
+      {{if $e.IfacePolicy}}<dt>{{t "Schnittstellen"}}</dt><dd>{{if eq $e.IfacePolicy "list"}}{{t "nur die aus NSRELAY_ALLOWED_IFACES"}}{{else}}{{t "automatisch, ohne die Schnittstelle der Standardroute"}}{{end}}</dd>{{end}}
+    </dl>
+    {{if not $e.BeaconAuth}}<p class="note" data-tone="warn">{{icon "alert"}}<span class="note-body">{{t "Die Relay-Signale sind nicht signiert, weil die Engine keinen Schlüssel laden konnte (siehe Engine-Log). Ein gefälschtes Signal aus einem Netz kann dieses Relay in den Standby schicken. Abhilfe: NSRELAY_BEACON_KEY setzen oder das Datenverzeichnis der Engine beschreibbar machen."}}</span></p>{{end}}
+    {{if $e.HostIssues}}<div class="note" data-tone="warn">{{icon "alert"}}<div class="note-body">
+      <p>{{th "<b>Der Host ist nicht vollständig abgeschirmt.</b> Das Relay arbeitet trotzdem. Die Engine konnte nicht alles selbst einrichten:"}}</p>
+      <ul class="issues">{{range $e.HostIssues}}<li>{{hostIssue .Code}}<br><span class="mono small muted">{{.Detail}}</span></li>{{end}}</ul>
+      <p class="small">{{th `Abhilfe: Der Engine-Container braucht das Host-Netz und die Rechte <span class="mono">NET_ADMIN</span> und <span class="mono">NET_RAW</span> (stehen in der compose.yaml). Geht das nicht, bereite den Host einmal von Hand vor: <span class="mono">sudo sh deploy/host/setup.sh &lt;trunk&gt;</span>`}}</p>
+    </div></div>{{end}}
+    {{end}}
+    <h3>{{t "Nicht weitergeleitet, nach Grund"}}</h3>
+    <div class="tablewrap"><table>
+      <thead><tr><th>{{t "Grund"}}</th><th class="num">{{t "Pakete"}}</th></tr></thead>
+      <tbody data-rows="reasons" data-cols="label,count:num mono" data-empty="{{t "Bisher wurde nichts verworfen."}}">
+        {{range $l.Reasons}}<tr><td>{{if eq .Label .Key}}{{.Label}}{{else}}{{t .Label}}{{end}}</td><td class="num mono">{{num .Count}}</td></tr>
+        {{else}}<tr><td colspan="2" class="muted">{{t "Bisher wurde nichts verworfen."}}</td></tr>{{end}}
+      </tbody>
+    </table></div>
+  </section>
+</div>
+
+<div class="section grid2">
+  <section class="panel" aria-labelledby="save-h">
+    <h2 id="save-h">{{t "Konfiguration und Sicherung"}}</h2>
+    <div class="actrow">
+      <p>{{th "<b>Backup.</b> Die ganze Datenbank: Spiele, Netze, Stände, Protokoll, Konten."}}<br>
+        <span class="small">{{if .Data.BackupAuto}}{{t "Automatisch jeden Tag, die letzten %d bleiben." .Data.BackupKeep}} {{if .Data.BackupLast.IsZero}}{{t "Noch keins geschrieben."}}{{else}}{{t "Zuletzt:"}} {{ts .Data.BackupLast "datetime"}}{{end}}{{else}}{{t "Die automatische Sicherung ist aus (NSRELAY_BACKUP_DIR nicht gesetzt oder NSRELAY_BACKUP_AUTO=0)."}}{{end}}</span></p>
+      <a class="btn-outline" href="/system/backup">{{icon "download"}}<span>{{t "Backup laden"}}</span></a>
+    </div>
+    <div class="actrow">
+      <p>{{th `<b>Konfiguration als YAML.</b> Netze, Profile und die Spiele des Events, lesbar. Zurück mit <span class="mono">nsrelay admin import</span>.`}}</p>
+      <a class="btn-outline" href="/system/konfiguration.yaml">{{icon "download"}}<span>{{t "YAML laden"}}</span></a>
+    </div>
+    <div class="actrow">
+      <p>{{th "<b>Verlauf.</b> Wer hat was geändert, und zurück auf einen älteren Stand."}}</p>
+      <a class="btn-outline" href="/verlauf"><span>{{t "Zum Verlauf"}}</span>{{icon "arrow"}}</a>
+    </div>
+  </section>
+
+  <section class="panel" aria-labelledby="msg-h">
+    <h2 id="msg-h">Monitoring</h2>
+    <p class="small muted">{{t "Zabbix und Prometheus holen Werte ab, Syslog und OpenTelemetry bekommen Alarme und Änderungen."}}</p>
+    <dl class="facts">
+      <dt>Token</dt><dd>{{if .Data.MonitorSet}}<span class="flag" data-tone="ok">{{icon "check"}}{{t "eingerichtet"}}</span>{{else}}<span class="flag">{{t "noch keiner"}}</span>{{end}}</dd>
+      <dt>{{t "Ziele"}}</dt><dd>{{.Data.Targets}}{{if .Data.TargetsFailing}} · <span class="flag" data-tone="danger">{{icon "alert"}}{{t "%d mit Fehler" .Data.TargetsFailing}}</span>{{end}}</dd>
+    </dl>
+    <div class="actions"><a class="btn-outline" href="/system/monitoring"><span>{{t "Monitoring einrichten"}}</span>{{icon "arrow"}}</a></div>
+  </section>
+
+  <section class="panel panel-wide" aria-labelledby="dienste">
+    <h2 id="dienste">{{t "Dienste im Netz"}}</h2>
+    <p class="small muted">{{t "Geräte, die Spiele abfragen, ohne zu spielen, etwa ein Discord-Gameserver-Notifier. Auf der Seite Spieler stehen sie in einem eigenen Block und zählen nicht mit. Weitergeleitet wird ihr Verkehr ganz normal."}}</p>
+    {{if .Data.Services}}
+    <ul class="plist">
+      {{range .Data.Services}}
+      <li class="prow">
+        <span><b>{{.Name}}</b>{{with .Note}}<br><span class="small muted">{{.}}</span>{{end}}</span>
+        <span class="mono prow-ip">{{.IP}}</span>
+        <span class="small muted">{{.User}}</span>
+        <form method="post" action="/system/dienste/{{.IP}}/loeschen" data-confirm="{{t "%s zählt dann wieder als Spieler:in." .Name}}" data-confirm-title="{{t "Markierung entfernen?"}}" data-confirm-ok="{{t "Entfernen"}}"><input type="hidden" name="csrf" value="{{$csrf}}"><button class="btn-link" type="submit">{{t "Entfernen"}}</button></form>
+      </li>
+      {{end}}
+    </ul>
+    {{else}}<p class="quiet">{{icon "info"}}<span>{{th `Noch kein Dienst markiert. Am schnellsten geht es auf der Seite <a href="/spieler">Spieler</a> über „Dienst?“ (erscheint, wenn eine Adresse mindestens 3 Spiele abfragt).`}}</span></p>{{end}}
+    <form method="post" action="/system/dienste" class="form">
+      <input type="hidden" name="csrf" value="{{$csrf}}">
+      <div class="field"><label class="label" for="svc-ip">{{t "Adresse"}}</label>
+        <input id="svc-ip" name="ip" required value="{{.Data.ServiceIP}}" class="mono" inputmode="decimal" placeholder="10.10.5.99" autocomplete="off" spellcheck="false"></div>
+      <div class="field"><label class="label" for="svc-name">{{t "Name"}}</label>
+        <input id="svc-name" name="name" required maxlength="60" placeholder="Discord-Notifier" autocomplete="off"{{if .Data.ServiceIP}} autofocus{{end}}></div>
+      <div class="field"><label class="label" for="svc-note">{{t "Notiz (optional)"}}</label>
+        <input id="svc-note" name="note" placeholder="{{t "VM, wer betreut sie"}}" autocomplete="off"></div>
+      <div class="actions"><button class="btn-outline" type="submit">{{t "Als Dienst markieren"}}</button></div>
+    </form>
+  </section>
+
+  <section class="panel panel-wide" aria-labelledby="abfrage">
+    <div class="panel-head">
+      <h2 id="abfrage">{{t "Server-Abfrage"}}</h2>
+      {{if .Data.Probe}}<span class="flag" data-tone="ok">{{icon "check"}}{{t "Eingeschaltet"}}</span>{{else}}<span class="flag">{{t "Ausgeschaltet"}}</span>{{end}}
+    </div>
+    <div class="actrow">
+      <p class="small">{{th `CS2 und andere Steam-Spiele suchen per Broadcast, ihre Server antworten aber nur dem Suchenden. Von allein sieht das Relay diese Server nicht. Mit der Abfrage stellt es die zuletzt gesehenen Suchanfragen jede Minute selbst, in jedem Netz von seiner eigenen Adresse, und zeigt unter <a href="/spieler">Spieler</a>, wer antwortet. Steam-Server stehen dort mit Name, Karte und Spielerzahl. Die Abfrage läuft in „Aktiv“ und auch in „Beobachten“, nicht nach Not-Aus.`}}</p>
+      <form method="post" action="/system/server-abfrage">
+        <input type="hidden" name="csrf" value="{{$csrf}}">
+        <input type="hidden" name="on" value="{{if .Data.Probe}}0{{else}}1{{end}}">
+        <button class="btn-outline" type="submit">{{if .Data.Probe}}{{t "Ausschalten"}}{{else}}{{t "Einschalten"}}{{end}}</button>
+      </form>
+    </div>
+  </section>
+
+  <section class="panel panel-wide" aria-labelledby="aussehen">
+    <div class="panel-head">
+      <h2 id="aussehen">{{t "Logo der LAN"}}</h2>
+      {{if .Logo}}<span class="flag" data-tone="ok">{{icon "check"}}{{t "Eingerichtet"}}</span>{{else}}<span class="flag">{{t "Kein Logo"}}</span>{{end}}
+    </div>
+    <div class="logoset">
+      <div class="logoset-prev"{{if not .Logo}} data-empty{{end}}>{{with .Logo}}<img src="{{.URL}}" alt="{{.Alt}}" width="{{.Width}}" height="{{.Height}}">{{else}}<span class="small">{{t "Noch kein Logo"}}</span>{{end}}</div>
+      <div class="logoset-body">
+        <p class="small">{{t "Zeigt das Logo eurer LAN neben dem Zeichen von Netsession Relay: oben in der Leiste, auf der Übersicht, bei der Anmeldung. Der Name und das Zeichen des Programms bleiben stehen."}}</p>
+        <form method="post" action="/system/logo" enctype="multipart/form-data" class="form" data-upload>
+          <input type="hidden" name="csrf" value="{{$csrf}}">
+          <div class="field"><label class="label" for="logo-file">{{t "Bilddatei"}}</label>
+            <input id="logo-file" type="file" name="logo" accept="image/png,image/jpeg" required aria-describedby="logo-hint" data-max="1048576" data-max-text="{{t "Die Datei ist zu groß. Erlaubt ist höchstens 1 MiB."}}">
+            <p class="hint" id="logo-hint">{{t "PNG oder JPEG, höchstens 1 MiB und 2048 × 2048 Pixel. Am besten mit durchsichtigem Hintergrund und hellen Farben, denn die Leiste ist dunkel. Gespeichert wird eine verkleinerte Fassung."}}</p></div>
+          <div class="actions"><button class="btn-outline" type="submit">{{if .Logo}}{{t "Logo ersetzen"}}{{else}}{{t "Logo hochladen"}}{{end}}</button></div>
+        </form>
+        {{if .Logo}}
+        <form method="post" action="/system/logo/entfernen" class="logoset-rm" data-confirm="{{t "Danach steht wieder nur das Zeichen von Netsession Relay da."}}" data-confirm-title="{{t "Logo entfernen?"}}" data-confirm-ok="{{t "Entfernen"}}">
+          <input type="hidden" name="csrf" value="{{$csrf}}">
+          <button class="btn-link" type="submit">{{t "Logo entfernen"}}</button>
+        </form>
+        {{end}}
+      </div>
+    </div>
+  </section>
+</div>
+{{end}}

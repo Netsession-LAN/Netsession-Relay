@@ -1,0 +1,29 @@
+# Fallback without Docker: same static binary under systemd.
+# Install: copy nsrelay to /usr/local/bin, this file to /etc/systemd/system, `systemctl enable --now nsrelay-engine`.
+[Unit]
+Description=Netsession Relay engine (packet data plane)
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+# optional: NSRELAY_BEACON_KEY, NSRELAY_ALLOWED_IFACES (docs: operations, "Security settings")
+EnvironmentFile=-/srv/nsrelay/.env
+Environment=NSRELAY_SNAPSHOT=/var/lib/nsrelay/active.json
+Environment=NSRELAY_SOCKET=/run/nsrelay/engine.sock
+Environment=NSRELAY_SOCKET_GID=10001
+ExecStart=/usr/local/bin/nsrelay engine
+Restart=always
+RestartSec=2
+User=root
+StateDirectory=nsrelay
+RuntimeDirectory=nsrelay
+RuntimeDirectoryPreserve=yes
+CapabilityBoundingSet=CAP_NET_RAW CAP_NET_ADMIN CAP_CHOWN
+AmbientCapabilities=CAP_NET_RAW CAP_NET_ADMIN CAP_CHOWN
+NoNewPrivileges=yes
+ProtectSystem=strict
+ProtectHome=yes
+PrivateTmp=yes
+
+[Install]
+WantedBy=multi-user.target

@@ -1,0 +1,30 @@
+{{define "content"}}
+<section class="login">
+  <img class="watermark" src="{{static "ns/logo/netsession_bildmarke_negativ.svg"}}" alt="" aria-hidden="true">
+  <div class="login-card card">
+    <div class="login-brand"><img class="login-logo" src="{{static "ns/logo/netsession_logo-horizontal_negativ.svg"}}" alt="Netsession" width="200" height="44">{{with .Logo}}<img class="login-ev" src="{{.URL}}" alt="{{.Alt}}" width="{{.Width}}" height="{{.Height}}">{{end}}</div>
+    <span class="bar"></span>
+    <h1>Relay <em>{{t "Anmelden"}}</em></h1>
+    <p class="muted">{{t "Das Relay verbindet die LAN-Spiele über alle Tische."}}</p>
+    {{if .Data.OIDC}}
+    <p><a class="btn" href="/oidc/login">{{t "Anmelden mit %s" .Data.OIDCName}}</a></p>
+    <details class="fold"{{if .Error}} open{{end}}>
+      <summary><span class="label">{{t "Notfall-Anmeldung"}}</span></summary>
+    {{end}}
+    <form method="post" action="/login/local" class="form">
+      <input type="hidden" name="csrf" value="{{.Data.LoginCSRF}}">
+      <label class="field"><span class="label">{{t "Name"}}</span><input name="name" autocomplete="username" autocapitalize="none" spellcheck="false" required{{if not .Data.OIDC}} autofocus{{end}}></label>
+      <label class="field"><span class="label">{{t "Passwort"}}</span><input name="password" type="password" autocomplete="current-password" required></label>
+      <button class="{{if .Data.OIDC}}btn-outline{{else}}btn{{end}}" type="submit">{{t "Anmelden"}}</button>
+    </form>
+    {{if .Data.OIDC}}</details>{{end}}
+    {{if .Demo}}<p class="login-demo"><span class="flag" data-tone="warn">{{icon "alert"}}Demo</span> {{th `Erfundene Daten, es wird nichts weitergeleitet. Konten <span class="mono">demo</span>, <span class="mono">op</span>, <span class="mono">view</span>, Passwort <span class="mono">demo</span>.`}}</p>{{end}}
+    <details class="fold">
+      <summary><span class="label">{{t "Kein Konto oder Passwort vergessen?"}}</span></summary>
+      <p class="small muted">{{t "Lokale Konten legt ein Admin auf der Relay-VM an:"}}<br><code>docker compose exec web nsrelay admin set-password &lt;name&gt;</code></p>
+      {{if .Data.OIDC}}<p class="small muted">{{t "Mit %s: Ein Admin trägt dich beim Anmeldedienst in eine der Gruppen %s, %s oder %s ein." .Data.OIDCName .Data.GroupAdmin .Data.GroupOperator .Data.GroupViewer}}</p>{{end}}
+    </details>
+    <p class="login-lang small">{{template "langswitch" .}}</p>
+  </div>
+</section>
+{{end}}
