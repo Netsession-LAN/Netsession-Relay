@@ -2,7 +2,7 @@
 
 ## Build and test
 
-Go 1.26. The binary is built without CGO; only the race detector needs a C compiler.
+Go 1.26 or newer (CI and the release image use 1.27). The binary is built without CGO; only the race detector needs a C compiler.
 
 ```sh
 go build ./cmd/nsrelay
@@ -10,8 +10,8 @@ go test ./...                 # unit tests (pure logic, web handlers with a fake
 gofmt -l cmd internal games   # must print nothing
 go mod tidy -diff             # must print nothing
 go vet ./... && GOOS=windows go vet ./...     # pure-logic packages stay portable
-go run honnef.co/go/tools/cmd/staticcheck@2025.1.1 -checks all,-ST1000,-ST1003 ./...
-go run golang.org/x/vuln/cmd/govulncheck@v1.1.4 ./...
+go run honnef.co/go/tools/cmd/staticcheck@v0.8.2 -checks all,-ST1000,-ST1003 ./...
+go run golang.org/x/vuln/cmd/govulncheck@v1.9.0 ./...
 CGO_ENABLED=1 go test -race ./...
 ```
 
