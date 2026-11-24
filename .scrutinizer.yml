@@ -36,11 +36,12 @@ build:
           - GOROOT="$HOME/go1.27" PATH="$HOME/go1.27/bin:$PATH" go-scrutinizer-run
           - GOROOT="$HOME/go1.27" PATH="$HOME/go1.27/bin:$PATH" govet-run
           # coverage of the unit tests (the network lab needs privileged Docker and runs in GitHub Actions; the
-          # coverage of both together is on qlty.sh)
-          - command: GOROOT="$HOME/go1.27" PATH="$HOME/go1.27/bin:$PATH" CGO_ENABLED=0 go test -count=1 -coverpkg=./... -coverprofile=cover.out ./...
+          # coverage of both together is on qlty.sh). Converted to Cobertura with the current Go here: Scrutinizer's
+          # own go-cc conversion runs the image's old Go, which cannot read go.mod.
+          - command: GOROOT="$HOME/go1.27" PATH="$HOME/go1.27/bin:$PATH" CGO_ENABLED=0 go test -count=1 -coverpkg=./... -coverprofile=cover.out ./... && GOROOT="$HOME/go1.27" PATH="$HOME/go1.27/bin:$PATH" go run github.com/boumenot/gocover-cobertura@v1.5.0 < cover.out > coverage.xml
             coverage:
-              file: cover.out
-              format: go-cc
+              file: coverage.xml
+              format: cobertura
     # the test node does nothing: the tests (with the race detector and the lab) run in GitHub Actions
     tests:
       project_setup:
