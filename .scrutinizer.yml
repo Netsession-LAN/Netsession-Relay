@@ -7,7 +7,11 @@ checks:
 
 filter:
   excluded_paths:
+    # one pattern per directory depth, in case "*" does not cross a "/"
     - "*_test.go"
+    - "*/*_test.go"
+    - "*/*/*_test.go"
+    - "*/*/*/*_test.go"
     - "*/testdata/*"
     - "lab/*"
     - "docs/*"
