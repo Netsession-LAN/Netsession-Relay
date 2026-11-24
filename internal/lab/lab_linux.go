@@ -3,7 +3,6 @@
 package lab
 
 import (
-	"bytes"
 	"fmt"
 	"net"
 	"time"
@@ -83,6 +82,29 @@ func SendRaw(iface string, count, interval int, build func(mac pkt.MAC) []byte) 
 	return nil
 }
 
+// receiveFrames reads IPv4 frames from fd for timeout milliseconds (at least 100) and hands every frame that
+// parses to handle. It stops early when handle reports done or an error, and returns that error.
+func receiveFrames(fd, timeout int, handle func(pkt.Frame) (done bool, err error)) error {
+	deadline := time.Now().Add(time.Duration(max(timeout, 100)) * time.Millisecond)
+	tv := unix.NsecToTimeval((50 * time.Millisecond).Nanoseconds())
+	_ = unix.SetsockoptTimeval(fd, unix.SOL_SOCKET, unix.SO_RCVTIMEO, &tv)
+	buf := make([]byte, 2048)
+	for time.Now().Before(deadline) {
+		n, err := unix.Read(fd, buf)
+		if err != nil {
+			continue
+		}
+		f, err := pkt.Parse(append([]byte{}, buf[:n]...))
+		if err != nil {
+			continue
+		}
+		if done, err := handle(f); done || err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
 // Expect waits for matching UDP frames on opts.Iface and returns them.
 // With opts.None it returns an error if anything matches.
 func Expect(o ExpectOptions) ([]pkt.Frame, error) {
@@ -91,45 +113,15 @@ func Expect(o ExpectOptions) ([]pkt.Frame, error) {
 		return nil, fmt.Errorf("lab expect: %w", err)
 	}
 	defer unix.Close(fd)
-	want := max(o.Count, 1)
-	deadline := time.Now().Add(time.Duration(max(o.Timeout, 100)) * time.Millisecond)
-	tv := unix.NsecToTimeval((50 * time.Millisecond).Nanoseconds())
-	_ = unix.SetsockoptTimeval(fd, unix.SOL_SOCKET, unix.SO_RCVTIMEO, &tv)
-	buf := make([]byte, 2048)
 	var got []pkt.Frame
-	for time.Now().Before(deadline) {
-		n, err := unix.Read(fd, buf)
-		if err != nil {
-			continue
-		}
-		f, err := pkt.Parse(append([]byte{}, buf[:n]...))
-		if err != nil || f.DstPort != o.DstPort {
-			continue
-		}
-		if o.Src.IsValid() && f.Src != o.Src {
-			continue
-		}
-		if o.Dst.IsValid() && f.Dst != o.Dst {
-			continue
+	_ = receiveFrames(fd, o.Timeout, func(f pkt.Frame) (bool, error) {
+		if !o.matches(f) {
+			return false, nil
 		}
 		got = append(got, f)
-		if !o.None && o.Max == 0 && len(got) >= want {
-			return got, nil
-		}
-	}
-	if o.Max > 0 {
-		if len(got) < want || len(got) > o.Max {
-			return got, fmt.Errorf("%s port %d: got %d frame(s), want %d..%d", o.Iface, o.DstPort, len(got), want, o.Max)
-		}
-		return got, nil
-	}
-	if o.None {
-		if len(got) > 0 {
-			return got, fmt.Errorf("expected nothing on %s port %d, got %d frame(s)", o.Iface, o.DstPort, len(got))
-		}
-		return nil, nil
-	}
-	return got, fmt.Errorf("timeout on %s: got %d of %d frame(s) for port %d", o.Iface, len(got), want, o.DstPort)
+		return o.enough(got), nil
+	})
+	return o.result(got)
 }
 
 // A2SServer answers A2S_INFO queries like a Steam/Source server: a query without challenge gets the challenge
@@ -144,45 +136,28 @@ func A2SServer(o A2SOptions) (int, error) {
 	if port == 0 {
 		port = 27015
 	}
-	query := append([]byte{0xff, 0xff, 0xff, 0xff, 'T'}, []byte("Source Engine Query\x00")...)
-	challenge := []byte{0x4c, 0x61, 0x62, 0x21}
-	tv := unix.NsecToTimeval((50 * time.Millisecond).Nanoseconds())
-	_ = unix.SetsockoptTimeval(fd, unix.SOL_SOCKET, unix.SO_RCVTIMEO, &tv)
-	deadline := time.Now().Add(time.Duration(max(o.Timeout, 100)) * time.Millisecond)
-	buf := make([]byte, 2048)
 	infos := 0
-	for time.Now().Before(deadline) {
-		n, err := unix.Read(fd, buf)
-		if err != nil {
-			continue
+	err = receiveFrames(fd, o.Timeout, func(f pkt.Frame) (bool, error) {
+		if f.DstPort != port {
+			return false, nil
 		}
-		f, err := pkt.Parse(append([]byte{}, buf[:n]...))
-		if err != nil || f.DstPort != port || !bytes.HasPrefix(f.Payload, query) {
-			continue
+		answer, info, ok := a2sAnswer(f.Payload, o.Name)
+		if !ok {
+			return false, nil
 		}
-		var answer []byte
-		switch {
-		case len(f.Payload) == len(query):
-			answer = append([]byte{0xff, 0xff, 0xff, 0xff, 'A'}, challenge...)
-		case len(f.Payload) == len(query)+4 && bytes.Equal(f.Payload[len(query):], challenge):
-			answer = []byte{0xff, 0xff, 0xff, 0xff, 'I', 17}
-			for _, s := range []string{o.Name, "de_lab", "cs2", "Counter-Strike 2"} {
-				answer = append(append(answer, s...), 0)
-			}
-			answer = append(answer, 0xda, 0x02, 3, 16, 0)
+		if info {
 			infos++
-		default:
-			continue
 		}
 		out := pkt.Frame{DstMAC: f.SrcMAC, SrcMAC: pkt.MAC(ifi.HardwareAddr), TTL: 64, ID: uint16(infos + 1), Src: o.IP,
 			Dst: f.Src, SrcPort: port, DstPort: f.SrcPort, UDPChecksum: 1, Payload: answer}
 		b, err := pkt.Build(nil, &out)
 		if err != nil {
-			return infos, err
+			return true, err
 		}
 		if _, err := unix.Write(fd, b); err != nil {
-			return infos, fmt.Errorf("lab a2s-server: %w", err)
+			return true, fmt.Errorf("lab a2s-server: %w", err)
 		}
-	}
-	return infos, nil
+		return false, nil
+	})
+	return infos, err
 }

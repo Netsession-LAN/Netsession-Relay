@@ -4,7 +4,6 @@ import (
 	"cmp"
 	"context"
 	"errors"
-	"fmt"
 	"io"
 	"log/slog"
 	"net"
@@ -16,13 +15,9 @@ import (
 	"syscall"
 	"time"
 
-	"github.com/Netsession-LAN/Netsession-Relay/internal/auth"
-	"github.com/Netsession-LAN/Netsession-Relay/internal/compile"
 	"github.com/Netsession-LAN/Netsession-Relay/internal/control"
-	"github.com/Netsession-LAN/Netsession-Relay/internal/demo"
 	"github.com/Netsession-LAN/Netsession-Relay/internal/engineapi"
 	"github.com/Netsession-LAN/Netsession-Relay/internal/gamedb"
-	"github.com/Netsession-LAN/Netsession-Relay/internal/netif"
 	"github.com/Netsession-LAN/Netsession-Relay/internal/store"
 	"github.com/Netsession-LAN/Netsession-Relay/internal/web"
 )
@@ -59,21 +54,43 @@ func runWeb(args []string, _, stderr io.Writer) int {
 		return 1
 	}
 	defer st.Close()
-	// The game database is embedded and checked by the tests; if it is broken all the same, the web part still
-	// starts with the games the database already has.
-	if seed, err := gamedb.Seed(); err != nil {
-		log.Error("embedded game database is invalid, games are not updated", "err", err)
-	} else if res, err := st.SyncSeed(ctx, seed); err != nil {
-		log.Error("game database not synced into the store", "err", err)
-	} else {
-		log.Info("seed sync", "added", res.Added, "updated", res.Updated, "pending", res.Pending)
-	}
+	syncSeed(ctx, st, log)
 	eng := engineapi.NewClient(af.socket)
 	ui, err := web.New(st, eng, log, version)
 	if err != nil {
 		log.Error("web templates", "err", err)
 		return 1
 	}
+	configureFromEnv(ui, log)
+	warnOpenSetup(ctx, st, log)
+	ui.Outputs.SetSNMPAddr(os.Getenv("NSRELAY_SNMP_ADDR"))
+	ui.Outputs.SetBindAddr(ctx, *addr)
+	defer ui.Outputs.Close()
+	go ui.WatchAlarms(ctx, 10*time.Second) // alarm open/clear events for the monitoring targets
+	go refreshAfterUpdate(ctx, st, eng, log)
+	setupBackups(ctx, ui, st, af.db, log)
+	return serveWeb(ctx, *addr, ui, log, af.db)
+}
+
+// syncSeed brings the embedded game database into the store. The game database is embedded and checked by the
+// tests; if it is broken all the same, the web part still starts with the games the database already has.
+func syncSeed(ctx context.Context, st *store.Store, log *slog.Logger) {
+	seed, err := gamedb.Seed()
+	if err != nil {
+		log.Error("embedded game database is invalid, games are not updated", "err", err)
+		return
+	}
+	res, err := st.SyncSeed(ctx, seed)
+	if err != nil {
+		log.Error("game database not synced into the store", "err", err)
+		return
+	}
+	log.Info("seed sync", "added", res.Added, "updated", res.Updated, "pending", res.Pending)
+}
+
+// configureFromEnv sets what the environment decides about the UI: cookies, public URL, trusted proxies,
+// language, instance name and single sign-on.
+func configureFromEnv(ui *web.Server, log *slog.Logger) {
 	// Secure cookies and HSTS follow the request (TLS, X-Forwarded-Proto from a trusted proxy, the public HTTPS
 	// name); NSRELAY_COOKIE_SECURE=1 forces them, =0 switches them off.
 	ui.Secure, ui.Insecure = os.Getenv("NSRELAY_COOKIE_SECURE") == "1", os.Getenv("NSRELAY_COOKIE_SECURE") == "0"
@@ -85,40 +102,53 @@ func runWeb(args []string, _, stderr io.Writer) int {
 	}
 	ui.DefaultLang = os.Getenv("NSRELAY_LANG")  // "en" for English without a choice by the user; default German
 	ui.Instance = os.Getenv("NSRELAY_INSTANCE") // name of a second instance, e.g. "mDNS"
-	ui.SetOIDC(web.OIDCConfig{Issuer: os.Getenv("NSRELAY_OIDC_ISSUER"), ClientID: os.Getenv("NSRELAY_OIDC_CLIENT_ID"),
+	ui.SetOIDC(oidcFromEnv())
+}
+
+// oidcFromEnv is the single sign-on configuration from the NSRELAY_OIDC_* variables (no issuer: off).
+func oidcFromEnv() web.OIDCConfig {
+	return web.OIDCConfig{Issuer: os.Getenv("NSRELAY_OIDC_ISSUER"), ClientID: os.Getenv("NSRELAY_OIDC_CLIENT_ID"),
 		ClientSecret: os.Getenv("NSRELAY_OIDC_CLIENT_SECRET"), RedirectURL: os.Getenv("NSRELAY_OIDC_REDIRECT_URL"),
 		// optional: the name on the login button and the groups that give the roles (defaults in web.OIDCConfig)
 		Name: os.Getenv("NSRELAY_OIDC_NAME"), GroupAdmin: os.Getenv("NSRELAY_OIDC_GROUP_ADMIN"),
-		GroupOperator: os.Getenv("NSRELAY_OIDC_GROUP_OPERATOR"), GroupViewer: os.Getenv("NSRELAY_OIDC_GROUP_VIEWER")})
-	if n, err := st.LocalAccounts(ctx); err != nil {
+		GroupOperator: os.Getenv("NSRELAY_OIDC_GROUP_OPERATOR"), GroupViewer: os.Getenv("NSRELAY_OIDC_GROUP_VIEWER")}
+}
+
+// warnOpenSetup warns loudly when there is no local account and no single sign-on: then the first-run setup
+// page is open to whoever comes first.
+func warnOpenSetup(ctx context.Context, st *store.Store, log *slog.Logger) {
+	n, err := st.LocalAccounts(ctx)
+	if err != nil {
 		log.Error("accounts not readable", "err", err)
-	} else if n == 0 && os.Getenv("NSRELAY_OIDC_ISSUER") == "" {
+		return
+	}
+	if n == 0 && os.Getenv("NSRELAY_OIDC_ISSUER") == "" {
 		log.Warn("no account yet: THE SETUP PAGE IS OPEN. Whoever opens the web UI first creates the admin account "+
 			"(or use `nsrelay admin set-password <name>`)", "page", "/einrichten")
 	}
-	ui.Outputs.SetSNMPAddr(os.Getenv("NSRELAY_SNMP_ADDR"))
-	ui.Outputs.SetBindAddr(ctx, *addr)
-	defer ui.Outputs.Close()
-	go ui.WatchAlarms(ctx, 10*time.Second) // alarm open/clear events for the monitoring targets
-	go refreshAfterUpdate(ctx, st, eng, log)
+}
+
+// setupBackups gives backup downloads their scratch directories and starts the nightly backup without a timer on
+// the host: on unless NSRELAY_BACKUP_AUTO=0 or no directory (NSRELAY_BACKUP_DIR) is set.
+func setupBackups(ctx context.Context, ui *web.Server, st *store.Store, db string, log *slog.Logger) {
+	dir := os.Getenv("NSRELAY_BACKUP_DIR")
 	// a backup download needs a place for its copy: the root file system of the container is read-only
-	if dir := os.Getenv("NSRELAY_BACKUP_DIR"); dir != "" {
+	if dir != "" {
 		ui.ScratchDirs = append(ui.ScratchDirs, dir)
 	}
-	ui.ScratchDirs = append(ui.ScratchDirs, filepath.Dir(af.db))
-	// Nightly backup without a timer on the host: on unless NSRELAY_BACKUP_AUTO=0 or no directory is set.
-	if dir := os.Getenv("NSRELAY_BACKUP_DIR"); dir != "" && os.Getenv("NSRELAY_BACKUP_AUTO") != "0" {
-		ui.BackupDir, ui.BackupKeep = dir, envInt("NSRELAY_BACKUP_KEEP", 14)
-		go control.AutoBackup(ctx, st, dir, ui.BackupKeep, func(path string, err error) {
-			if err != nil {
-				log.Error("automatic backup failed", "dir", dir, "err", err)
-				return
-			}
-			log.Info("automatic backup written", "file", path, "keep", ui.BackupKeep)
-		})
-		log.Info("automatic backup: daily", "dir", dir, "keep", ui.BackupKeep)
+	ui.ScratchDirs = append(ui.ScratchDirs, filepath.Dir(db))
+	if dir == "" || os.Getenv("NSRELAY_BACKUP_AUTO") == "0" {
+		return
 	}
-	return serveWeb(ctx, *addr, ui, log, af.db)
+	ui.BackupDir, ui.BackupKeep = dir, envInt("NSRELAY_BACKUP_KEEP", 14)
+	go control.AutoBackup(ctx, st, dir, ui.BackupKeep, func(path string, err error) {
+		if err != nil {
+			log.Error("automatic backup failed", "dir", dir, "err", err)
+			return
+		}
+		log.Info("automatic backup written", "file", path, "keep", ui.BackupKeep)
+	})
+	log.Info("automatic backup: daily", "dir", dir, "keep", ui.BackupKeep)
 }
 
 // refreshAfterUpdate re-applies the unchanged configuration once the engine answers, so a new version's compiler
@@ -141,109 +171,6 @@ func refreshAfterUpdate(ctx context.Context, st *store.Store, eng *engineapi.Cli
 		}
 	}
 	log.Warn("could not check whether the configuration needs a re-apply after the update (engine not reachable)")
-}
-
-// runWebDemo serves the UI with demo.Engine and a fresh database in a temporary directory. It never opens the
-// real database or the engine socket, so it cannot change a running relay.
-func runWebDemo(ctx context.Context, addr string, log *slog.Logger, fresh bool, logo string) int {
-	dir, err := os.MkdirTemp("", "nsrelay-demo-")
-	if err != nil {
-		log.Error("demo", "err", err)
-		return 1
-	}
-	defer os.RemoveAll(dir)
-	st, err := store.Open(filepath.Join(dir, "demo.db"))
-	if err != nil {
-		log.Error("database", "err", err)
-		return 1
-	}
-	defer st.Close()
-	if fresh {
-		return runWebDemoSetup(ctx, addr, st, log, logo)
-	}
-	if _, err := control.Init(ctx, st, "demo", "netsession", "ens19", false); err != nil {
-		log.Error("demo init", "err", err)
-		return 1
-	}
-	// a preset starts in observe; the demo shows a relay that is switched on
-	if err := st.SetMode(ctx, "demo", compile.ModeActive); err != nil {
-		log.Error("demo mode", "err", err)
-		return 1
-	}
-	for name, role := range map[string]string{"demo": store.RoleAdmin, "op": store.RoleOperator, "view": store.RoleViewer} {
-		h, err := auth.Hash("demo")
-		if err == nil {
-			err = st.SetLocalUser(ctx, "demo", name, h, role)
-		}
-		if err != nil {
-			log.Error("demo account", "err", err)
-			return 1
-		}
-	}
-	eng := demo.NewEngine()
-	if _, err := control.Apply(ctx, st, eng, "demo", "Demo-Start", false); err != nil {
-		log.Error("demo apply", "err", err)
-		return 1
-	}
-	ui, err := web.New(st, eng, log, version)
-	if err != nil {
-		log.Error("web templates", "err", err)
-		return 1
-	}
-	ui.Demo = true
-	defer ui.Outputs.Close()
-	if !demoLogo(ctx, ui, logo, log) {
-		return 1
-	}
-	log.Warn("DEMO MODE: invented data, nothing is relayed; accounts demo (admin), op (operator), view (viewer), password demo")
-	return serveWeb(ctx, addr, ui, log, "demo")
-}
-
-// runWebDemoSetup serves the first-run setup: games from the seed, no account, no network, invented host
-// interfaces and the fake engine.
-func runWebDemoSetup(ctx context.Context, addr string, st *store.Store, log *slog.Logger, logo string) int {
-	seed, err := gamedb.Seed()
-	if err == nil {
-		_, err = st.SyncSeed(ctx, seed)
-	}
-	if err != nil {
-		log.Error("demo seed", "err", err)
-		return 1
-	}
-	ui, err := web.New(st, demo.NewEngine(), log, version)
-	if err != nil {
-		log.Error("web templates", "err", err)
-		return 1
-	}
-	defer ui.Outputs.Close()
-	ui.HostIfaces = func() ([]netif.HostIface, error) {
-		return []netif.HostIface{
-			{Name: "eth0", Kind: "device", Up: true, Carrier: true, DefaultRoute: true, Addrs: []string{"192.0.2.10/24"}},
-			{Name: "eth1", Kind: "device", Up: true, Carrier: true},
-			{Name: "eth2", Kind: "device"},
-		}, nil
-	}
-	if !demoLogo(ctx, ui, logo, log) {
-		return 1
-	}
-	log.Warn("DEMO MODE with an empty database: the first-run setup is open, nothing is relayed")
-	return serveWeb(ctx, addr, ui, log, "demo")
-}
-
-// demoLogo stores the picture in file as the event logo of a demo (-demo-logo); no file, no logo.
-func demoLogo(ctx context.Context, ui *web.Server, file string, log *slog.Logger) bool {
-	if file == "" {
-		return true
-	}
-	data, err := os.ReadFile(file)
-	if err == nil {
-		err = ui.SetEventLogo(ctx, "demo", data)
-	}
-	if err != nil {
-		log.Error("demo logo", "file", file, "err", err)
-		return false
-	}
-	return true
 }
 
 // serveWeb serves the UI until ctx ends, then gives open requests five seconds to finish. The live streams of
@@ -273,40 +200,6 @@ func serveWeb(ctx context.Context, addr string, ui *web.Server, log *slog.Logger
 	// the guard closes connections that arrive on a relay address (participant networks) before reading them
 	if err := srv.Serve(ui.Listener(ln)); err != nil && !errors.Is(err, http.ErrServerClosed) {
 		log.Error("web stopped", "err", err)
-		return 1
-	}
-	return 0
-}
-
-// healthAddr is where the health check finds a server listening on listen: a server on every address (":8080",
-// "0.0.0.0:8080") is asked on the loopback.
-func healthAddr(listen string) string {
-	host, port, err := net.SplitHostPort(listen)
-	if err != nil {
-		return listen
-	}
-	if ip := net.ParseIP(host); host == "" || (ip != nil && ip.IsUnspecified()) {
-		host = "127.0.0.1"
-	}
-	return net.JoinHostPort(host, port)
-}
-
-// runHealth exits 0 if the URL answers 200 (used as container health check; the image has no shell/curl).
-func runHealth(args []string, _, stderr io.Writer) int {
-	fs := newFlags("health", stderr)
-	url := fs.String("url", "http://"+healthAddr(envOr("NSRELAY_HTTP_ADDR", "127.0.0.1:8080"))+"/healthz", "health URL")
-	if err := fs.Parse(args); err != nil {
-		return 2
-	}
-	c := &http.Client{Timeout: 5 * time.Second}
-	resp, err := c.Get(*url)
-	if err != nil {
-		fmt.Fprintln(stderr, err)
-		return 1
-	}
-	resp.Body.Close()
-	if resp.StatusCode != http.StatusOK {
-		fmt.Fprintln(stderr, "status", resp.Status)
 		return 1
 	}
 	return 0

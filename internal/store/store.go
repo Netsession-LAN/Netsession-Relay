@@ -81,27 +81,14 @@ func (s *Store) migrate(ctx context.Context, last string) error {
 	}
 	sort.Strings(names)
 	for _, name := range names {
-		var n int
-		if err := s.db.QueryRowContext(ctx, `SELECT count(*) FROM schema_migration WHERE name = ?`, name).Scan(&n); err != nil {
+		applied, err := s.migrationApplied(ctx, name)
+		if err != nil {
 			return err
 		}
-		if n > 0 {
+		if applied {
 			continue
 		}
-		body, err := migrations.ReadFile(name)
-		if err != nil {
-			return err
-		}
-		err = s.tx(ctx, func(tx *sql.Tx) error {
-			for _, stmt := range splitSQL(string(body)) {
-				if _, err := tx.ExecContext(ctx, stmt); err != nil {
-					return fmt.Errorf("%s: %w\n%s", name, err, stmt)
-				}
-			}
-			_, err := tx.ExecContext(ctx, `INSERT INTO schema_migration(name, applied) VALUES (?, ?)`, name, s.ts())
-			return err
-		})
-		if err != nil {
+		if err := s.applyMigration(ctx, name); err != nil {
 			return err
 		}
 		if last != "" && strings.HasPrefix(path.Base(name), last) {
@@ -109,6 +96,30 @@ func (s *Store) migrate(ctx context.Context, last string) error {
 		}
 	}
 	return nil
+}
+
+// migrationApplied reports whether the migration file name is recorded as applied.
+func (s *Store) migrationApplied(ctx context.Context, name string) (bool, error) {
+	var n int
+	err := s.db.QueryRowContext(ctx, `SELECT count(*) FROM schema_migration WHERE name = ?`, name).Scan(&n)
+	return n > 0, err
+}
+
+// applyMigration runs the statements of one migration file and records it, all in one transaction.
+func (s *Store) applyMigration(ctx context.Context, name string) error {
+	body, err := migrations.ReadFile(name)
+	if err != nil {
+		return err
+	}
+	return s.tx(ctx, func(tx *sql.Tx) error {
+		for _, stmt := range splitSQL(string(body)) {
+			if _, err := tx.ExecContext(ctx, stmt); err != nil {
+				return fmt.Errorf("%s: %w\n%s", name, err, stmt)
+			}
+		}
+		_, err := tx.ExecContext(ctx, `INSERT INTO schema_migration(name, applied) VALUES (?, ?)`, name, s.ts())
+		return err
+	})
 }
 
 // splitSQL splits a migration into statements, line by line: a statement ends with a line that ends in ";",
@@ -158,6 +169,12 @@ func (s *Store) tx(ctx context.Context, fn func(*sql.Tx) error) error {
 
 // ErrNotFound is returned for missing rows.
 var ErrNotFound = errors.New("store: not found")
+
+// ErrExists is returned when a new entry (game, VLAN, flow profile, account, target) would replace an existing one.
+var ErrExists = errors.New("exists")
+
+// ErrInvalid is returned for names or values the store refuses.
+var ErrInvalid = errors.New("invalid")
 
 // Audit appends to the audit log. Changes of the store itself do not use it: they write their entry in the
 // transaction of the change (audited).

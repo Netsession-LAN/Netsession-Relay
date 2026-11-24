@@ -3,18 +3,14 @@ package web
 import (
 	"cmp"
 	"context"
-	"encoding/json"
 	"fmt"
-	"net/http"
 	"slices"
 	"sort"
 	"strconv"
 	"strings"
-	"sync"
 	"time"
 
 	"github.com/Netsession-LAN/Netsession-Relay/internal/compile"
-	"github.com/Netsession-LAN/Netsession-Relay/internal/control"
 	"github.com/Netsession-LAN/Netsession-Relay/internal/engineapi"
 	"github.com/Netsession-LAN/Netsession-Relay/internal/store"
 )
@@ -115,46 +111,6 @@ type reasonView struct {
 	Count uint64 `json:"count"`
 }
 
-// alarmGroup aggregates alarms of one kind (e.g. a foreign relay seen in 16 VLANs) into one entry.
-type alarmGroup struct {
-	Kind   string     `json:"kind"`
-	Title  string     `json:"title"`
-	Hint   string     `json:"hint,omitempty"`
-	Keys   []string   `json:"-"`
-	Nets   []alarmNet `json:"nets"`  // affected networks (keys that are VLAN ids)
-	Where  string     `json:"where"` // the keys that are not networks (rules), "" if there are none
-	Count  uint64     `json:"count"`
-	Last   time.Time  `json:"last"`
-	Detail string     `json:"detail"`
-	Acked  bool       `json:"acked"`
-	By     string     `json:"acked_by,omitempty"`
-	Quiet  bool       `json:"quiet"` // nothing new for alarmQuietAfter: over, but not yet acknowledged
-}
-
-// alarmQuietAfter is how long an alarm has to stay without new events to count as over. An acknowledged
-// alarm that is over disappears from the overview, and only an alarm that is open or still going on marks
-// its network tile.
-const alarmQuietAfter = 5 * time.Minute
-
-// alarmOver reports whether an alarm has had no new events for alarmQuietAfter.
-func alarmOver(last, now time.Time) bool { return now.Sub(last) > alarmQuietAfter }
-
-// alarmNet is one network an alarm concerns; the alarm card links to its tile.
-type alarmNet struct {
-	VID  int    `json:"vid"`
-	Name string `json:"name"`
-	Key  string `json:"key"`
-}
-
-// alarmShort is the alarm name as it fits on a network tile.
-var alarmShort = map[string]string{
-	"foreign_relay":  "Fremdes Relay",
-	"loop":           "Schleife",
-	"storm":          "Sturm-Bremse",
-	"dual_active":    "Zweites Relay",
-	"unknown_beacon": "Relay-Signal",
-}
-
 type liveView struct {
 	TS         time.Time             `json:"ts"`
 	Demo       bool                  `json:"demo,omitempty"`
@@ -194,95 +150,31 @@ func (v *liveView) localized(lang string) *liveView {
 	T := trFor(lang)
 	c := *v
 	c.State.Label, c.State.Headline, c.State.Text = T(v.State.Label), T(v.State.Headline), T(v.State.Text)
-	alarms := func(in []alarmGroup) []alarmGroup {
-		if in == nil {
-			return nil
-		}
-		out := slices.Clone(in)
-		for i := range out {
-			if out[i].Title != out[i].Kind { // an alarm kind without a title shows its key
-				out[i].Title = T(out[i].Title)
-			}
-			out[i].Hint = T(out[i].Hint)
-		}
-		return out
-	}
-	c.Alarms, c.Seen = alarms(v.Alarms), alarms(v.Seen)
-	c.VLANs = slices.Clone(v.VLANs)
-	for i := range c.VLANs {
-		if c.VLANs[i].Label != c.VLANs[i].AlarmKind {
-			c.VLANs[i].Label = T(c.VLANs[i].Label)
-		}
-	}
-	c.Reasons = slices.Clone(v.Reasons)
-	for i := range c.Reasons {
-		if c.Reasons[i].Label != c.Reasons[i].Key {
-			c.Reasons[i].Label = T(c.Reasons[i].Label)
-		}
-	}
+	c.Alarms, c.Seen = localizedAlarms(T, v.Alarms), localizedAlarms(T, v.Seen)
+	c.VLANs = localizedTiles(T, v.VLANs)
+	c.Reasons = localizedReasons(T, v.Reasons)
 	return &c
 }
 
-// AlarmNets is the number of networks the open alarms concern (for the key figure on the overview).
-func (v *liveView) AlarmNets() int { return alarmNetCount(v.Alarms) }
-
-var alarmTitles = map[string]string{
-	"foreign_relay":  "Fremdes Relay aktiv",
-	"loop":           "Schleife erkannt",
-	"storm":          "Sturm-Bremse hat eine Regel pausiert",
-	"dual_active":    "Zweites Relay entdeckt",
-	"unknown_beacon": "Unbekanntes Relay-Signal",
-}
-
-var alarmHints = map[string]string{
-	"loop":           "Pakete kreisen. Die betroffene Regel ist gebremst. Suche ein zweites Relay oder eine Brücke zwischen den Netzen.",
-	"storm":          "Zu viele Pakete auf einem Port. Die Regel pausiert nur für das Netz, aus dem sie kommen, und läuft von selbst wieder an.",
-	"dual_active":    "Zwei Relays für dieselben Netze. Eins von beiden muss aus.",
-	"unknown_beacon": "Ein Relay ohne denselben Schlüssel oder ein gefälschtes Signal. Dieses Relay beachtet es nicht und bleibt aktiv. Gehört das andere Relay dazu, gib beiden denselben NSRELAY_BEACON_KEY.",
-}
-
-func groupAlarms(alarms []engineapi.Alarm, mode string) []alarmGroup {
-	byKind := map[string]*alarmGroup{}
-	var order []string
-	for _, a := range alarms {
-		g := byKind[a.Kind]
-		if g == nil {
-			g = &alarmGroup{Kind: a.Kind, Title: alarmTitles[a.Kind], Hint: alarmHints[a.Kind]}
-			if g.Title == "" {
-				g.Title = a.Kind
-			}
-			if a.Kind == "foreign_relay" {
-				g.Hint = "Ein anderes Gerät leitet dieselben Broadcasts weiter. Läuft es weiter, darf dieses Relay nicht aktiv sein."
-				if mode == compile.ModeObserve {
-					g.Hint = "Erwartet, solange ein anderes Relay parallel läuft."
-				}
-			}
-			byKind[a.Kind] = g
-			order = append(order, a.Kind)
-		}
-		if len(g.Keys) == 0 {
-			g.Acked, g.By = true, a.AckedBy
-		}
-		if a.AckedAt.IsZero() {
-			g.Acked = false // one open alarm keeps the whole group open
-		} else if g.By == "" {
-			g.By = a.AckedBy
-		}
-		g.Keys = append(g.Keys, a.Key)
-		g.Count += a.Count
-		if a.Last.After(g.Last) || g.Detail == "" {
-			g.Last, g.Detail = a.Last, a.Detail
+// localizedTiles translates the tile labels; a label that is an alarm kind (no short name) stays as it is.
+func localizedTiles(T translator, in []vlanView) []vlanView {
+	out := slices.Clone(in)
+	for i := range out {
+		if out[i].Label != out[i].AlarmKind {
+			out[i].Label = T(out[i].Label)
 		}
 	}
-	out := make([]alarmGroup, 0, len(order))
-	for _, k := range order {
-		g := byKind[k]
-		sort.Strings(g.Keys)
-		g.Where = strings.Join(g.Keys, " · ")
-		g.Nets = []alarmNet{}
-		out = append(out, *g)
+	return out
+}
+
+// localizedReasons translates the reason labels; a reason without a label shows its key, which stays as it is.
+func localizedReasons(T translator, in []reasonView) []reasonView {
+	out := slices.Clone(in)
+	for i := range out {
+		if out[i].Label != out[i].Key {
+			out[i].Label = T(out[i].Label)
+		}
 	}
-	sort.SliceStable(out, func(i, j int) bool { return out[i].Last.After(out[j].Last) })
 	return out
 }
 
@@ -305,39 +197,6 @@ var reasonLabels = map[string]string{
 	"src_filter":    "Absender nicht freigegeben",
 	"send_error":    "Senden fehlgeschlagen",
 	"panic":         "Interner Fehler der Engine",
-}
-
-// ruleIndex maps compiled rules to games. It is cached per engine snapshot hash.
-type ruleIndex struct {
-	hash   string
-	byRule map[string]compile.Rule
-	byGame map[string][]compile.Rule
-}
-
-func (s *Server) rules(ctx context.Context, hash string) *ruleIndex {
-	s.ruleMu.Lock()
-	defer s.ruleMu.Unlock()
-	if s.ruleIdx != nil && hash != "" && s.ruleIdx.hash == hash {
-		return s.ruleIdx
-	}
-	idx := &ruleIndex{hash: hash, byRule: map[string]compile.Rule{}, byGame: map[string][]compile.Rule{}}
-	// dry run: compiles the current configuration, sends nothing
-	if res, err := control.Apply(ctx, s.Store, s.Engine, "", "", true); err == nil && res.Snapshot != nil {
-		for _, r := range res.Snapshot.Rules {
-			idx.byRule[r.ID] = r
-			for _, g := range r.Specs {
-				idx.byGame[g] = append(idx.byGame[g], r)
-			}
-		}
-	}
-	s.ruleIdx = idx
-	return idx
-}
-
-func (s *Server) dropRuleIndex() {
-	s.ruleMu.Lock()
-	s.ruleIdx = nil
-	s.ruleMu.Unlock()
 }
 
 // liveNow builds the live view from the engine status and the database.
@@ -368,14 +227,19 @@ func (s *Server) liveNow(ctx context.Context) *liveView {
 	v.addAlarms(groupAlarms(st.Alarms, st.Mode))
 
 	// no readable revision: no "apply needed" hint, nothing else depends on it
-	if revs, _ := s.Store.Revisions(ctx, 1); len(revs) > 0 && v.EngineOK && st.SnapshotHash != "" && revs[0].AppliedOK &&
-		revs[0].Hash != st.SnapshotHash {
-		v.NeedsApply = true
+	if revs, _ := s.Store.Revisions(ctx, 1); len(revs) > 0 && v.EngineOK {
+		v.NeedsApply = liveEngineBehind(revs[0], st.SnapshotHash)
 	}
 
 	v.addBusy(st.RuleStats, s.rules(ctx, st.SnapshotHash), s.hub.rates())
 	v.addReasons(st.Reasons)
 	return v
+}
+
+// liveEngineBehind reports whether the engine runs another snapshot than the last revision, when that revision was
+// applied successfully. An engine without a snapshot is not behind: it has not got one yet.
+func liveEngineBehind(last store.Revision, engineHash string) bool {
+	return engineHash != "" && last.AppliedOK && last.Hash != engineHash
 }
 
 // addGames counts the games and remembers them for the names of the busy rules.
@@ -395,15 +259,7 @@ func (v *liveView) addGames(games []store.GameRow) {
 // addVLANs builds the network tiles: the configured networks first (so switched-off tables stay visible) with
 // the engine counters merged in, then networks only the engine knows.
 func (v *liveView) addVLANs(configured []store.VLANConfig, st engineapi.Status) {
-	// which alarm a network is part of: an open one wins over an acknowledged one
-	alarmOf := map[string]string{}
-	for _, open := range []bool{false, true} {
-		for _, a := range st.Alarms {
-			if a.AckedAt.IsZero() == open && (open || !alarmOver(a.Last, v.TS)) {
-				alarmOf[a.Key] = a.Kind
-			}
-		}
-	}
+	alarmOf := tileAlarmKinds(st.Alarms, v.TS)
 	stats := map[int]engineapi.VLANStat{}
 	for _, x := range st.VLANStats {
 		stats[x.VID] = x
@@ -422,6 +278,23 @@ func (v *liveView) addVLANs(configured []store.VLANConfig, st engineapi.Status) 
 			add(x.VID, x.Name, x.Group, true)
 		}
 	}
+}
+
+// tileAlarmKinds maps alarm keys to the alarm that marks their tile: an open alarm, or an acknowledged one
+// that is still going on. An open one wins over an acknowledged one.
+func tileAlarmKinds(alarms []engineapi.Alarm, now time.Time) map[string]string {
+	alarmOf := map[string]string{}
+	for _, a := range alarms { // acknowledged first, so that open ones overwrite them
+		if !a.AckedAt.IsZero() && !alarmOver(a.Last, now) {
+			alarmOf[a.Key] = a.Kind
+		}
+	}
+	for _, a := range alarms {
+		if a.AckedAt.IsZero() {
+			alarmOf[a.Key] = a.Kind
+		}
+	}
+	return alarmOf
 }
 
 // tile is one network with its state in words.
@@ -450,34 +323,6 @@ func (v *liveView) tile(vid int, name, group string, enabled, running bool, x en
 	return t
 }
 
-// addAlarms sorts the alarm groups into open and seen ones. Keys that are networks become links to the tiles
-// (addVLANs runs first), the rest stays as text.
-func (v *liveView) addAlarms(groups []alarmGroup) {
-	for _, g := range groups {
-		var rest []string
-		for _, k := range g.Keys {
-			vid, err := strconv.Atoi(k)
-			i := slices.IndexFunc(v.VLANs, func(x vlanView) bool { return err == nil && x.VID == vid })
-			if i < 0 {
-				rest = append(rest, k)
-				continue
-			}
-			g.Nets = append(g.Nets, alarmNet{VID: vid, Name: v.VLANs[i].Name, Key: v.VLANs[i].Key})
-		}
-		sort.Slice(g.Nets, func(i, j int) bool { return g.Nets[i].VID < g.Nets[j].VID })
-		g.Where = strings.Join(rest, " · ")
-		g.Quiet = alarmOver(g.Last, v.TS)
-		if g.Acked {
-			if g.Quiet {
-				continue // acknowledged and over: nothing left to show
-			}
-			v.Seen = append(v.Seen, g)
-		} else {
-			v.Alarms = append(v.Alarms, g)
-		}
-	}
-}
-
 // busyRows is the number of games with traffic the overview lists.
 const busyRows = 6
 
@@ -491,31 +336,39 @@ func (v *liveView) addBusy(stats []engineapi.RuleStat, idx *ruleIndex, rates map
 		row := busyRow{Rule: rs.ID, Names: rs.ID, RX: rs.RX, Relayed: rs.Relayed, Rate: rates[rs.ID]}
 		if r, ok := idx.byRule[rs.ID]; ok {
 			row.Ports = r.Ports
-			refs := gameRefs(r.Specs, v.games)
-			if len(refs) > 0 {
-				row.Game, row.Names = refs[0].ID, shortName(refs[0].Name)
-				if n := len(refs) - 1; n > 0 {
-					row.Names += fmt.Sprintf(" +%d", n)
-				}
-				var all []string
-				for _, g := range refs {
-					all = append(all, g.Name)
-				}
-				row.All = strings.Join(all, " · ")
-			}
+			row.nameGames(gameRefs(r.Specs, v.games))
 		}
 		v.Busy = append(v.Busy, row)
 	}
-	sort.SliceStable(v.Busy, func(i, j int) bool {
-		a, b := v.Busy[i], v.Busy[j]
-		if a.Rate != b.Rate {
-			return a.Rate > b.Rate
-		}
-		return a.RX > b.RX
-	})
+	sort.SliceStable(v.Busy, func(i, j int) bool { return busyBefore(v.Busy[i], v.Busy[j]) })
 	if len(v.Busy) > busyRows {
 		v.Busy = v.Busy[:busyRows]
 	}
+}
+
+// nameGames names the row after the games of its rule: the first one with "+N" for the others, and all of them
+// for the title. Without games the row keeps the rule id.
+func (row *busyRow) nameGames(refs []gameRef) {
+	if len(refs) == 0 {
+		return
+	}
+	row.Game, row.Names = refs[0].ID, shortName(refs[0].Name)
+	if n := len(refs) - 1; n > 0 {
+		row.Names += fmt.Sprintf(" +%d", n)
+	}
+	all := make([]string, len(refs))
+	for i, g := range refs {
+		all[i] = g.Name
+	}
+	row.All = strings.Join(all, " · ")
+}
+
+// busyBefore orders the busy games: highest rate first, then most received.
+func busyBefore(a, b busyRow) bool {
+	if a.Rate != b.Rate {
+		return a.Rate > b.Rate
+	}
+	return a.RX > b.RX
 }
 
 // addReasons lists why frames were not relayed, most frequent first.
@@ -532,369 +385,4 @@ func (v *liveView) addReasons(reasons map[string]uint64) {
 		}
 		return v.Reasons[i].Key < v.Reasons[j].Key
 	})
-}
-
-// ---- hub: one engine poll for all open pages ----
-
-// The engine has its own event stream on the Unix socket. The web part does not relay it but asks for the
-// status once per interval while at least one page is open: the same code path as the page render, it works
-// with every Engine implementation (tests, demo), and the stream also carries database state (games on).
-type liveHub struct {
-	mu      sync.Mutex
-	subs    map[chan []byte]struct{}
-	langs   map[chan []byte]string // language of each subscriber's page
-	running bool
-	prevRX  map[string]uint64
-	prevAt  time.Time
-	rate    map[string]uint64
-	rateAt  time.Time
-}
-
-func (h *liveHub) rates() map[string]uint64 {
-	h.mu.Lock()
-	defer h.mu.Unlock()
-	if time.Since(h.rateAt) > 10*time.Second {
-		return nil
-	}
-	return h.rate
-}
-
-// sample stores the per-rule rates derived from two consecutive polls.
-func (h *liveHub) sample(v *liveView) {
-	h.mu.Lock()
-	defer h.mu.Unlock()
-	now := v.TS
-	if dt := now.Sub(h.prevAt).Seconds(); h.prevRX != nil && dt > 0.01 && dt < 30 && v.EngineOK {
-		rate := map[string]uint64{}
-		for id, rx := range v.ruleRX {
-			if p, ok := h.prevRX[id]; ok && rx > p {
-				rate[id] = uint64(float64(rx-p)/dt + 0.5)
-			}
-		}
-		h.rate, h.rateAt = rate, now
-	}
-	if v.EngineOK {
-		h.prevRX, h.prevAt = v.ruleRX, now
-	}
-}
-
-// subscribe adds an open page to the hub; lang is the language its samples are sent in.
-func (s *Server) subscribe(lang string) chan []byte {
-	h := s.hub
-	ch := make(chan []byte, 1)
-	h.mu.Lock()
-	h.subs[ch] = struct{}{}
-	if h.langs == nil {
-		h.langs = map[chan []byte]string{}
-	}
-	h.langs[ch] = lang
-	start := !h.running
-	h.running = true
-	h.mu.Unlock()
-	if start {
-		go s.runHub()
-	}
-	return ch
-}
-
-func (s *Server) unsubscribe(ch chan []byte) {
-	s.hub.mu.Lock()
-	delete(s.hub.subs, ch)
-	delete(s.hub.langs, ch)
-	s.hub.mu.Unlock()
-}
-
-func (s *Server) runHub() {
-	h := s.hub
-	t := time.NewTicker(s.interval())
-	defer t.Stop()
-	// the polls end with the server (Close), not with the request that happened to start the hub
-	ctx, cancel := context.WithCancel(context.Background())
-	defer cancel()
-	go func() {
-		select {
-		case <-s.done:
-			cancel()
-		case <-ctx.Done():
-		}
-	}()
-	for {
-		select {
-		case <-s.done:
-			h.mu.Lock()
-			h.running = false
-			h.mu.Unlock()
-			return
-		case <-t.C:
-		}
-		h.mu.Lock()
-		if len(h.subs) == 0 {
-			h.running = false
-			h.mu.Unlock()
-			return
-		}
-		h.mu.Unlock()
-		v := s.liveNow(ctx)
-		h.sample(v)
-		for i := range v.Busy {
-			v.Busy[i].Rate = h.rate[v.Busy[i].Rule]
-		}
-		h.send(v)
-	}
-}
-
-// send hands one sample to every open page, as one JSON text per language that is open right now.
-func (h *liveHub) send(v *liveView) {
-	byLang := map[string][]byte{}
-	h.mu.Lock()
-	for ch := range h.subs {
-		byLang[h.langs[ch]] = nil
-	}
-	h.mu.Unlock()
-	for lang := range byLang {
-		if b, err := json.Marshal(v.localized(lang)); err == nil {
-			byLang[lang] = b
-		}
-	}
-	h.mu.Lock()
-	defer h.mu.Unlock()
-	for ch := range h.subs {
-		b := byLang[h.langs[ch]]
-		if b == nil { // subscribed after the sample was made, or not serializable: next round
-			continue
-		}
-		select {
-		case ch <- b:
-		default: // slow reader: drop the old sample, keep the new one
-			select {
-			case <-ch:
-			default:
-			}
-			select {
-			case ch <- b:
-			default:
-			}
-		}
-	}
-}
-
-func (s *Server) interval() time.Duration {
-	if s.LiveInterval > 0 {
-		return s.LiveInterval
-	}
-	return 2 * time.Second
-}
-
-// apiEvents is the live stream for open pages (server-sent events): one "status" event at once, then one per
-// interval. The browser reconnects by itself; "retry" sets the pause.
-func (s *Server) apiEvents(w http.ResponseWriter, r *http.Request) {
-	fl, ok := w.(http.Flusher)
-	if !ok {
-		http.Error(w, "streaming unsupported", http.StatusInternalServerError)
-		return
-	}
-	// a bounded number of streams per browser session and per account; more are refused (the page retries)
-	se := sessionFrom(r)
-	if !s.streams.take(se.ID, se.User.ID) {
-		writeJSON(w, http.StatusTooManyRequests, map[string]string{"error": "too many live streams"})
-		return
-	}
-	defer s.streams.release(se.ID, se.User.ID)
-	rc := http.NewResponseController(w)
-	deadline := func() { _ = rc.SetWriteDeadline(time.Now().Add(30 * time.Second)) } // a reader that is gone
-	h := w.Header()
-	h.Set("Content-Type", "text/event-stream")
-	h.Set("Cache-Control", "no-store")
-	h.Set("X-Accel-Buffering", "no") // reverse proxies must not buffer the stream
-	lang := s.langOf(r)
-	ch := s.subscribe(lang)
-	defer s.unsubscribe(ch)
-	first, _ := json.Marshal(s.liveNow(r.Context()).localized(lang))
-	deadline()
-	fmt.Fprintf(w, "retry: 3000\nevent: status\ndata: %s\n\n", first)
-	fl.Flush()
-	// the session can end while the stream is open
-	check := time.NewTicker(time.Minute)
-	defer check.Stop()
-	for {
-		select {
-		case <-r.Context().Done():
-			return
-		case <-s.done: // the server shuts down; the page reconnects by itself
-			return
-		case <-check.C:
-			if _, err := s.Store.SessionByToken(r.Context(), s.sessionToken(r)); err != nil {
-				deadline()
-				fmt.Fprint(w, "event: bye\ndata: {}\n\n")
-				fl.Flush()
-				return
-			}
-		case b := <-ch:
-			deadline()
-			if _, err := fmt.Fprintf(w, "event: status\ndata: %s\n\n", b); err != nil {
-				return
-			}
-			fl.Flush()
-		}
-	}
-}
-
-// ---- diagnosis: why is a game not found? ----
-
-type diagStep struct {
-	Tone  string // ok | warn | danger | neutral
-	Icon  string
-	Title string
-	Text  string
-}
-
-func step(tone, title, text string) diagStep {
-	icon := map[string]string{"ok": "check", "warn": "alert", "danger": "alert", "neutral": "dash"}[tone]
-	return diagStep{Tone: tone, Icon: icon, Title: title, Text: text}
-}
-
-// diagnose walks the chain a discovery packet takes, from the switch in the UI to the copy on the wire, in
-// German. Pages use diagnoseT with the translator of the request.
-func diagnose(g store.GameRow, rules []ruleView, v *liveView) (steps []diagStep, verdict diagStep) {
-	return diagnoseT(trFor(langDE), g, rules, v)
-}
-
-// diagnoseT is diagnose with the texts in the language of T; v is the German live view (not a localized copy).
-func diagnoseT(T translator, g store.GameRow, rules []ruleView, v *liveView) (steps []diagStep, verdict diagStep) {
-	step := func(tone, title, text string, args ...any) diagStep {
-		return step(tone, T(title), T(text, args...))
-	}
-	var rx, relayed uint64
-	for _, r := range rules {
-		rx += r.RX
-		relayed += r.Relayed
-	}
-	switch g.RelayNeeded {
-	case "no":
-		verdict = step("neutral", "Nichts zu relayen", "Dieses Spiel sucht nicht per Broadcast. Das Relay kann hier nicht helfen. Lies die Hinweise unten.")
-		return nil, verdict
-	case "unknown":
-		steps = append(steps, step("warn", "Ports nicht belegt", "Welche Ports das Spiel für die LAN-Suche nutzt, ist nicht sicher. Schau unter Übersicht in „Unbekannte Ports“, während jemand den LAN-Browser öffnet."))
-	}
-	bad := -1
-	add := func(s diagStep) {
-		steps = append(steps, s)
-		if bad < 0 && (s.Tone == "danger" || s.Tone == "warn") {
-			bad = len(steps) - 1
-		}
-	}
-	if g.Enabled {
-		add(step("ok", "Spiel ist an", "Im aktiven Event eingeschaltet."))
-	} else {
-		add(step("danger", "Spiel ist aus", "Schalte es oben ein. Das wirkt sofort."))
-	}
-	switch {
-	case !g.Enabled:
-		add(step("neutral", "Regel im Relay", "Entsteht, sobald das Spiel an ist."))
-	case len(rules) == 0:
-		add(step("danger", "Keine Regel im Relay", "Das Spiel ist an, aber es entsteht keine Regel. Es hat keine Broadcast-Ports hinterlegt."))
-	default:
-		var ports []string
-		for _, r := range rules {
-			ports = append(ports, r.Ports)
-		}
-		add(step("ok", "Regel im Relay", "UDP %s wird zwischen den Netzen kopiert.", strings.Join(ports, ", ")))
-	}
-	st := v.State
-	if st.Relaying {
-		add(step("ok", "Relay leitet weiter", st.Text))
-	} else {
-		tone := "danger"
-		if st.Key == "holdoff" {
-			tone = "warn"
-		}
-		add(step(tone, st.Headline, st.Text))
-	}
-	switch {
-	case !v.EngineOK || len(rules) == 0:
-		add(step("neutral", "Suchanfragen kommen an", "Lässt sich gerade nicht prüfen."))
-	case rx == 0:
-		add(step("warn", "Noch keine Suchanfrage gesehen", "Seit dem Start der Engine kam auf diesen Ports nichts an. Öffnet jemand im Spiel den LAN-Browser? Sonst: zweite Netzwerkkarte oder VPN am PC abschalten, Firewall prüfen."))
-	default:
-		add(step("ok", "Suchanfragen kommen an", "%s Pakete seit dem Start der Engine.", formatNum(rx)))
-	}
-	switch {
-	case !v.EngineOK || len(rules) == 0 || rx == 0:
-		add(step("neutral", "Kopien gehen raus", "Erst prüfbar, wenn Suchanfragen ankommen."))
-	case relayed == 0 && st.Relaying:
-		add(step("danger", "Es geht keine Kopie raus", "Pakete kommen an, werden aber nicht kopiert. Prüfe unter Netz, ob die Ziel-Netze an sind, und unter System die verworfenen Pakete."))
-	case relayed == 0:
-		add(step("neutral", "Kopien gehen raus", "Keine, weil das Relay gerade nicht weiterleitet."))
-	default:
-		add(step("ok", "Kopien gehen raus", "%s Pakete in andere Netze kopiert.", formatNum(relayed)))
-	}
-	if bad >= 0 {
-		verdict = steps[bad]
-		return steps, verdict
-	}
-	verdict = step("ok", "Am Relay liegt es nicht", "Suchanfragen kommen an und werden kopiert. Findet trotzdem niemand das Spiel, liegt es am Spielverkehr danach (siehe unten) oder am PC.")
-	return steps, verdict
-}
-
-// rulesFor returns the rules a game ends up in, with counters.
-func rulesFor(idx *ruleIndex, id string, v *liveView) []ruleView {
-	var out []ruleView
-	for _, r := range idx.byGame[id] {
-		rv := ruleView{Rule: r}
-		if i := slices.IndexFunc(v.Rules, func(s engineapi.RuleStat) bool { return s.ID == r.ID }); i >= 0 {
-			rv.RX, rv.Relayed = v.Rules[i].RX, v.Rules[i].Relayed
-		}
-		out = append(out, rv)
-	}
-	return out
-}
-
-// gameRef names a game for a link.
-type gameRef struct {
-	ID   string
-	Name string
-}
-
-// gameRefs lists the games that share a rule (same port): switched-on games first, then by name.
-func gameRefs(ids []string, games map[string]store.GameRow) []gameRef {
-	out := make([]gameRef, 0, len(ids))
-	on := map[string]bool{}
-	for _, id := range ids {
-		g, ok := games[id]
-		if !ok {
-			out = append(out, gameRef{ID: id, Name: id})
-			continue
-		}
-		on[id] = g.Enabled
-		out = append(out, gameRef{ID: id, Name: g.Name})
-	}
-	sort.SliceStable(out, func(i, j int) bool {
-		if on[out[i].ID] != on[out[j].ID] {
-			return on[out[i].ID]
-		}
-		return strings.ToLower(out[i].Name) < strings.ToLower(out[j].Name)
-	})
-	return out
-}
-
-// shortName cuts a database name down to the first title: "ARMA 2 / Operation Arrowhead / DayZ Mod" becomes
-// "ARMA 2", "TrackMania 2 (Canyon/Stadium)" becomes "TrackMania 2". The full name stays one tap away.
-func shortName(name string) string {
-	for _, sep := range []string{" / ", " ("} {
-		if i := strings.Index(name, sep); i > 2 {
-			name = name[:i]
-		}
-	}
-	return name
-}
-
-// alarmNetCount counts the different networks a list of alarms concerns.
-func alarmNetCount(list []alarmGroup) int {
-	seen := map[int]bool{}
-	for _, g := range list {
-		for _, n := range g.Nets {
-			seen[n.VID] = true
-		}
-	}
-	return len(seen)
 }

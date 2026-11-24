@@ -15,8 +15,6 @@ import (
 	"fmt"
 	"net/netip"
 	"slices"
-	"strings"
-	"unicode"
 
 	"github.com/Netsession-LAN/Netsession-Relay/internal/gamedb"
 	"github.com/Netsession-LAN/Netsession-Relay/internal/portspec"
@@ -256,31 +254,18 @@ func Compile(in Input) (*Snapshot, []Warning, error) {
 	var vErrs []error
 	c.vlans, c.groups, vErrs = checkVLANs(in.VLANs)
 	c.errs = append(c.errs, vErrs...)
-
-	for _, p := range in.Profiles {
-		if _, dup := c.profiles[p.Name]; dup {
-			c.fail("flow profile %q defined twice", p.Name)
-		}
-		c.profiles[p.Name] = p
-	}
+	c.addProfiles()
 	for _, sel := range in.Games {
 		c.addGame(sel)
 	}
-	for grp, n := range c.groups {
-		if n == 0 {
-			c.warn(WarnGroupEmpty, "group %q has no enabled VLAN", grp)
-		}
-	}
+	c.warnEmptyGroups()
 
 	if err := errors.Join(c.errs...); err != nil {
 		return nil, c.warns, err
 	}
 
 	rules := buildRules(c.acc, c.vlans, c.warn)
-	warns := c.warns
-	slices.SortFunc(warns, func(a, b Warning) int { return cmp.Or(cmp.Compare(a.Code, b.Code), cmp.Compare(a.Message, b.Message)) })
-	warns = slices.Compact(warns)
-
+	warns := sortedWarnings(c.warns)
 	snap := &Snapshot{
 		Version:  SnapshotVersion,
 		Mode:     mode,
@@ -298,28 +283,80 @@ func Compile(in Input) (*Snapshot, []Warning, error) {
 	return snap, warns, nil
 }
 
+// addProfiles indexes the flow profiles by name; a name defined twice is a mistake (the last one is kept).
+func (c *compiler) addProfiles() {
+	for _, p := range c.in.Profiles {
+		if _, dup := c.profiles[p.Name]; dup {
+			c.fail("flow profile %q defined twice", p.Name)
+		}
+		c.profiles[p.Name] = p
+	}
+}
+
+// warnEmptyGroups warns about groups whose VLANs are all switched off.
+func (c *compiler) warnEmptyGroups() {
+	for grp, n := range c.groups {
+		if n == 0 {
+			c.warn(WarnGroupEmpty, "group %q has no enabled VLAN", grp)
+		}
+	}
+}
+
+// sortedWarnings sorts the warnings by code and message and drops repeated ones.
+func sortedWarnings(warns []Warning) []Warning {
+	slices.SortFunc(warns, func(a, b Warning) int { return cmp.Or(cmp.Compare(a.Code, b.Code), cmp.Compare(a.Message, b.Message)) })
+	return slices.Compact(warns)
+}
+
 // addGame resolves one selected game: its flow profile, overrides and source filter, and what each of its
 // discovery specs claims on its ports. Mistakes are collected in c.errs; a game with a mistake claims nothing.
 func (c *compiler) addGame(sel Selection) {
-	g, ok := c.in.DB.Get(sel.GameID)
+	g, ok := c.selectGame(sel.GameID)
 	if !ok {
-		c.fail("game %q not in database", sel.GameID)
 		return
+	}
+	prof, ok := c.gameProfile(g.ID, sel.FlowProfile)
+	if !ok {
+		return
+	}
+	if err := checkOverride(sel.Override); err != nil {
+		c.fail("game %q: %w", g.ID, err)
+		return
+	}
+	sources := c.gameSources(g, sel.Sources)
+	for _, raw := range g.Discovery {
+		c.claim(g.ID, c.effectiveSpec(g, raw, sel.Override), prof.Edges, sources)
+	}
+}
+
+// selectGame looks up a selected game. It reports false for a game that is unknown or selected twice (both
+// mistakes) and for a game without LAN discovery (a warning: there is nothing to relay).
+func (c *compiler) selectGame(id string) (gamedb.Game, bool) {
+	g, ok := c.in.DB.Get(id)
+	if !ok {
+		c.fail("game %q not in database", id)
+		return g, false
 	}
 	if c.seenGame[g.ID] {
 		c.fail("game %q selected twice", g.ID)
-		return
+		return g, false
 	}
 	c.seenGame[g.ID] = true
 	if g.RelayNeeded != gamedb.RelayYes {
 		c.warn(WarnGameNoRelay, "%s (%s) has no LAN discovery to relay (relay_needed=%s), skipped", g.Name, g.ID, g.RelayNeeded)
-		return
+		return g, false
 	}
-	pname := cmp.Or(sel.FlowProfile, c.in.DefaultProfile)
+	return g, true
+}
+
+// gameProfile returns the flow profile of a game ("" = the default profile). An undefined profile is a mistake
+// (false); a profile that names a group without VLANs is a mistake, too, but the game still uses it.
+func (c *compiler) gameProfile(gameID, name string) (FlowProfile, bool) {
+	pname := cmp.Or(name, c.in.DefaultProfile)
 	prof, ok := c.profiles[pname]
 	if !ok {
-		c.fail("game %q: flow profile %q not defined", g.ID, pname)
-		return
+		c.fail("game %q: flow profile %q not defined", gameID, pname)
+		return prof, false
 	}
 	for _, e := range prof.Edges {
 		for _, grp := range []string{e.Src, e.Dst} {
@@ -328,37 +365,19 @@ func (c *compiler) addGame(sel Selection) {
 			}
 		}
 	}
-	if err := checkOverride(sel.Override); err != nil {
-		c.fail("game %q: %w", g.ID, err)
-		return
-	}
-	sources := c.gameSources(g, sel.Sources)
-	for _, raw := range g.Discovery {
-		s := raw.Effective()
-		s.SourceMode = cmp.Or(sel.Override.SourceMode, s.SourceMode)
-		s.DstMode = cmp.Or(sel.Override.DstMode, s.DstMode)
-		if s.SourceMode != gamedb.SourceOriginal && g.SourceIP == gamedb.SourceOriginal {
-			c.warn(WarnRelayIPRewrite, "%s needs the original sender IP, but source_mode=%s is set", g.ID, s.SourceMode)
-		}
-		c.claim(g.ID, s, prof.Edges, sources)
-	}
+	return prof, true
 }
 
-// gameSources checks the source filter of a game and returns it masked.
-func (c *compiler) gameSources(g gamedb.Game, in []netip.Prefix) []netip.Prefix {
-	var sources []netip.Prefix
-	for _, p := range in {
-		if !p.IsValid() || !p.Addr().Is4() {
-			c.fail("game %q: source %s is not an IPv4 address or network", g.ID, p)
-			continue
-		}
-		p = p.Masked()
-		if !slices.ContainsFunc(c.vlans, func(v VLAN) bool { return PrefixWithin(p, v.CIDR) }) {
-			c.warn(WarnSourceNoVLAN, "%s: source filter %s lies in no network, ignored", g.ID, FormatSource(p))
-		}
-		sources = append(sources, p)
+// effectiveSpec is a discovery spec with its defaults and the overrides of the event applied. It warns when the
+// override rewrites the sender of a game that needs the original one.
+func (c *compiler) effectiveSpec(g gamedb.Game, raw gamedb.Spec, o Override) gamedb.Spec {
+	s := raw.Effective()
+	s.SourceMode = cmp.Or(o.SourceMode, s.SourceMode)
+	s.DstMode = cmp.Or(o.DstMode, s.DstMode)
+	if s.SourceMode != gamedb.SourceOriginal && g.SourceIP == gamedb.SourceOriginal {
+		c.warn(WarnRelayIPRewrite, "%s needs the original sender IP, but source_mode=%s is set", g.ID, s.SourceMode)
 	}
-	return sources
+	return s
 }
 
 // claim records what one discovery spec of a game wants on each of its ports.
@@ -372,26 +391,35 @@ func (c *compiler) claim(gameID string, s gamedb.Spec, edges []Edge, sources []n
 		k := portKey{s.Kind, s.Group, p}
 		a := c.acc[k]
 		if a == nil {
-			a = &portAcc{sourceMode: map[string][]string{}, dstMode: map[string][]string{},
-				ttlMode: map[string][]string{}, flows: map[Edge]bool{}, sources: map[string][]netip.Prefix{}}
+			a = newPortAcc()
 			c.acc[k] = a
 		}
-		a.games = appendUnique(a.games, gameID)
-		a.sourceMode[s.SourceMode] = appendUnique(a.sourceMode[s.SourceMode], gameID)
-		a.dstMode[s.DstMode] = appendUnique(a.dstMode[s.DstMode], gameID)
-		a.ttlMode[s.TTLMode] = appendUnique(a.ttlMode[s.TTLMode], gameID)
-		for _, e := range edges {
-			a.flows[e] = true
-		}
-		a.rate = max(a.rate, s.RatePPS)
-		a.burst = max(a.burst, s.RateBurst)
-		a.payloadMax = max(a.payloadMax, s.PayloadMax)
-		if s.Direction != "query" {
-			a.notQuery = true
-		}
-		if len(sources) > 0 {
-			a.sources[gameID] = sources
-		}
+		a.add(gameID, s, edges, sources)
+	}
+}
+
+func newPortAcc() *portAcc {
+	return &portAcc{sourceMode: map[string][]string{}, dstMode: map[string][]string{},
+		ttlMode: map[string][]string{}, flows: map[Edge]bool{}, sources: map[string][]netip.Prefix{}}
+}
+
+// add records the claim of one game's spec on this port.
+func (a *portAcc) add(gameID string, s gamedb.Spec, edges []Edge, sources []netip.Prefix) {
+	a.games = appendUnique(a.games, gameID)
+	a.sourceMode[s.SourceMode] = appendUnique(a.sourceMode[s.SourceMode], gameID)
+	a.dstMode[s.DstMode] = appendUnique(a.dstMode[s.DstMode], gameID)
+	a.ttlMode[s.TTLMode] = appendUnique(a.ttlMode[s.TTLMode], gameID)
+	for _, e := range edges {
+		a.flows[e] = true
+	}
+	a.rate = max(a.rate, s.RatePPS)
+	a.burst = max(a.burst, s.RateBurst)
+	a.payloadMax = max(a.payloadMax, s.PayloadMax)
+	if s.Direction != "query" {
+		a.notQuery = true
+	}
+	if len(sources) > 0 {
+		a.sources[gameID] = sources
 	}
 }
 
@@ -410,293 +438,6 @@ func checkOverride(o Override) error {
 		return fmt.Errorf("override dst_mode %q invalid", o.DstMode)
 	}
 	return nil
-}
-
-// ErrOverlap is part of the error of Compile when two enabled VLANs have networks that overlap (errors.Is).
-var ErrOverlap = errors.New("networks overlap")
-
-// checkVLANs validates the VLAN list and returns the enabled VLANs (sorted by VID) and the number of
-// enabled VLANs per group (groups that only have disabled VLANs are present with 0).
-func checkVLANs(in []VLAN) ([]VLAN, map[string]int, []error) {
-	var errs []error
-	groups := map[string]int{}
-	seenVID := map[int]bool{}
-	var out []VLAN
-	for _, v := range in {
-		name := fmt.Sprintf("VLAN %d (%s)", v.VID, v.Name)
-		if v.VID < 1 || v.VID > 4094 {
-			errs = append(errs, fmt.Errorf("%s: VID out of range", name))
-		}
-		if seenVID[v.VID] {
-			errs = append(errs, fmt.Errorf("%s: VID used twice", name))
-		}
-		seenVID[v.VID] = true
-		if v.Group == "" {
-			errs = append(errs, fmt.Errorf("%s: no group", name))
-		}
-		if _, ok := groups[v.Group]; !ok {
-			groups[v.Group] = 0
-		}
-		if !v.Enabled {
-			continue
-		}
-		groups[v.Group]++
-		if !v.CIDR.IsValid() || !v.CIDR.Addr().Is4() {
-			errs = append(errs, fmt.Errorf("%s: IPv4 network missing", name))
-		} else if v.CIDR.Bits() > 30 {
-			errs = append(errs, fmt.Errorf("%s: network %s too small", name, v.CIDR))
-		}
-		v.CIDR = v.CIDR.Masked()
-		if !v.RelayIP.IsValid() || !v.CIDR.Contains(v.RelayIP) {
-			errs = append(errs, fmt.Errorf("%s: relay IP %s not in %s", name, v.RelayIP, v.CIDR))
-		}
-		switch v.Attach {
-		case AttachTrunk:
-			if v.Parent == "" {
-				errs = append(errs, fmt.Errorf("%s: trunk attach needs a parent interface", name))
-			}
-			v.Device = ""
-		case AttachDevice:
-			if v.Device == "" {
-				errs = append(errs, fmt.Errorf("%s: device attach needs a device name", name))
-			}
-			v.Parent = ""
-		default:
-			errs = append(errs, fmt.Errorf("%s: attach %q invalid", name, v.Attach))
-		}
-		out = append(out, v)
-	}
-	slices.SortFunc(out, func(a, b VLAN) int { return cmp.Compare(a.VID, b.VID) })
-	for i := range out {
-		for j := i + 1; j < len(out); j++ {
-			if out[i].CIDR.IsValid() && out[j].CIDR.IsValid() && out[i].CIDR.Overlaps(out[j].CIDR) {
-				errs = append(errs, fmt.Errorf("VLAN %d and %d: %w: %s and %s",
-					out[i].VID, out[j].VID, ErrOverlap, out[i].CIDR, out[j].CIDR))
-			}
-		}
-	}
-	return out, groups, errs
-}
-
-// portRule is the resolved rule for a single port before grouping.
-type portRule struct {
-	key       portKey
-	rule      Rule     // without ID and Ports
-	conflicts []string // human-readable conflict descriptions (field: who wants what; winner)
-}
-
-// buildRules resolves conflicts per port, groups consecutive ports with identical attributes into rules and
-// emits one warning per rule (not per port) for conflicts and shared ports.
-func buildRules(acc map[portKey]*portAcc, vlans []VLAN, warn func(code, format string, args ...any)) []Rule {
-	keys := make([]portKey, 0, len(acc))
-	for k := range acc {
-		keys = append(keys, k)
-	}
-	slices.SortFunc(keys, func(a, b portKey) int {
-		return cmp.Or(cmp.Compare(a.kind, b.kind), cmp.Compare(a.group, b.group), cmp.Compare(a.port, b.port))
-	})
-
-	list := make([]portRule, 0, len(keys))
-	for _, k := range keys {
-		a := acc[k]
-		slices.Sort(a.games)
-		pr := portRule{key: k}
-		pr.rule = Rule{
-			Kind:       k.kind,
-			Group:      k.group,
-			Specs:      a.games,
-			RatePPS:    a.rate,
-			RateBurst:  a.burst,
-			PayloadMax: a.payloadMax,
-			Probe:      k.kind == gamedb.KindBroadcast && !a.notQuery,
-		}
-		var c string
-		pr.rule.SourceMode, c = resolve(a.sourceMode, gamedb.SourceOriginal, "source_mode")
-		pr.conflicts = appendIf(pr.conflicts, c)
-		pr.rule.DstMode, c = resolve(a.dstMode, gamedb.DstKeep, "dst_mode")
-		pr.conflicts = appendIf(pr.conflicts, c)
-		pr.rule.TTLMode, c = resolve(a.ttlMode, gamedb.TTLKeep, "ttl_mode")
-		pr.conflicts = appendIf(pr.conflicts, c)
-		pr.rule.SrcAllow, c = mergeSources(a.games, a.sources, vlans)
-		pr.conflicts = appendIf(pr.conflicts, c)
-		for e := range a.flows {
-			pr.rule.Flows = append(pr.rule.Flows, e)
-		}
-		slices.SortFunc(pr.rule.Flows, func(x, y Edge) int { return cmp.Or(cmp.Compare(x.Src, y.Src), cmp.Compare(x.Dst, y.Dst)) })
-		list = append(list, pr)
-	}
-
-	var rules []Rule
-	for i := 0; i < len(list); {
-		j := i
-		ports := []uint16{list[i].key.port}
-		for j+1 < len(list) && sameRule(list[i], list[j+1]) {
-			j++
-			ports = append(ports, list[j].key.port)
-		}
-		r := list[i].rule
-		r.Ports = portspec.FromPorts(ports).String()
-		prefix := "bc"
-		where := "broadcast port " + r.Ports
-		if r.Kind == gamedb.KindMulticast {
-			prefix = "mc:" + r.Group
-			where = "multicast " + r.Group + " port " + r.Ports
-		}
-		r.ID = prefix + ":" + r.Ports
-		for _, c := range list[i].conflicts {
-			code := WarnSourceModeConflict
-			switch {
-			case strings.HasPrefix(c, "dst_mode"):
-				code = WarnDstModeConflict
-			case strings.HasPrefix(c, "ttl_mode"):
-				code = WarnTTLModeConflict
-			case strings.HasPrefix(c, "source filter"):
-				code = WarnSourceFilterOpen
-			}
-			warn(code, "%s: %s", where, c)
-		}
-		if len(r.Specs) > 1 {
-			warn(WarnSharedPort, "%s is used by %s", where, strings.Join(r.Specs, ", "))
-		}
-		rules = append(rules, r)
-		i = j + 1
-	}
-	return rules
-}
-
-func appendIf(s []string, v string) []string {
-	if v == "" {
-		return s
-	}
-	return append(s, v)
-}
-
-func sameRule(a, b portRule) bool {
-	if a.key.kind != b.key.kind || a.key.group != b.key.group {
-		return false
-	}
-	x, y := a.rule, b.rule
-	return slices.Equal(x.Specs, y.Specs) && x.SourceMode == y.SourceMode && x.DstMode == y.DstMode &&
-		x.TTLMode == y.TTLMode && slices.Equal(x.Flows, y.Flows) && x.RatePPS == y.RatePPS &&
-		x.RateBurst == y.RateBurst && x.PayloadMax == y.PayloadMax && x.Probe == y.Probe &&
-		slices.Equal(x.SrcAllow, y.SrcAllow) && slices.Equal(a.conflicts, b.conflicts)
-}
-
-// resolve picks the winning value: the preferred one if any game wants it, otherwise the alphabetically
-// first. More than one requested value is a conflict, described in the second return value.
-func resolve(byValue map[string][]string, preferred, field string) (string, string) {
-	values := make([]string, 0, len(byValue))
-	for v := range byValue {
-		values = append(values, v)
-	}
-	slices.Sort(values)
-	if len(values) == 1 {
-		return values[0], ""
-	}
-	winner := preferred
-	if _, ok := byValue[preferred]; !ok {
-		winner = values[0]
-	}
-	parts := make([]string, 0, len(values))
-	for _, v := range values {
-		parts = append(parts, fmt.Sprintf("%s wants %s", strings.Join(byValue[v], ", "), v))
-	}
-	return winner, fmt.Sprintf("%s conflict (%s), using %s", field, strings.Join(parts, "; "), winner)
-}
-
-// mergeSources combines the source filters of the games sharing one port. Per VLAN: if every game restricts
-// it, the union applies; if one game has no prefix there, the VLAN stays unrestricted ("open wins", so a
-// filter never silently cuts off another game) and the second return value describes the conflict.
-func mergeSources(games []string, byGame map[string][]netip.Prefix, vlans []VLAN) ([]netip.Prefix, string) {
-	if len(byGame) == 0 {
-		return nil, ""
-	}
-	var out []netip.Prefix
-	var open []string
-	for _, v := range vlans {
-		var union []netip.Prefix
-		var restricted, unrestricted []string
-		for _, g := range games {
-			n := 0
-			for _, p := range byGame[g] {
-				if PrefixWithin(p, v.CIDR) {
-					union = append(union, p)
-					n++
-				}
-			}
-			if n > 0 {
-				restricted = append(restricted, g)
-			} else {
-				unrestricted = append(unrestricted, g)
-			}
-		}
-		switch {
-		case len(restricted) == 0:
-		case len(unrestricted) > 0:
-			open = append(open, fmt.Sprintf("VLAN %d: %s filter, %s not", v.VID, strings.Join(restricted, ", "), strings.Join(unrestricted, ", ")))
-		default:
-			out = append(out, union...)
-		}
-	}
-	SortSources(out)
-	out = slices.Compact(out)
-	if len(open) == 0 {
-		return out, ""
-	}
-	return out, fmt.Sprintf("source filter ignored (%s), those VLANs stay unrestricted", strings.Join(open, "; "))
-}
-
-// PrefixWithin reports whether p lies completely inside network n.
-func PrefixWithin(p, n netip.Prefix) bool {
-	return p.IsValid() && n.IsValid() && n.Bits() <= p.Bits() && n.Contains(p.Addr())
-}
-
-// SortSources sorts prefixes by address, then by length.
-func SortSources(ps []netip.Prefix) {
-	slices.SortFunc(ps, func(a, b netip.Prefix) int {
-		return cmp.Or(a.Addr().Compare(b.Addr()), cmp.Compare(a.Bits(), b.Bits()))
-	})
-}
-
-// FormatSource writes a single address without "/32".
-func FormatSource(p netip.Prefix) string {
-	if p.IsSingleIP() {
-		return p.Addr().String()
-	}
-	return p.String()
-}
-
-// FormatSources formats a source filter, one string per prefix (the inverse of ParseSources).
-func FormatSources(ps []netip.Prefix) []string {
-	out := make([]string, 0, len(ps))
-	for _, p := range ps {
-		out = append(out, FormatSource(p))
-	}
-	return out
-}
-
-// ParseSources reads a source filter as typed by an admin: IPv4 addresses or networks, separated by commas,
-// semicolons or whitespace. The result is masked, sorted and free of duplicates; empty text is no filter.
-func ParseSources(text string) ([]netip.Prefix, error) {
-	var out []netip.Prefix
-	for _, f := range strings.FieldsFunc(text, func(r rune) bool { return r == ',' || r == ';' || unicode.IsSpace(r) }) {
-		var p netip.Prefix
-		var err error
-		if strings.Contains(f, "/") {
-			p, err = netip.ParsePrefix(f)
-		} else {
-			var a netip.Addr
-			if a, err = netip.ParseAddr(f); err == nil {
-				p = netip.PrefixFrom(a, a.BitLen())
-			}
-		}
-		if err != nil || !p.Addr().Is4() {
-			return nil, fmt.Errorf("%q is not an IPv4 address or network", f)
-		}
-		out = append(out, p.Masked())
-	}
-	SortSources(out)
-	return slices.Compact(out), nil
 }
 
 func hashOf(s *Snapshot) string {

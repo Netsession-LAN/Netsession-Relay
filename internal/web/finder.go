@@ -7,6 +7,7 @@ import (
 	"net/http"
 	"net/netip"
 	"regexp"
+	"slices"
 	"strconv"
 	"strings"
 	"time"
@@ -69,20 +70,23 @@ type finderView struct {
 
 // portGames finds database games whose discovery uses kind/group/port.
 func portGames(games []store.GameRow, kind, group string, port uint16) []gameHint {
+	uses := func(d gamedb.Spec) bool { return specUsesPort(d, kind, group, port) }
 	var out []gameHint
 	for _, g := range games {
-		for _, d := range g.Discovery {
-			if d.Kind != kind || (kind == gamedb.KindMulticast && d.Group != group) {
-				continue
-			}
-			ps, err := portspec.Parse(d.Ports)
-			if err == nil && ps.Contains(port) {
-				out = append(out, gameHint{ID: g.ID, Name: g.Name, On: g.Enabled})
-				break
-			}
+		if slices.ContainsFunc(g.Discovery, uses) {
+			out = append(out, gameHint{ID: g.ID, Name: g.Name, On: g.Enabled})
 		}
 	}
 	return out
+}
+
+// specUsesPort reports whether a discovery spec covers kind/port (and, for multicast, the group).
+func specUsesPort(d gamedb.Spec, kind, group string, port uint16) bool {
+	if d.Kind != kind || (kind == gamedb.KindMulticast && d.Group != group) {
+		return false
+	}
+	ps, err := portspec.Parse(d.Ports)
+	return err == nil && ps.Contains(port)
 }
 
 func hexASCII(b []byte) (string, string) {
@@ -101,6 +105,16 @@ func hexASCII(b []byte) (string, string) {
 	return h.String(), a.String()
 }
 
+// finderRowCtx is what turning the engine's finder groups into table rows needs besides the group itself.
+type finderRowCtx struct {
+	games     []store.GameRow
+	gameByID  map[string]gameHint
+	idx       *ruleIndex
+	vlanName  map[int]string
+	started   time.Time
+	showNoise bool
+}
+
 func (s *Server) finderData(ctx context.Context, showNoise bool) finderView {
 	ctx, cancel := context.WithTimeout(ctx, 3*time.Second)
 	defer cancel()
@@ -110,73 +124,119 @@ func (s *Server) finderData(ctx context.Context, showNoise bool) finderView {
 	v.Status = fs
 	games, err := s.Store.Games(ctx)
 	s.degraded("port finder: games", err)
-	names := map[string]gameHint{}
-	for _, g := range games {
-		names[g.ID] = gameHint{ID: g.ID, Name: g.Name, On: g.Enabled}
-	}
+	rc := finderRowCtx{games: games, gameByID: finderGameHints(games), started: fs.Started, showNoise: showNoise}
 	st, _ := s.Engine.Status(ctx)
-	idx := s.rules(ctx, st.SnapshotHash)
-	vlanName := map[int]string{}
+	rc.idx = s.rules(ctx, st.SnapshotHash)
+	rc.vlanName = map[int]string{}
 	if c, err := s.Store.ExportConfig(ctx); err == nil {
 		v.VLANs = c.VLANs
 		for _, x := range c.VLANs {
-			vlanName[x.VID] = x.Name
+			rc.vlanName[x.VID] = x.Name
 		}
 	}
 	for _, id := range fs.VIDs {
 		v.Picked[id] = true
 	}
 	if fs.Active {
-		v.Left = fmt.Sprintf("%d:%02d", int(time.Until(fs.Until).Seconds())/60, int(time.Until(fs.Until).Seconds())%60)
+		v.Left = finderLeft(time.Until(fs.Until))
 	}
 	for _, g := range fs.Groups {
-		row := finderRow{Kind: g.Kind, Group: g.Group, Port: g.Port, Rule: g.Rule, Count: g.Count, New: g.New,
-			Noise: noisePorts[g.Port], Dest: "Broadcast"}
-		if g.Kind == gamedb.KindMulticast {
-			row.Dest, row.Noise = g.Group, ""
-		}
-		if row.Noise != "" && !showNoise {
+		if rc.hidden(g) {
 			v.Hidden++
 			continue
 		}
-		if r, ok := idx.byRule[g.Rule]; ok {
-			for _, id := range r.Specs {
-				if h, ok := names[id]; ok {
-					row.Games = append(row.Games, h)
-				}
-			}
-		} else {
-			row.Games = portGames(games, g.Kind, g.Group, g.Port)
-		}
-		if g.Count > 1 {
-			row.Interval = fmt.Sprintf("%.1f s", g.Last.Sub(g.First).Seconds()/float64(g.Count-1))
-		}
-		row.Size = fmt.Sprintf("%d B", g.MinLen)
-		if g.MaxLen != g.MinLen {
-			row.Size = fmt.Sprintf("%d–%d B", g.MinLen, g.MaxLen)
-		}
-		srcs := make([]string, len(g.Srcs))
-		for i, a := range g.Srcs {
-			srcs[i] = a.String()
-		}
-		row.Srcs = strings.Join(srcs, ", ")
-		nets := make([]string, len(g.VIDs))
-		for i, id := range g.VIDs {
-			nets[i] = vlanName[id]
-			if nets[i] == "" {
-				nets[i] = fmt.Sprintf("VLAN %d", id)
-			}
-		}
-		row.Nets = strings.Join(nets, ", ")
-		row.Offset = fmt.Sprintf("+%d s", int(g.First.Sub(fs.Started).Seconds()))
-		row.Hex, row.ASCII = hexASCII(g.Sample)
-		v.Rows = append(v.Rows, row)
+		v.Rows = append(v.Rows, rc.row(g))
 	}
 	for _, p := range st.TopUnknown {
 		v.Unknown = append(v.Unknown, unknownRow{Port: p.Port, Count: p.Count, Noise: noisePorts[p.Port],
 			Games: portGames(games, gamedb.KindBroadcast, "", p.Port)})
 	}
 	return v
+}
+
+// finderGameHints indexes the games of the database by ID.
+func finderGameHints(games []store.GameRow) map[string]gameHint {
+	out := map[string]gameHint{}
+	for _, g := range games {
+		out[g.ID] = gameHint{ID: g.ID, Name: g.Name, On: g.Enabled}
+	}
+	return out
+}
+
+// finderLeft shows the time left of a running session as m:ss.
+func finderLeft(left time.Duration) string {
+	secs := int(left.Seconds())
+	return fmt.Sprintf("%d:%02d", secs/60, secs%60)
+}
+
+// hidden reports whether a group is background noise of every LAN and noise is not shown. Multicast groups are
+// never noise.
+func (rc finderRowCtx) hidden(g engineapi.FinderGroup) bool {
+	return g.Kind != gamedb.KindMulticast && noisePorts[g.Port] != "" && !rc.showNoise
+}
+
+// row turns one group the finder saw into a table row.
+func (rc finderRowCtx) row(g engineapi.FinderGroup) finderRow {
+	row := finderRow{Kind: g.Kind, Group: g.Group, Port: g.Port, Rule: g.Rule, Count: g.Count, New: g.New,
+		Noise: noisePorts[g.Port], Dest: "Broadcast"}
+	if g.Kind == gamedb.KindMulticast {
+		row.Dest, row.Noise = g.Group, ""
+	}
+	row.Games = rc.rowGames(g)
+	if g.Count > 1 {
+		row.Interval = fmt.Sprintf("%.1f s", g.Last.Sub(g.First).Seconds()/float64(g.Count-1))
+	}
+	row.Size = finderSize(g.MinLen, g.MaxLen)
+	row.Srcs = finderSrcs(g.Srcs)
+	row.Nets = rc.nets(g.VIDs)
+	row.Offset = fmt.Sprintf("+%d s", int(g.First.Sub(rc.started).Seconds()))
+	row.Hex, row.ASCII = hexASCII(g.Sample)
+	return row
+}
+
+// rowGames gives the games of the active rule that forwards a group, or, when no rule does, the games of the
+// database that use its port.
+func (rc finderRowCtx) rowGames(g engineapi.FinderGroup) []gameHint {
+	r, ok := rc.idx.byRule[g.Rule]
+	if !ok {
+		return portGames(rc.games, g.Kind, g.Group, g.Port)
+	}
+	var out []gameHint
+	for _, id := range r.Specs {
+		if h, ok := rc.gameByID[id]; ok {
+			out = append(out, h)
+		}
+	}
+	return out
+}
+
+// nets names the networks a group was seen in, "VLAN <id>" for one without a name.
+func (rc finderRowCtx) nets(vids []int) string {
+	nets := make([]string, len(vids))
+	for i, id := range vids {
+		nets[i] = rc.vlanName[id]
+		if nets[i] == "" {
+			nets[i] = fmt.Sprintf("VLAN %d", id)
+		}
+	}
+	return strings.Join(nets, ", ")
+}
+
+// finderSize shows the payload size of a group, as a range when it varies.
+func finderSize(minLen, maxLen int) string {
+	if maxLen != minLen {
+		return fmt.Sprintf("%d–%d B", minLen, maxLen)
+	}
+	return fmt.Sprintf("%d B", minLen)
+}
+
+// finderSrcs lists the sender addresses of a group.
+func finderSrcs(srcs []netip.Addr) string {
+	out := make([]string, len(srcs))
+	for i, a := range srcs {
+		out[i] = a.String()
+	}
+	return strings.Join(out, ", ")
 }
 
 // finder is the port finder page; ?teil=ergebnis returns only the live part.
@@ -200,11 +260,9 @@ func (s *Server) finderStart(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 	T := s.T(r)
-	if req.Src != "" {
-		if a, err := netip.ParseAddr(req.Src); err != nil || !a.Is4() {
-			back(w, r, "/finder", "", errors.New(T("„%s“ ist keine IPv4-Adresse", req.Src)))
-			return
-		}
+	if !finderSrcValid(req.Src) {
+		back(w, r, "/finder", "", errors.New(T("„%s“ ist keine IPv4-Adresse", req.Src)))
+		return
 	}
 	mins, _ := strconv.Atoi(r.PostFormValue("minuten"))
 	req.Seconds = max(1, min(mins, 10)) * 60
@@ -215,6 +273,15 @@ func (s *Server) finderStart(w http.ResponseWriter, r *http.Request) {
 	}
 	s.audit(r.Context(), s.actor(r), "finder.start", fmt.Sprint(req.VIDs), "", req.Src)
 	back(w, r, "/finder", T("Port-Finder läuft. Jetzt das Spiel starten und den LAN-Browser öffnen."), nil)
+}
+
+// finderSrcValid reports whether the sender filter of the port finder is empty (every sender) or an IPv4 address.
+func finderSrcValid(src string) bool {
+	if src == "" {
+		return true
+	}
+	a, err := netip.ParseAddr(src)
+	return err == nil && a.Is4()
 }
 
 func (s *Server) finderStop(w http.ResponseWriter, r *http.Request) {

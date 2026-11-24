@@ -173,12 +173,7 @@ func (s *Store) UpsertOIDCUser(ctx context.Context, subject, name, email, role s
 	if subject == "" || RoleRank(role) == 0 {
 		return User{}, fmt.Errorf("%w: subject or role", ErrInvalid)
 	}
-	if name == "" {
-		name = email
-	}
-	if name == "" {
-		name = "sso-" + subject[:min(8, len(subject))]
-	}
+	name = oidcName(subject, name, email)
 	var u User
 	err := s.tx(ctx, func(tx *sql.Tx) error {
 		var id int64
@@ -192,24 +187,47 @@ func (s *Store) UpsertOIDCUser(ctx context.Context, subject, name, email, role s
 			name += "@sso"
 		}
 		if id == 0 {
-			res, err := tx.ExecContext(ctx, `INSERT INTO user(kind, name, role, subject, email) VALUES ('oidc', ?, ?, ?, ?)`, name, role, subject, email)
-			if err != nil {
-				return err
-			}
-			id, _ = res.LastInsertId()
+			id, err = insertOIDCUser(ctx, tx, subject, name, email, role)
 		} else {
-			// a changed role ends the sessions opened with the old one
-			if _, err := tx.ExecContext(ctx, `DELETE FROM session WHERE user_id = ? AND (SELECT role FROM user WHERE id = ?) != ?`, id, id, role); err != nil {
-				return err
-			}
-			if _, err := tx.ExecContext(ctx, `UPDATE user SET name = ?, role = ?, email = ? WHERE id = ?`, name, role, email, id); err != nil {
-				return err
-			}
+			err = updateOIDCUser(ctx, tx, id, name, email, role)
+		}
+		if err != nil {
+			return err
 		}
 		u = User{ID: id, Kind: "oidc", Name: name, Role: role}
 		return nil
 	})
 	return u, err
+}
+
+// oidcName is the account name of an OIDC subject: the name claim, else the e-mail address, else "sso-" and the
+// start of the subject.
+func oidcName(subject, name, email string) string {
+	if name == "" {
+		name = email
+	}
+	if name == "" {
+		name = "sso-" + subject[:min(8, len(subject))]
+	}
+	return name
+}
+
+func insertOIDCUser(ctx context.Context, tx *sql.Tx, subject, name, email, role string) (int64, error) {
+	res, err := tx.ExecContext(ctx, `INSERT INTO user(kind, name, role, subject, email) VALUES ('oidc', ?, ?, ?, ?)`, name, role, subject, email)
+	if err != nil {
+		return 0, err
+	}
+	id, _ := res.LastInsertId()
+	return id, nil
+}
+
+// updateOIDCUser refreshes an existing OIDC account; a changed role ends the sessions opened with the old one.
+func updateOIDCUser(ctx context.Context, tx *sql.Tx, id int64, name, email, role string) error {
+	if _, err := tx.ExecContext(ctx, `DELETE FROM session WHERE user_id = ? AND (SELECT role FROM user WHERE id = ?) != ?`, id, id, role); err != nil {
+		return err
+	}
+	_, err := tx.ExecContext(ctx, `UPDATE user SET name = ?, role = ?, email = ? WHERE id = ?`, name, role, email, id)
+	return err
 }
 
 // LocalAccounts counts the local accounts that can log in (with a password).

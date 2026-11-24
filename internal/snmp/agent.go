@@ -10,8 +10,6 @@ import (
 	"net"
 	"net/netip"
 	"slices"
-	"strconv"
-	"strings"
 	"sync"
 	"time"
 
@@ -70,11 +68,6 @@ func ValidateAgent(c AgentConfig) error {
 	return nil
 }
 
-type entry struct {
-	oid []int
-	pdu gosnmp.SnmpPDU
-}
-
 // Agent is a running SNMP agent.
 type Agent struct {
 	c     AgentConfig
@@ -101,28 +94,6 @@ const (
 	maxResponse    = 1400 // bytes of variable values, keeps GETBULK from amplifying
 	ratePerSource  = 50   // requests per second
 )
-
-func parseOID(s string) []int {
-	parts := strings.Split(strings.TrimPrefix(s, "."), ".")
-	out := make([]int, 0, len(parts))
-	for _, p := range parts {
-		n, err := strconv.Atoi(p)
-		if err != nil {
-			return nil
-		}
-		out = append(out, n)
-	}
-	return out
-}
-
-func oidString(o []int) string {
-	var b strings.Builder
-	for _, n := range o {
-		b.WriteByte('.')
-		b.WriteString(strconv.Itoa(n))
-	}
-	return b.String()
-}
 
 // StartAgent binds the UDP socket and serves until Close.
 func StartAgent(c AgentConfig, view func() *View) (*Agent, error) {
@@ -193,134 +164,91 @@ func (a *Agent) allowed(src netip.Addr) bool {
 	return true
 }
 
-// table returns all variables sorted by OID (cached for 5 s: one engine query for any number of requests).
-func (a *Agent) table() []entry {
-	a.mu.Lock()
-	defer a.mu.Unlock()
-	if a.cache != nil && time.Since(a.cachedAt) < 5*time.Second {
-		return a.cache
-	}
-	v := a.view()
-	var es []entry
-	add := func(oid string, typ gosnmp.Asn1BER, val any) {
-		es = append(es, entry{oid: parseOID(oid), pdu: gosnmp.SnmpPDU{Name: "." + strings.TrimPrefix(oid, "."), Type: typ, Value: val}})
-	}
-	sys := "1.3.6.1.2.1.1."
-	add(sys+"1.0", gosnmp.OctetString, a.c.SysDescr)
-	add(sys+"2.0", gosnmp.ObjectIdentifier, "."+Base)
-	add(sys+"3.0", gosnmp.TimeTicks, uint32(time.Since(a.start)/(10*time.Millisecond)))
-	add(sys+"4.0", gosnmp.OctetString, a.c.Contact)
-	add(sys+"5.0", gosnmp.OctetString, a.c.SysName)
-	add(sys+"6.0", gosnmp.OctetString, a.c.Location)
-	add(sys+"7.0", gosnmp.Integer, 72)
-	for _, s := range Scalars {
-		add(OID(s.Sub)+".0", s.Syntax.BER, s.Get(v))
-	}
-	for _, t := range Tables {
-		rows := t.Rows(v)
-		for _, c := range t.Columns {
-			for _, r := range rows {
-				add(fmt.Sprintf("%s.1.%d.%d", OID(t.Sub), c.Sub, r.Index), c.Syntax.BER, c.Get(r.Row))
-			}
-		}
-	}
-	slices.SortFunc(es, func(x, y entry) int { return slices.Compare(x.oid, y.oid) })
-	a.cache, a.cachedAt = es, time.Now()
-	return es
-}
-
-func (a *Agent) get(es []entry, oid []int) gosnmp.SnmpPDU {
-	i, found := slices.BinarySearchFunc(es, oid, func(e entry, o []int) int { return slices.Compare(e.oid, o) })
-	if found {
-		return es[i].pdu
-	}
-	return gosnmp.SnmpPDU{Name: oidString(oid), Type: gosnmp.NoSuchObject}
-}
-
-func (a *Agent) next(es []entry, oid []int) gosnmp.SnmpPDU {
-	i, found := slices.BinarySearchFunc(es, oid, func(e entry, o []int) int { return slices.Compare(e.oid, o) })
-	if found {
-		i++
-	}
-	if i >= len(es) {
-		return gosnmp.SnmpPDU{Name: oidString(oid), Type: gosnmp.EndOfMibView}
-	}
-	return es[i].pdu
-}
-
-func pduSize(p gosnmp.SnmpPDU) int {
-	n := len(p.Name) + 8
-	if s, ok := p.Value.(string); ok {
-		n += len(s)
-	}
-	return n
-}
-
 func (a *Agent) handle(p *gosnmp.SnmpPacket, remote *net.UDPAddr) {
 	src, _ := netip.AddrFromSlice(remote.IP)
-	if !a.allowed(src.Unmap()) {
-		return
-	}
-	switch p.Version {
-	case gosnmp.Version2c, gosnmp.Version1:
-		if !a.c.V2c || subtle.ConstantTimeCompare([]byte(p.Community), []byte(a.c.Community)) != 1 {
-			return // wrong community: no answer
-		}
-	case gosnmp.Version3:
-		if a.c.V3User == "" {
-			return
-		}
-		if sp, ok := p.SecurityParameters.(*gosnmp.UsmSecurityParameters); ok {
-			sp.AuthoritativeEngineBoots = a.c.Boots
-			sp.AuthoritativeEngineTime = uint32(time.Since(a.start).Seconds())
-		}
-	default:
+	if !a.allowed(src.Unmap()) || !a.authorized(p) {
 		return
 	}
 	es := a.table()
 	resp := *p
 	resp.PDUType = gosnmp.GetResponse
 	resp.Error, resp.ErrorIndex = gosnmp.NoError, 0
-	var out []gosnmp.SnmpPDU
+	if !a.answer(&resp, p, es) {
+		return
+	}
+	_ = a.tl.SendUDP(&resp, remote)
+}
+
+// authorized checks the version and credentials of a request: v1/v2c need the configured community (a wrong
+// one gets no answer), v3 needs a configured user. For v3 it also fills in the engine boots and time of the
+// reply.
+func (a *Agent) authorized(p *gosnmp.SnmpPacket) bool {
+	switch p.Version {
+	case gosnmp.Version2c, gosnmp.Version1:
+		return a.c.V2c && subtle.ConstantTimeCompare([]byte(p.Community), []byte(a.c.Community)) == 1
+	case gosnmp.Version3:
+		if a.c.V3User == "" {
+			return false
+		}
+		if sp, ok := p.SecurityParameters.(*gosnmp.UsmSecurityParameters); ok {
+			sp.AuthoritativeEngineBoots = a.c.Boots
+			sp.AuthoritativeEngineTime = uint32(time.Since(a.start).Seconds())
+		}
+		return true
+	}
+	return false
+}
+
+// answer fills the variables (and for SET the error) of the response to request p; false for request types
+// that get no answer.
+func (a *Agent) answer(resp, p *gosnmp.SnmpPacket, es []entry) bool {
 	switch p.PDUType {
 	case gosnmp.GetRequest:
-		for _, v := range p.Variables {
-			out = append(out, a.get(es, parseOID(v.Name)))
-		}
+		resp.Variables = a.each(es, p.Variables, a.get)
 	case gosnmp.GetNextRequest:
-		for _, v := range p.Variables {
-			out = append(out, a.next(es, parseOID(v.Name)))
-		}
+		resp.Variables = a.each(es, p.Variables, a.next)
 	case gosnmp.GetBulkRequest:
-		nonRep := min(int(p.NonRepeaters), len(p.Variables))
-		for _, v := range p.Variables[:nonRep] {
-			out = append(out, a.next(es, parseOID(v.Name)))
-		}
-		reps := min(int(p.MaxRepetitions), maxRepetitions)
-		size := 0
-		cursors := make([][]int, 0, len(p.Variables)-nonRep)
-		for _, v := range p.Variables[nonRep:] {
-			cursors = append(cursors, parseOID(v.Name))
-		}
-	bulk:
-		for r := 0; r < reps && len(cursors) > 0; r++ {
-			for i, c := range cursors {
-				pdu := a.next(es, c)
-				size += pduSize(pdu)
-				if size > maxResponse && len(out) > 0 {
-					break bulk
-				}
-				out = append(out, pdu)
-				cursors[i] = parseOID(pdu.Name)
-			}
-		}
+		resp.Variables = a.bulk(es, p)
 		resp.NonRepeaters, resp.MaxRepetitions = 0, 0
 	case gosnmp.SetRequest:
 		resp.Error, resp.ErrorIndex = gosnmp.NotWritable, 1
-		out = p.Variables
+		resp.Variables = p.Variables
 	default:
-		return
+		return false
 	}
-	resp.Variables = out
-	_ = a.tl.SendUDP(&resp, remote)
+	return true
+}
+
+// each resolves every requested variable with lookup (get or next).
+func (a *Agent) each(es []entry, vars []gosnmp.SnmpPDU, lookup func([]entry, []int) gosnmp.SnmpPDU) []gosnmp.SnmpPDU {
+	var out []gosnmp.SnmpPDU
+	for _, v := range vars {
+		out = append(out, lookup(es, parseOID(v.Name)))
+	}
+	return out
+}
+
+// bulk answers GETBULK: the non-repeaters once, then the repeaters row by row, at most maxRepetitions rows and
+// (after the first variable) at most maxResponse bytes.
+func (a *Agent) bulk(es []entry, p *gosnmp.SnmpPacket) []gosnmp.SnmpPDU {
+	nonRep := min(int(p.NonRepeaters), len(p.Variables))
+	out := a.each(es, p.Variables[:nonRep], a.next)
+	reps := min(int(p.MaxRepetitions), maxRepetitions)
+	cursors := make([][]int, 0, len(p.Variables)-nonRep)
+	for _, v := range p.Variables[nonRep:] {
+		cursors = append(cursors, parseOID(v.Name))
+	}
+	size := 0
+	for r := 0; r < reps && len(cursors) > 0; r++ {
+		for i, c := range cursors {
+			pdu := a.next(es, c)
+			size += pduSize(pdu)
+			if size > maxResponse && len(out) > 0 {
+				return out
+			}
+			out = append(out, pdu)
+			cursors[i] = parseOID(pdu.Name)
+		}
+	}
+	return out
 }

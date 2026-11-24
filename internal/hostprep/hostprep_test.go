@@ -72,3 +72,30 @@ func TestMgmtRules(t *testing.T) {
 		t.Errorf("no relayed network, but rules %v", r)
 	}
 }
+
+// A trunk is shielded only when it may be shielded, is not in the set yet and has no address; the address is
+// only looked up when everything else allows it.
+func TestShieldsTrunk(t *testing.T) {
+	protected := map[string]bool{"eth0": true}
+	for _, c := range []struct {
+		name    string
+		v       compile.VLAN
+		set     map[string]bool
+		addr    bool
+		want    bool
+		lookups int
+	}{
+		{"plain trunk", compile.VLAN{Attach: compile.AttachTrunk, Parent: "ens19"}, nil, false, true, 1},
+		{"trunk with address", compile.VLAN{Attach: compile.AttachTrunk, Parent: "ens19"}, nil, true, false, 1},
+		{"already in the set", compile.VLAN{Attach: compile.AttachTrunk, Parent: "ens19"}, map[string]bool{"ens19": true}, false, false, 0},
+		{"management interface", compile.VLAN{Attach: compile.AttachTrunk, Parent: "eth0"}, nil, false, false, 0},
+		{"loopback", compile.VLAN{Attach: compile.AttachTrunk, Parent: "lo"}, nil, false, false, 0},
+		{"device", compile.VLAN{Attach: compile.AttachDevice, Device: "ens20"}, nil, false, false, 0},
+	} {
+		lookups := 0
+		hasAddr := func(string) bool { lookups++; return c.addr }
+		if got := shieldsTrunk(c.v, protected, c.set, hasAddr); got != c.want || lookups != c.lookups {
+			t.Errorf("%s: %v with %d address lookup(s), want %v with %d", c.name, got, lookups, c.want, c.lookups)
+		}
+	}
+}

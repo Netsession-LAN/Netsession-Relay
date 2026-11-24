@@ -4,13 +4,10 @@
 package otlp
 
 import (
-	"bytes"
 	"context"
-	"crypto/tls"
 	"crypto/x509"
 	"errors"
 	"fmt"
-	"io"
 	"net"
 	"net/http"
 	"net/netip"
@@ -22,11 +19,7 @@ import (
 	collogs "go.opentelemetry.io/proto/otlp/collector/logs/v1"
 	colmetrics "go.opentelemetry.io/proto/otlp/collector/metrics/v1"
 	"google.golang.org/grpc"
-	"google.golang.org/grpc/credentials"
-	"google.golang.org/grpc/credentials/insecure"
 	_ "google.golang.org/grpc/encoding/gzip" // registers the gzip compressor
-	"google.golang.org/grpc/metadata"
-	"google.golang.org/protobuf/proto"
 
 	"github.com/Netsession-LAN/Netsession-Relay/internal/notify"
 )
@@ -68,18 +61,8 @@ var (
 
 // Validate checks endpoint and config.
 func Validate(endpoint string, c Config) error {
-	switch c.Protocol {
-	case "grpc":
-		if h, p, err := net.SplitHostPort(endpoint); err != nil || h == "" || p == "" {
-			return fmt.Errorf("OTLP gRPC endpoint %q: %w", endpoint, ErrEndpoint)
-		}
-	case "http":
-		u, err := url.Parse(endpoint)
-		if err != nil || (u.Scheme != "http" && u.Scheme != "https") || u.Host == "" {
-			return fmt.Errorf("OTLP HTTP endpoint %q: %w", endpoint, ErrEndpointURL)
-		}
-	default:
-		return fmt.Errorf("protocol %q", c.Protocol)
+	if err := validateEndpoint(c.Protocol, endpoint); err != nil {
+		return err
 	}
 	if !c.Metrics && !c.Logs {
 		return ErrNoSignal
@@ -93,6 +76,28 @@ func Validate(endpoint string, c Config) error {
 		}
 	}
 	return nil
+}
+
+// validateEndpoint checks the endpoint for the protocol: host:port for gRPC, an http(s) URL with a host for HTTP.
+func validateEndpoint(protocol, endpoint string) error {
+	switch protocol {
+	case "grpc":
+		if h, p, err := net.SplitHostPort(endpoint); err != nil || h == "" || p == "" {
+			return fmt.Errorf("OTLP gRPC endpoint %q: %w", endpoint, ErrEndpoint)
+		}
+	case "http":
+		if u, err := url.Parse(endpoint); err != nil || !isHTTPURL(u) {
+			return fmt.Errorf("OTLP HTTP endpoint %q: %w", endpoint, ErrEndpointURL)
+		}
+	default:
+		return fmt.Errorf("protocol %q", protocol)
+	}
+	return nil
+}
+
+// isHTTPURL reports whether u is an http or https URL with a host.
+func isHTTPURL(u *url.URL) bool {
+	return (u.Scheme == "http" || u.Scheme == "https") && u.Host != ""
 }
 
 // Sender is one OTLP target: logs through the notify queue, metrics on its own ticker.
@@ -115,48 +120,13 @@ func NewSender(endpoint string, c Config, source Source) (*Sender, error) {
 	if err := Validate(endpoint, c); err != nil {
 		return nil, err
 	}
-	if c.Interval < 10*time.Second {
-		c.Interval = 30 * time.Second
-	}
-	if c.Interval > 5*time.Minute {
-		c.Interval = 5 * time.Minute
-	}
-	if c.Resource.ServiceName == "" {
-		c.Resource.ServiceName = "nsrelay"
-	}
+	c = c.withDefaults()
 	s := &Sender{endpoint: endpoint, c: c, source: source, stop: make(chan struct{}), done: make(chan struct{})}
-	var tlsConf *tls.Config
-	if c.TLS {
-		tlsConf = &tls.Config{MinVersion: tls.VersionTLS12, InsecureSkipVerify: c.SkipVerify} //nolint:gosec // explicit, shown in the UI
-		if c.TLSCA != "" {
-			pool := x509.NewCertPool()
-			pool.AppendCertsFromPEM([]byte(c.TLSCA))
-			tlsConf.RootCAs = pool
-		}
-	}
-	dialer := &net.Dialer{Timeout: 3 * time.Second}
-	if c.Bind.IsValid() {
-		dialer.LocalAddr = &net.TCPAddr{IP: c.Bind.AsSlice()}
-	}
+	tlsConf, dialer := c.tlsConfig(), c.dialer()
 	if c.Protocol == "grpc" {
-		creds := insecure.NewCredentials()
-		if tlsConf != nil {
-			host, _, _ := net.SplitHostPort(endpoint)
-			tlsConf.ServerName = host
-			creds = credentials.NewTLS(tlsConf)
-		}
-		opts := []grpc.DialOption{grpc.WithTransportCredentials(creds),
-			grpc.WithContextDialer(func(ctx context.Context, addr string) (net.Conn, error) {
-				return dialer.DialContext(ctx, "tcp", addr)
-			})}
-		if c.Gzip {
-			opts = append(opts, grpc.WithDefaultCallOptions(grpc.UseCompressor("gzip")))
-		}
-		conn, err := grpc.NewClient("passthrough:///"+endpoint, opts...) // lazy, reconnects by itself
-		if err != nil {
+		if err := s.connectGRPC(tlsConf, dialer); err != nil {
 			return nil, err
 		}
-		s.conn, s.logsC, s.metC = conn, collogs.NewLogsServiceClient(conn), colmetrics.NewMetricsServiceClient(conn)
 	} else {
 		tr := &http.Transport{DialContext: dialer.DialContext, TLSClientConfig: tlsConf, MaxIdleConns: 2, IdleConnTimeout: time.Minute}
 		s.httpC = &http.Client{Transport: tr, Timeout: 5 * time.Second}
@@ -167,6 +137,20 @@ func NewSender(endpoint string, c Config, source Source) (*Sender, error) {
 		close(s.done)
 	}
 	return s, nil
+}
+
+// withDefaults bounds the metrics interval (outside 10 s .. 5 min: 30 s or 5 min) and fills in the service name.
+func (c Config) withDefaults() Config {
+	if c.Interval < 10*time.Second {
+		c.Interval = 30 * time.Second
+	}
+	if c.Interval > 5*time.Minute {
+		c.Interval = 5 * time.Minute
+	}
+	if c.Resource.ServiceName == "" {
+		c.Resource.ServiceName = "nsrelay"
+	}
+	return c
 }
 
 // Reliable reports true: OTLP answers every request.
@@ -191,31 +175,20 @@ func (s *Sender) loop() {
 	}
 }
 
-func (s *Sender) withHeaders(ctx context.Context) context.Context {
-	if len(s.c.Headers) == 0 {
-		return ctx
-	}
-	kv := make([]string, 0, 2*len(s.c.Headers))
-	for k, v := range s.c.Headers {
-		kv = append(kv, strings.ToLower(k), v)
-	}
-	return metadata.AppendToOutgoingContext(ctx, kv...)
-}
-
 // ExportMetrics sends the current metrics once.
 func (s *Sender) ExportMetrics(ctx context.Context) error {
 	req := &colmetrics.ExportMetricsServiceRequest{ResourceMetrics: resourceMetrics(s.c.Resource, s.source(ctx), s.c.RuleMetrics)}
-	var err error
-	if s.metC != nil {
-		var resp *colmetrics.ExportMetricsServiceResponse
-		resp, err = s.metC.Export(s.withHeaders(ctx), req)
-		if err == nil && resp.GetPartialSuccess().GetRejectedDataPoints() > 0 {
-			err = fmt.Errorf("collector rejected %d data points: %s", resp.GetPartialSuccess().GetRejectedDataPoints(), resp.GetPartialSuccess().GetErrorMessage())
-		}
-	} else {
-		err = s.postHTTP(ctx, "/v1/metrics", req)
+	if s.metC == nil {
+		return s.postHTTP(ctx, "/v1/metrics", req)
 	}
-	return err
+	resp, err := s.metC.Export(s.withHeaders(ctx), req)
+	if err != nil {
+		return err
+	}
+	if n := resp.GetPartialSuccess().GetRejectedDataPoints(); n > 0 {
+		return fmt.Errorf("collector rejected %d data points: %s", n, resp.GetPartialSuccess().GetErrorMessage())
+	}
+	return nil
 }
 
 // Send exports a batch of events as log records (notify.Sender).
@@ -235,32 +208,6 @@ func (s *Sender) Send(ctx context.Context, batch []notify.Event) error {
 		return nil
 	}
 	return s.postHTTP(ctx, "/v1/logs", req)
-}
-
-func (s *Sender) postHTTP(ctx context.Context, path string, msg proto.Message) error {
-	body, err := proto.Marshal(msg)
-	if err != nil {
-		return err
-	}
-	u := strings.TrimRight(s.endpoint, "/") + path
-	req, err := http.NewRequestWithContext(ctx, http.MethodPost, u, bytes.NewReader(body))
-	if err != nil {
-		return err
-	}
-	req.Header.Set("Content-Type", "application/x-protobuf")
-	for k, v := range s.c.Headers {
-		req.Header.Set(k, v)
-	}
-	resp, err := s.httpC.Do(req)
-	if err != nil {
-		return err
-	}
-	defer resp.Body.Close()
-	_, _ = io.Copy(io.Discard, io.LimitReader(resp.Body, 64<<10))
-	if resp.StatusCode/100 != 2 {
-		return fmt.Errorf("collector answered %s", resp.Status)
-	}
-	return nil
 }
 
 // Close stops the metrics ticker (after a last export) and the connection.

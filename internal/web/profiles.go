@@ -4,7 +4,6 @@ import (
 	"errors"
 	"fmt"
 	"net/http"
-	"net/netip"
 	"net/url"
 	"strings"
 
@@ -113,66 +112,6 @@ func (s *Server) gameProfile(w http.ResponseWriter, r *http.Request) {
 	s.answer(w, r, path, a)
 }
 
-// gameSources sets the source filter of a switched-on game (field sources, empty = every sender).
-func (s *Server) gameSources(w http.ResponseWriter, r *http.Request) {
-	id := r.PathValue("id")
-	path := "/spiele/" + url.PathEscape(id) + "#absender"
-	T := s.T(r)
-	sources, err := compile.ParseSources(r.PostFormValue("sources"))
-	if err != nil {
-		back(w, r, path, "", errors.New(T("Nur IPv4-Adressen oder Netze, z. B. 10.10.5.20 oder 10.10.5.0/28.")))
-		return
-	}
-	if err := s.Store.SetGameSources(r.Context(), s.actor(r), id, sources); err != nil {
-		if errors.Is(err, store.ErrNotFound) {
-			err = uimsg.Error("Absender lassen sich nur für ein eingeschaltetes Spiel festlegen.")
-		}
-		back(w, r, path, "", s.userError(r, "game: source filter", err))
-		return
-	}
-	a := s.applyNow(r, id+" Absender")
-	if a.OK {
-		a.Message = T("Absender-Filter entfernt und angewendet.")
-		if len(sources) > 0 {
-			a.Message = T("Absender-Filter gespeichert und angewendet.")
-		}
-		if c, err := s.Store.ExportConfig(r.Context()); err == nil {
-			var off []string
-			for _, v := range sourceViews(compile.FormatSources(sources), c.VLANs) {
-				if v.Net == "" {
-					off = append(off, v.Source)
-				}
-			}
-			if len(off) > 0 {
-				a.Message += " " + T("Trifft kein Netz und wirkt nicht: %s.", strings.Join(off, ", "))
-			}
-		}
-	}
-	s.answer(w, r, path, a)
-}
-
-// sourceView is one entry of a source filter with the network it restricts ("" = lies in no enabled network).
-type sourceView struct {
-	Source, Net string
-}
-
-func sourceViews(sources []string, vlans []store.VLANConfig) []sourceView {
-	out := make([]sourceView, 0, len(sources))
-	for _, src := range sources {
-		v := sourceView{Source: src}
-		ps, err := compile.ParseSources(src)
-		for _, vl := range vlans {
-			n, perr := netip.ParsePrefix(vl.CIDR)
-			if err == nil && perr == nil && len(ps) == 1 && vl.Enabled && compile.PrefixWithin(ps[0], n.Masked()) {
-				v.Net = vl.Name
-				break
-			}
-		}
-		out = append(out, v)
-	}
-	return out
-}
-
 // profileEdge switches one cell of the matrix (fields src, dst, on=1|0).
 func (s *Server) profileEdge(w http.ResponseWriter, r *http.Request) {
 	name := r.PathValue("name")
@@ -189,14 +128,18 @@ func (s *Server) profileEdge(w http.ResponseWriter, r *http.Request) {
 	a := s.applyNow(r, fmt.Sprintf("Profil %s: %s → %s %s", name, e.Src, e.Dst, onOff(on)))
 	a.Enabled = on
 	if a.OK {
-		T := s.T(r)
-		if on {
-			a.Message = T("Spiele aus %s gehen jetzt nach %s (Profil %s).", T(groupName(e.Src)), T(groupName(e.Dst)), name)
-		} else {
-			a.Message = T("Spiele aus %s gehen nicht mehr nach %s (Profil %s).", T(groupName(e.Src)), T(groupName(e.Dst)), name)
-		}
+		a.Message = profileEdgeMessage(name, e, on, s.T(r))
 	}
 	s.answer(w, r, "/netz", a)
+}
+
+// profileEdgeMessage tells what switching the cell e of profile name on or off means for the games.
+func profileEdgeMessage(name string, e compile.Edge, on bool, T translator) string {
+	src, dst := T(groupName(e.Src)), T(groupName(e.Dst))
+	if on {
+		return T("Spiele aus %s gehen jetzt nach %s (Profil %s).", src, dst, name)
+	}
+	return T("Spiele aus %s gehen nicht mehr nach %s (Profil %s).", src, dst, name)
 }
 
 func (s *Server) profileRename(w http.ResponseWriter, r *http.Request) {

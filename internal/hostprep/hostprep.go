@@ -58,14 +58,14 @@ func PlanFor(s *compile.Snapshot, protected map[string]bool, hasAddr func(string
 	var p Plan
 	for _, v := range s.VLANs {
 		name := netif.LinkName(v)
-		if name == "lo" || protected[name] {
+		if !shieldable(name, protected) {
 			continue
 		}
 		set[name] = true
 		if v.CIDR.IsValid() {
 			p.Networks = append(p.Networks, v.CIDR.Masked())
 		}
-		if v.Attach == compile.AttachTrunk && v.Parent != "lo" && !protected[v.Parent] && !set[v.Parent] && !hasAddr(v.Parent) {
+		if shieldsTrunk(v, protected, set, hasAddr) {
 			set[v.Parent] = true
 		}
 	}
@@ -75,6 +75,19 @@ func PlanFor(s *compile.Snapshot, protected map[string]bool, hasAddr func(string
 	sort.Strings(p.Ifaces)
 	sort.Slice(p.Networks, func(i, j int) bool { return p.Networks[i].Addr().Less(p.Networks[j].Addr()) })
 	return p
+}
+
+// shieldable reports whether an interface may be shielded at all: never the loopback, never an interface that
+// carries a default route.
+func shieldable(name string, protected map[string]bool) bool { return name != "lo" && !protected[name] }
+
+// shieldsTrunk reports whether the trunk of a VLAN interface is to be shielded as well: it is shieldable, not
+// in the set yet and has no IPv4 address of its own.
+func shieldsTrunk(v compile.VLAN, protected, set map[string]bool, hasAddr func(string) bool) bool {
+	if v.Attach != compile.AttachTrunk || !shieldable(v.Parent, protected) {
+		return false
+	}
+	return !set[v.Parent] && !hasAddr(v.Parent)
 }
 
 // mgmtRule is one policy rule of the source routing for the management side: answers from the management

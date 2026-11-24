@@ -8,7 +8,6 @@ import (
 	"errors"
 	"fmt"
 	"log/slog"
-	"math/rand/v2"
 	"sort"
 	"sync"
 	"time"
@@ -94,111 +93,6 @@ type Status struct {
 // Failing reports whether the target counts as failing (for the UI and the outputs_failing metric).
 func (s Status) Failing() bool { return s.State == "error" }
 
-type worker struct {
-	t      store.Target
-	sender Sender
-	log    *slog.Logger
-
-	mu      sync.Mutex
-	queue   []Event
-	wake    chan struct{}
-	stop    chan struct{}
-	done    chan struct{}
-	lastOK  time.Time
-	lastErr string
-	errAt   time.Time
-	sent    uint64
-	dropped uint64
-}
-
-func (w *worker) push(ev Event) {
-	w.mu.Lock()
-	if len(w.queue) >= queueSize {
-		w.queue = w.queue[1:] // drop the oldest
-		w.dropped++
-	}
-	w.queue = append(w.queue, ev)
-	w.mu.Unlock()
-	select {
-	case w.wake <- struct{}{}:
-	default:
-	}
-}
-
-func (w *worker) run() {
-	defer close(w.done)
-	backoff := time.Second
-	for {
-		select {
-		case <-w.stop:
-			return
-		case <-w.wake:
-		}
-		for {
-			w.mu.Lock()
-			// events that waited too long are worthless (a dead target for 10 minutes)
-			now := time.Now()
-			for len(w.queue) > 0 && now.Sub(w.queue[0].Time) > maxAge {
-				w.queue = w.queue[1:]
-				w.dropped++
-			}
-			n := min(len(w.queue), batchSize)
-			batch := append([]Event(nil), w.queue[:n]...)
-			w.mu.Unlock()
-			if n == 0 {
-				break
-			}
-			ctx, cancel := context.WithTimeout(context.Background(), sendTime)
-			err := w.sender.Send(ctx, batch)
-			cancel()
-			w.mu.Lock()
-			if err == nil || !w.sender.Reliable() {
-				// sent, or an unreliable transport: never retried
-				w.queue = w.queue[min(n, len(w.queue)):]
-			}
-			if err != nil {
-				w.lastErr, w.errAt = err.Error(), time.Now()
-				if !w.sender.Reliable() {
-					w.dropped += uint64(n)
-				}
-			} else {
-				w.lastOK = time.Now()
-				w.sent += uint64(n)
-				backoff = time.Second
-			}
-			w.mu.Unlock()
-			if err != nil && w.sender.Reliable() {
-				w.log.Debug("monitoring target", "target", w.t.Name, "err", err)
-				wait := backoff + time.Duration(rand.Int64N(int64(backoff/2)+1)) //nolint:gosec // G404: jitter for retry backoff, not security relevant
-				backoff = min(backoff*2, maxBackoff)
-				select {
-				case <-w.stop:
-					return
-				case <-time.After(wait):
-				}
-			}
-		}
-	}
-}
-
-func (w *worker) status() Status {
-	w.mu.Lock()
-	defer w.mu.Unlock()
-	st := Status{ID: w.t.ID, Name: w.t.Name, Kind: w.t.Kind, Enabled: true, LastOK: w.lastOK, LastErr: w.lastErr,
-		LastErrAt: w.errAt, Sent: w.sent, Dropped: w.dropped, Queued: len(w.queue)}
-	switch {
-	case !w.errAt.IsZero() && w.errAt.After(w.lastOK) && time.Since(w.lastOK) > failAfter:
-		st.State = "error"
-	case w.lastOK.IsZero() && w.errAt.IsZero():
-		st.State = "waiting"
-	case !w.sender.Reliable():
-		st.State = "unconfirmed"
-	default:
-		st.State = "ok"
-	}
-	return st
-}
-
 // Dispatcher owns one worker per enabled target.
 type Dispatcher struct {
 	log       *slog.Logger
@@ -241,27 +135,14 @@ func (d *Dispatcher) reload(targets []store.Target, force bool) {
 			continue
 		}
 		keep[t.ID] = true
-		if w := d.workers[t.ID]; w != nil && !force && w.t.Updated == t.Updated {
+		w := d.workers[t.ID]
+		if w != nil && !force && w.t.Updated == t.Updated {
 			continue
 		}
-		if w := d.workers[t.ID]; w != nil {
+		if w != nil {
 			stopping = append(stopping, w)
 		}
-		delete(d.workers, t.ID)
-		delete(d.setupErr, t.ID)
-		f := d.factories[t.Kind]
-		if f == nil {
-			d.setupErr[t.ID] = "no sender for kind " + t.Kind
-			continue
-		}
-		s, err := f(t)
-		if err != nil {
-			d.setupErr[t.ID] = err.Error()
-			continue
-		}
-		w := &worker{t: t, sender: s, log: d.log, wake: make(chan struct{}, 1), stop: make(chan struct{}), done: make(chan struct{})}
-		d.workers[t.ID] = w
-		go w.run()
+		d.start(t)
 	}
 	for id, w := range d.workers {
 		if !keep[id] {
@@ -269,6 +150,26 @@ func (d *Dispatcher) reload(targets []store.Target, force bool) {
 			delete(d.workers, id)
 		}
 	}
+}
+
+// start builds the sender of a target and runs a new worker for it; a target whose sender cannot be built is
+// remembered with the reason instead. The caller holds d.mu and stops the old worker.
+func (d *Dispatcher) start(t store.Target) {
+	delete(d.workers, t.ID)
+	delete(d.setupErr, t.ID)
+	f := d.factories[t.Kind]
+	if f == nil {
+		d.setupErr[t.ID] = "no sender for kind " + t.Kind
+		return
+	}
+	s, err := f(t)
+	if err != nil {
+		d.setupErr[t.ID] = err.Error()
+		return
+	}
+	w := &worker{t: t, sender: s, log: d.log, wake: make(chan struct{}, 1), stop: make(chan struct{}), done: make(chan struct{})}
+	d.workers[t.ID] = w
+	go w.run()
 }
 
 func (d *Dispatcher) stopWorker(w *worker) {

@@ -8,6 +8,8 @@ import (
 	"net/url"
 	"strings"
 	"testing"
+
+	"github.com/Netsession-LAN/Netsession-Relay/internal/store"
 )
 
 func TestMonitoringPageTargets(t *testing.T) {
@@ -147,5 +149,24 @@ func TestSNMPTrapTarget(t *testing.T) {
 	}
 	if code, mib := get(t, admin, e.srv.URL+"/system/monitoring/mib"); code != 200 || !strings.HasPrefix(mib, "NETSESSION-RELAY-MIB DEFINITIONS") {
 		t.Errorf("mib download %d", code)
+	}
+}
+
+func TestUnconfirmedDelivery(t *testing.T) {
+	for _, c := range []struct {
+		kind   string
+		config map[string]any
+		want   bool
+	}{
+		{store.TargetSyslog, map[string]any{}, true}, // UDP is the default
+		{store.TargetSyslog, map[string]any{"transport": "udp"}, true},
+		{store.TargetSyslog, map[string]any{"transport": "tcp"}, false},
+		{store.TargetSNMPTrap, map[string]any{}, true},
+		{store.TargetSNMPTrap, map[string]any{"inform": true}, false},
+		{store.TargetOTLP, map[string]any{}, false},
+	} {
+		if got := unconfirmedDelivery(store.Target{Kind: c.kind, Config: c.config}); got != c.want {
+			t.Errorf("%s %v: %v, want %v", c.kind, c.config, got, c.want)
+		}
 	}
 }

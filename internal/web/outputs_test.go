@@ -2,6 +2,7 @@ package web
 
 import (
 	"context"
+	"errors"
 	"net"
 	"net/url"
 	"strings"
@@ -120,5 +121,46 @@ func TestOutputsSeveralTargets(t *testing.T) {
 	rep, _ := e.ui.monitorReport(ctx)
 	if rep.OutputsTotal != 2 || rep.OutputsFailing != 0 {
 		t.Errorf("report outputs %d/%d", rep.OutputsTotal, rep.OutputsFailing)
+	}
+}
+
+func TestAlarmTexts(t *testing.T) {
+	T := trFor(langDE)
+	for _, c := range []struct {
+		k      store.AlarmKey
+		detail string
+		want   string
+	}{
+		{store.AlarmKey{Kind: "loop", Key: "r1"}, "", "Schleife erkannt (r1)"},
+		{store.AlarmKey{Kind: "loop", Key: "r1"}, "über VLAN 1101", "Schleife erkannt: über VLAN 1101"},
+		{store.AlarmKey{Kind: "loop"}, "", "Schleife erkannt"},
+		{store.AlarmKey{Kind: alarmVLANSilent, Key: "1101"}, "x", "Netz schweigt: VLAN 1101 bekommt seit 10 Minuten keine Broadcasts"},
+	} {
+		if got := alarmOpenText(T, c.k, c.detail); got != c.want {
+			t.Errorf("alarmOpenText(%v, %q) = %q, want %q", c.k, c.detail, got, c.want)
+		}
+	}
+	if got := alarmClearText(T, store.AlarmKey{Kind: "loop", Key: "r1"}); got != "Schleife erkannt (r1) beendet: seit 5 Minuten ruhig oder als gesehen markiert" {
+		t.Errorf("clear text = %q", got)
+	}
+	if got := alarmClearText(T, watchEngineDownKey); got != "Engine antwortet nicht beendet: Engine antwortet wieder" {
+		t.Errorf("clear text of engine_down = %q", got)
+	}
+}
+
+func TestWatchEngineDownAlarms(t *testing.T) {
+	T := trFor(langDE)
+	other := store.AlarmKey{Kind: "loop", Key: "r1"}
+	open := map[store.AlarmKey]string{other: ""}
+	t0 := time.Date(2026, 11, 24, 12, 0, 0, 0, time.UTC)
+	var since time.Time
+	errTest := errors.New("down")
+	active := watchEngineDownAlarms(T, open, errTest, &since, t0)
+	if !since.Equal(t0) || len(active) != 1 || active[other] != "" {
+		t.Errorf("first failing round: since=%v active=%v", since, active)
+	}
+	active = watchEngineDownAlarms(T, open, errTest, &since, t0.Add(engineDownAfter))
+	if active[watchEngineDownKey] != "Engine antwortet nicht: down" || len(active) != 2 {
+		t.Errorf("after engineDownAfter: %v", active)
 	}
 }

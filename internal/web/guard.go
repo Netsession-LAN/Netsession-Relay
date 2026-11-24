@@ -48,39 +48,63 @@ func addrOf(cidr string) (netip.Addr, bool) {
 
 // relayAddrs computes the addresses the UI is not served on.
 func (s *Server) relayAddrs(ctx context.Context) map[netip.Addr]bool {
-	out := map[netip.Addr]bool{}
-	names := map[string]bool{}
-	if c, err := s.Store.ExportConfig(ctx); err == nil {
-		for _, v := range c.VLANs {
-			if a, err := netip.ParseAddr(v.RelayIP); err == nil {
-				out[a.Unmap()] = true
-			}
-			if v.Attach == compile.AttachDevice {
-				names[v.Device] = true
-			} else {
-				names[fmt.Sprintf("%s.%d", v.Parent, v.VID)] = true
-			}
-		}
-	}
+	out, names := s.configuredRelaySide(ctx)
 	ifs, err := s.hostIfaces()
 	if err != nil {
 		return out // not on Linux: the configured relay IPs are all that is known
 	}
-	for _, i := range ifs {
-		if (names[i.Name] || i.Relay) && !i.DefaultRoute && !i.Loopback {
-			for _, c := range i.Addrs {
-				if a, ok := addrOf(c); ok {
-					out[a] = true
-				}
-			}
+	relay := func(i netif.HostIface) bool { return guardRelayIface(i, names) }
+	for _, a := range guardAddrsWhere(ifs, relay) {
+		out[a] = true
+	}
+	for _, a := range guardAddrsWhere(ifs, guardMgmtIface) {
+		delete(out, a)
+	}
+	return out
+}
+
+// configuredRelaySide reads the configured networks: their relay IPs and the names of the interfaces they use.
+// An unreadable configuration gives two empty sets.
+func (s *Server) configuredRelaySide(ctx context.Context) (ips map[netip.Addr]bool, ifaceNames map[string]bool) {
+	ips, ifaceNames = map[netip.Addr]bool{}, map[string]bool{}
+	c, err := s.Store.ExportConfig(ctx)
+	if err != nil {
+		return ips, ifaceNames
+	}
+	for _, v := range c.VLANs {
+		if a, err := netip.ParseAddr(v.RelayIP); err == nil {
+			ips[a.Unmap()] = true
+		}
+		if v.Attach == compile.AttachDevice {
+			ifaceNames[v.Device] = true
+		} else {
+			ifaceNames[fmt.Sprintf("%s.%d", v.Parent, v.VID)] = true
 		}
 	}
+	return ips, ifaceNames
+}
+
+// guardMgmtIface reports whether an interface belongs to the management side (default route or loopback); its
+// addresses are never refused.
+func guardMgmtIface(i netif.HostIface) bool { return i.DefaultRoute || i.Loopback }
+
+// guardRelayIface reports whether an interface is on the relay side: used by a configured network or created by
+// the engine, and not on the management side.
+func guardRelayIface(i netif.HostIface, configured map[string]bool) bool {
+	return (configured[i.Name] || i.Relay) && !guardMgmtIface(i)
+}
+
+// guardAddrsWhere gives the parseable addresses (without prefix length) of the interfaces that match, in the
+// order of the interfaces.
+func guardAddrsWhere(ifs []netif.HostIface, match func(netif.HostIface) bool) []netip.Addr {
+	var out []netip.Addr
 	for _, i := range ifs {
-		if i.DefaultRoute || i.Loopback {
-			for _, c := range i.Addrs {
-				if a, ok := addrOf(c); ok {
-					delete(out, a)
-				}
+		if !match(i) {
+			continue
+		}
+		for _, c := range i.Addrs {
+			if a, ok := addrOf(c); ok {
+				out = append(out, a)
 			}
 		}
 	}
@@ -121,14 +145,9 @@ func (s *Server) mgmtAddr() netip.Addr {
 	if err != nil {
 		return netip.Addr{}
 	}
-	for _, i := range ifs {
-		if !i.DefaultRoute {
-			continue
-		}
-		for _, c := range i.Addrs {
-			if a, ok := addrOf(c); ok && a.Is4() {
-				return a
-			}
+	for _, a := range guardAddrsWhere(ifs, func(i netif.HostIface) bool { return i.DefaultRoute }) {
+		if a.Is4() {
+			return a
 		}
 	}
 	return netip.Addr{}

@@ -1,6 +1,7 @@
 package web
 
 import (
+	"cmp"
 	"context"
 	"encoding/json"
 	"errors"
@@ -27,36 +28,19 @@ func (s *Server) agentSave(w http.ResponseWriter, r *http.Request) {
 		back(w, r, "/system/monitoring#snmp", "", errors.New(T("Port bitte zwischen 1 und 65535 (Standard 161).")))
 		return
 	}
-	for _, p := range strings.FieldsFunc(v("allow"), func(c rune) bool { return c == ',' || c == ' ' || c == '\n' }) {
-		pfx, err := netip.ParsePrefix(p)
-		if err != nil {
-			ad, err := netip.ParseAddr(p)
-			if err != nil {
-				back(w, r, "/system/monitoring", "", errors.New(T("Erlaubte Absender: %q ist keine Adresse oder kein Netz.", p)))
-				return
-			}
-			pfx = netip.PrefixFrom(ad, ad.BitLen())
-		}
-		a.Allow = append(a.Allow, pfx.String())
+	allow, bad := parseAgentAllow(v("allow"))
+	if bad != "" {
+		back(w, r, "/system/monitoring", "", errors.New(T("Erlaubte Absender: %q ist keine Adresse oder kein Netz.", bad)))
+		return
 	}
-	sec := curSec
-	if x := r.PostFormValue("community"); x != "" {
-		sec.Community = x
-	}
-	if x := r.PostFormValue("auth_pass"); x != "" {
-		sec.AuthPass = x
-	}
-	if x := r.PostFormValue("priv_pass"); x != "" {
-		sec.PrivPass = x
-	}
-	if a.Enabled {
-		// the address is a placeholder: only the options are checked here, the agent picks its address itself
-		c := snmp.AgentConfig{Listen: "192.0.2.1:" + strconv.Itoa(a.Port), V2c: a.V2c, Community: sec.Community, V3User: a.User,
-			AuthProto: a.AuthProto, AuthPass: sec.AuthPass, PrivProto: a.PrivProto, PrivPass: sec.PrivPass}
-		if err := snmp.ValidateAgent(c); err != nil {
-			back(w, r, "/system/monitoring", "", errors.New(agentConfigError(T, err)))
-			return
-		}
+	a.Allow = allow
+	sec := curSec // a secret left empty in the form stays as it is
+	sec.Community = cmp.Or(r.PostFormValue("community"), sec.Community)
+	sec.AuthPass = cmp.Or(r.PostFormValue("auth_pass"), sec.AuthPass)
+	sec.PrivPass = cmp.Or(r.PostFormValue("priv_pass"), sec.PrivPass)
+	if err := validateAgentSettings(a, sec); err != nil {
+		back(w, r, "/system/monitoring", "", errors.New(agentConfigError(T, err)))
+		return
 	}
 	if err := s.Outputs.SaveAgentSettings(ctx, a, sec); err != nil {
 		back(w, r, "/system/monitoring", "", s.internal(r, "SNMP agent: store the settings", err))
@@ -76,6 +60,35 @@ func (s *Server) agentSave(w http.ResponseWriter, r *http.Request) {
 	default:
 		back(w, r, "/system/monitoring", T("SNMP-Agent ist aus."), nil)
 	}
+}
+
+// parseAgentAllow reads the allowed senders (addresses or networks, separated by commas, blanks or lines) as
+// networks. bad is the first entry that is neither, "" when all are fine.
+func parseAgentAllow(text string) (allow []string, bad string) {
+	for _, p := range strings.FieldsFunc(text, func(c rune) bool { return c == ',' || c == ' ' || c == '\n' }) {
+		pfx, err := netip.ParsePrefix(p)
+		if err != nil {
+			ad, err := netip.ParseAddr(p)
+			if err != nil {
+				return nil, p
+			}
+			pfx = netip.PrefixFrom(ad, ad.BitLen())
+		}
+		allow = append(allow, pfx.String())
+	}
+	return allow, ""
+}
+
+// validateAgentSettings checks the options of a switched-on agent with the secrets that will be in effect (a
+// switched-off agent is not checked). The address is a placeholder: only the options are checked here, the
+// agent picks its address itself.
+func validateAgentSettings(a outputs.AgentSettings, sec outputs.AgentSecret) error {
+	if !a.Enabled {
+		return nil
+	}
+	c := snmp.AgentConfig{Listen: "192.0.2.1:" + strconv.Itoa(a.Port), V2c: a.V2c, Community: sec.Community, V3User: a.User,
+		AuthProto: a.AuthProto, AuthPass: sec.AuthPass, PrivProto: a.PrivProto, PrivPass: sec.PrivPass}
+	return snmp.ValidateAgent(c)
 }
 
 // agentConfigError puts a validation error of the agent settings into words.

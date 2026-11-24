@@ -545,98 +545,122 @@
   }
 
   function apply(v) {
-    // plain values: text of every [data-live="path"]
+    liveValues(v);
+    liveState(v);
+    liveVLANs(v.vlans);
+    var rule = ruleCounters(v.rules);
+    if (games) liveGames(v.enabled, rule);
+    liveGameSwitch(v.enabled);
+    alarms(v.alarms);
+    seen(v.seen);
+    all("tbody[data-rows]").forEach(function (tb) { rowsOf(tb, v[tb.dataset.rows] || []); });
+    liveDiagnosis(v, rule);
+  }
+  // plain values: text of every [data-live="path"]
+  function liveValues(v) {
     all("[data-live]").forEach(function (e) {
       if (e.dataset.live === "games_on" && games) return; // counted from the rows
       var val = get(v, e.dataset.live);
       if (val == null) return;
       setText(e, typeof val === "number" ? num(val) : String(val));
     });
-    // operating state: tone, icon, what is offered
-    all("[data-tone-live]").forEach(function (e) { e.dataset.tone = v.state.tone; });
+  }
+  // operating state: tone, icon, what is offered
+  function liveState(v) {
+    var s = v.state;
+    all("[data-tone-live]").forEach(function (e) { e.dataset.tone = s.tone; });
     all("[data-icon-live] use").forEach(function (u) {
-      var href = "/static/icons.svg#i-" + v.state.icon;
+      var href = "/static/icons.svg#i-" + s.icon;
       if (u.getAttribute("href") !== href) u.setAttribute("href", href);
     });
-    all("[data-when]").forEach(function (e) { e.hidden = e.dataset.when.split(" ").indexOf(v.state.key) < 0; });
-    stopLinks.forEach(function (l) { l.hidden = !v.state.can_stop; });
-    resumeLinks.forEach(function (l) { l.hidden = v.state.key !== "paused"; });
+    all("[data-when]").forEach(function (e) { e.hidden = e.dataset.when.split(" ").indexOf(s.key) < 0; });
+    stopLinks.forEach(function (l) { l.hidden = !s.can_stop; });
+    resumeLinks.forEach(function (l) { l.hidden = s.key !== "paused"; });
     if ($("needs-apply")) $("needs-apply").hidden = !v.needs_apply;
-    if (lastState && lastState !== v.state.key) announce(t("Betriebsart jetzt: %s. %s.", v.state.label, v.state.headline));
-    lastState = v.state.key;
-
-    // VLAN tiles and rows
+    if (lastState && lastState !== s.key) announce(t("Betriebsart jetzt: %s. %s.", s.label, s.headline));
+    lastState = s.key;
+  }
+  // VLAN tiles and rows; the bars are relative to the busiest VLAN (at least 10 frames/s)
+  function liveVLANs(vlans) {
     var max = 10;
-    v.vlans.forEach(function (x) { if (x.in_per_s > max) max = x.in_per_s; });
-    v.vlans.forEach(function (x) {
-      all('[data-vlan="' + x.vid + '"]').forEach(function (el) {
-        if (el.dataset.status !== x.status) el.dataset.status = x.status;
-        setText(el.querySelector('[data-f="rate"]'), num(x.in_per_s));
-        setText(el.querySelector('[data-f="label"]'), x.label);
-        var link = el.querySelector("a.tile-link");
-        if (link) {
-          var href = x.alarm_kind ? "#alarm-" + x.alarm_kind : link.dataset.href;
-          if (link.getAttribute("href") !== href) link.setAttribute("href", href);
-        }
-        setText(el.querySelector('[data-f="in"]'), num(x.in));
-        setText(el.querySelector('[data-f="out"]'), num(x.out));
-        var bar = el.querySelector(".tile-track i");
-        if (bar) bar.style.width = Math.round(100 * x.in_per_s / max) + "%";
-      });
+    vlans.forEach(function (x) { if (x.in_per_s > max) max = x.in_per_s; });
+    vlans.forEach(function (x) {
+      all('[data-vlan="' + x.vid + '"]').forEach(function (box) { liveVLAN(box, x, max); });
     });
-
-    // rule counters (game page) and per-game counters (games list)
+  }
+  function liveVLAN(box, x, max) {
+    if (box.dataset.status !== x.status) box.dataset.status = x.status;
+    setText(box.querySelector('[data-f="rate"]'), num(x.in_per_s));
+    setText(box.querySelector('[data-f="label"]'), x.label);
+    var link = box.querySelector("a.tile-link");
+    if (link) {
+      var href = x.alarm_kind ? "#alarm-" + x.alarm_kind : link.dataset.href;
+      if (link.getAttribute("href") !== href) link.setAttribute("href", href);
+    }
+    setText(box.querySelector('[data-f="in"]'), num(x.in));
+    setText(box.querySelector('[data-f="out"]'), num(x.out));
+    var bar = box.querySelector(".tile-track i");
+    if (bar) bar.style.width = Math.round(100 * x.in_per_s / max) + "%";
+  }
+  // rule counters (game page); returns the rules by ID
+  function ruleCounters(rules) {
     var rule = {};
-    v.rules.forEach(function (r) { rule[r.id] = r; });
+    rules.forEach(function (r) { rule[r.id] = r; });
     all("[data-rule]").forEach(function (tr) {
       var r = rule[tr.dataset.rule] || { rx: 0, relayed: 0 };
       setText(tr.querySelector('[data-f="rx"]'), num(r.rx));
       setText(tr.querySelector('[data-f="relayed"]'), num(r.relayed));
     });
-    if (games) {
-      var enabled = {};
-      v.enabled.forEach(function (id) { enabled[id] = true; });
-      var changed = false;
-      all(".grow[data-rules]", games).forEach(function (row) {
-        var sum = 0;
-        row.dataset.rules.split(" ").forEach(function (id) { if (rule[id]) sum += rule[id].rx; });
-        var before = prev["g:" + row.dataset.id];
-        row.classList.toggle("hot", before !== undefined && sum > before);
-        prev["g:" + row.dataset.id] = sum;
-        setText(row.querySelector('[data-f="rx"]'), num(sum));
-        // someone else switched a game: follow, unless this switch is just being used
-        var on = !!enabled[row.dataset.id], f = row.querySelector("form.toggle-form");
-        if ((row.dataset.on === "1") !== on && !(f && f.querySelector(".busy"))) {
-          if (f) setSwitch(f, on); else { row.dataset.on = on ? "1" : "0"; setText(row.querySelector("[data-onoff]"), on ? t("An") : t("Aus")); }
-          changed = true;
-        }
-      });
-      if (changed) doc.dispatchEvent(new Event("relay:changed"));
-    }
+    return rule;
+  }
+  function sumRX(ids, rule) {
+    var sum = 0;
+    ids.split(" ").forEach(function (id) { if (rule[id]) sum += rule[id].rx; });
+    return sum;
+  }
+  // per-game counters (games list) and games someone else switched
+  function liveGames(enabledIDs, rule) {
+    var enabled = {}, changed = false;
+    enabledIDs.forEach(function (id) { enabled[id] = true; });
+    all(".grow[data-rules]", games).forEach(function (row) {
+      var sum = sumRX(row.dataset.rules, rule), before = prev["g:" + row.dataset.id];
+      row.classList.toggle("hot", before !== undefined && sum > before);
+      prev["g:" + row.dataset.id] = sum;
+      setText(row.querySelector('[data-f="rx"]'), num(sum));
+      if (followSwitch(row, !!enabled[row.dataset.id])) changed = true;
+    });
+    if (changed) doc.dispatchEvent(new Event("relay:changed"));
+  }
+  // someone else switched the game of a row: follow, unless this switch is just being used. True if it changed.
+  function followSwitch(row, on) {
+    var f = row.querySelector("form.toggle-form");
+    if ((row.dataset.on === "1") === on || (f && f.querySelector(".busy"))) return false;
+    if (f) setSwitch(f, on);
+    else { row.dataset.on = on ? "1" : "0"; setText(row.querySelector("[data-onoff]"), on ? t("An") : t("Aus")); }
+    return true;
+  }
+  // the switch of a single game's page
+  function liveGameSwitch(enabledIDs) {
     var single = doc.querySelector("[data-game-switch]");
-    if (single) {
-      var isOn = v.enabled.indexOf(single.dataset.id) >= 0, sf = single.querySelector("form.toggle-form");
-      if (sf && !sf.querySelector(".busy") && (sf.querySelector(".switch").getAttribute("aria-checked") === "true") !== isOn) setSwitch(sf, isOn);
-      if (!sf) setText(single.querySelector("[data-onoff]"), isOn ? t("An") : t("Aus"));
-    }
-
-    alarms(v.alarms);
-    seen(v.seen);
-    all("tbody[data-rows]").forEach(function (tb) { rowsOf(tb, v[tb.dataset.rows] || []); });
-
-    // diagnosis: fetch the server-rendered fragment again when something relevant flipped
+    if (!single) return;
+    var isOn = enabledIDs.indexOf(single.dataset.id) >= 0, sf = single.querySelector("form.toggle-form");
+    if (!sf) { setText(single.querySelector("[data-onoff]"), isOn ? t("An") : t("Aus")); return; }
+    var shown = sf.querySelector(".switch").getAttribute("aria-checked") === "true";
+    if (!sf.querySelector(".busy") && shown !== isOn) setSwitch(sf, isOn);
+  }
+  // diagnosis: fetch the server-rendered fragment again when something relevant flipped
+  function liveDiagnosis(v, rule) {
     var diag = $("diagnose");
-    if (diag) {
-      var rx = 0, tx = 0;
-      diag.dataset.rules.split(" ").forEach(function (id) { if (rule[id]) { rx += rule[id].rx; tx += rule[id].relayed; } });
-      var sig = [v.state.key, v.enabled.indexOf(diag.dataset.id) >= 0, rx > 0, tx > 0, v.hash].join("|");
-      if (prev.diag !== undefined && prev.diag !== sig) {
-        fetch(diag.dataset.fragment, { credentials: "same-origin" }).then(function (r) { return r.ok ? r.text() : null; }).then(function (html) {
-          if (html) diag.innerHTML = html; // same-origin, rendered and escaped by the server template
-        }).catch(function () {});
-      }
-      prev.diag = sig;
+    if (!diag) return;
+    var rx = 0, tx = 0;
+    diag.dataset.rules.split(" ").forEach(function (id) { if (rule[id]) { rx += rule[id].rx; tx += rule[id].relayed; } });
+    var sig = [v.state.key, v.enabled.indexOf(diag.dataset.id) >= 0, rx > 0, tx > 0, v.hash].join("|");
+    if (prev.diag !== undefined && prev.diag !== sig) {
+      fetch(diag.dataset.fragment, { credentials: "same-origin" }).then(function (r) { return r.ok ? r.text() : null; }).then(function (html) {
+        if (html) diag.innerHTML = html; // same-origin, rendered and escaped by the server template
+      }).catch(function () {});
     }
+    prev.diag = sig;
   }
 
   function setLive(state) {

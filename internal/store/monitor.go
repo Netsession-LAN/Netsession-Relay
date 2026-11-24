@@ -104,18 +104,8 @@ func auditTarget(t Target) string {
 // UI never has to show them.
 func (s *Store) SaveTarget(ctx context.Context, user string, t Target) (int64, error) {
 	t.Name, t.Endpoint = strings.TrimSpace(t.Name), strings.TrimSpace(t.Endpoint)
-	switch {
-	case !slices.Contains([]string{TargetSyslog, TargetOTLP, TargetSNMPTrap}, t.Kind):
-		return 0, fmt.Errorf("%w: kind %q", ErrInvalid, t.Kind)
-	case t.Name == "" || len(t.Name) > 60:
-		return 0, fmt.Errorf("%w: name", ErrInvalid)
-	case t.Endpoint == "" || len(t.Endpoint) > 300:
-		return 0, fmt.Errorf("%w: endpoint", ErrInvalid)
-	}
-	for _, e := range t.Events {
-		if e != "alarm" && e != "audit" {
-			return 0, fmt.Errorf("%w: event %q", ErrInvalid, e)
-		}
+	if err := checkTarget(t); err != nil {
+		return 0, err
 	}
 	var before Target
 	if t.ID != 0 {
@@ -131,33 +121,17 @@ func (s *Store) SaveTarget(ctx context.Context, user string, t Target) (int64, e
 	if t.Secret == nil {
 		t.Secret = map[string]string{}
 	}
-	cfg, _ := json.Marshal(t.Config)
-	sec, _ := json.Marshal(t.Secret)
-	events := strings.Join(t.Events, ",")
-	now := s.ts()
+	row := targetRowOf(t, s.ts())
 	id := t.ID
 	err := s.audited(ctx, func(tx *sql.Tx) (AuditEntry, error) {
 		e := AuditEntry{User: user, Action: "monitor.target.update", Object: t.Name, Before: auditTarget(before), After: auditTarget(t)}
 		if t.ID != 0 {
-			_, err := tx.ExecContext(ctx, `UPDATE monitor_target SET kind=?, name=?, enabled=?, endpoint=?, events=?, config=?, secret=?, updated_ts=? WHERE id=?`,
-				t.Kind, t.Name, t.Enabled, t.Endpoint, events, string(cfg), string(sec), now, t.ID)
-			return e, err
+			return e, row.update(ctx, tx, t.ID)
 		}
 		e.Action, e.Before = "monitor.target.create", ""
-		var n int
-		if err := tx.QueryRowContext(ctx, `SELECT count(*) FROM monitor_target`).Scan(&n); err != nil {
-			return e, err
-		}
-		if n >= MaxTargets {
-			return e, ErrTooManyTargets
-		}
-		res, err := tx.ExecContext(ctx, `INSERT INTO monitor_target(kind, name, enabled, endpoint, events, config, secret, created_ts, updated_ts)
-			VALUES (?,?,?,?,?,?,?,?,?)`, t.Kind, t.Name, t.Enabled, t.Endpoint, events, string(cfg), string(sec), now, now)
-		if err != nil {
-			return e, err
-		}
-		id, _ = res.LastInsertId()
-		return e, nil
+		var err error
+		id, err = row.insert(ctx, tx)
+		return e, err
 	})
 	if isUniqueViolation(err) {
 		return 0, fmt.Errorf("%w: target %q", ErrExists, t.Name)
@@ -165,6 +139,63 @@ func (s *Store) SaveTarget(ctx context.Context, user string, t Target) (int64, e
 	if err != nil {
 		return 0, err
 	}
+	return id, nil
+}
+
+// checkTarget refuses an unknown kind, a missing or overlong name or endpoint and unknown event types.
+func checkTarget(t Target) error {
+	switch {
+	case !slices.Contains([]string{TargetSyslog, TargetOTLP, TargetSNMPTrap}, t.Kind):
+		return fmt.Errorf("%w: kind %q", ErrInvalid, t.Kind)
+	case t.Name == "" || len(t.Name) > 60:
+		return fmt.Errorf("%w: name", ErrInvalid)
+	case t.Endpoint == "" || len(t.Endpoint) > 300:
+		return fmt.Errorf("%w: endpoint", ErrInvalid)
+	}
+	for _, e := range t.Events {
+		if e != "alarm" && e != "audit" {
+			return fmt.Errorf("%w: event %q", ErrInvalid, e)
+		}
+	}
+	return nil
+}
+
+// targetRow is a target as the monitor_target table stores it.
+type targetRow struct {
+	t                   Target
+	events, cfg, secret string
+	now                 string
+}
+
+func targetRowOf(t Target, now string) targetRow {
+	cfg, _ := json.Marshal(t.Config)
+	sec, _ := json.Marshal(t.Secret)
+	return targetRow{t: t, events: strings.Join(t.Events, ","), cfg: string(cfg), secret: string(sec), now: now}
+}
+
+func (r targetRow) update(ctx context.Context, tx *sql.Tx, id int64) error {
+	t := r.t
+	_, err := tx.ExecContext(ctx, `UPDATE monitor_target SET kind=?, name=?, enabled=?, endpoint=?, events=?, config=?, secret=?, updated_ts=? WHERE id=?`,
+		t.Kind, t.Name, t.Enabled, t.Endpoint, r.events, r.cfg, r.secret, r.now, id)
+	return err
+}
+
+// insert adds the target as a new row, unless MaxTargets targets exist already.
+func (r targetRow) insert(ctx context.Context, tx *sql.Tx) (int64, error) {
+	var n int
+	if err := tx.QueryRowContext(ctx, `SELECT count(*) FROM monitor_target`).Scan(&n); err != nil {
+		return 0, err
+	}
+	if n >= MaxTargets {
+		return 0, ErrTooManyTargets
+	}
+	t := r.t
+	res, err := tx.ExecContext(ctx, `INSERT INTO monitor_target(kind, name, enabled, endpoint, events, config, secret, created_ts, updated_ts)
+			VALUES (?,?,?,?,?,?,?,?,?)`, t.Kind, t.Name, t.Enabled, t.Endpoint, r.events, r.cfg, r.secret, r.now, r.now)
+	if err != nil {
+		return 0, err
+	}
+	id, _ := res.LastInsertId()
 	return id, nil
 }
 

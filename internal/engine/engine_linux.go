@@ -4,17 +4,13 @@ package engine
 
 import (
 	"context"
-	"encoding/binary"
 	"errors"
 	"fmt"
-	"io"
 	"log/slog"
 	"net"
-	"net/netip"
 	"os"
 	"os/signal"
 	"path/filepath"
-	"sort"
 	"sync"
 	"sync/atomic"
 	"syscall"
@@ -24,32 +20,9 @@ import (
 	"github.com/Netsession-LAN/Netsession-Relay/internal/engineapi"
 	"github.com/Netsession-LAN/Netsession-Relay/internal/hostprep"
 	"github.com/Netsession-LAN/Netsession-Relay/internal/netif"
-	"github.com/Netsession-LAN/Netsession-Relay/internal/pkt"
 )
 
 const readTimeout = 500 * time.Millisecond
-
-// receiver owns one packet socket and its goroutine.
-type receiver struct {
-	sock *packetSock
-	vid  atomic.Int32 // VLAN ID of the interface; apply may change it while the goroutine reads it
-	stop atomic.Bool
-	done chan struct{}
-}
-
-func newReceiver(sock *packetSock, vid int) *receiver {
-	r := &receiver{sock: sock, done: make(chan struct{})}
-	r.vid.Store(int32(vid))
-	return r
-}
-
-// halt stops the receive goroutine, waits for it and closes the socket. Other receivers may still hold the
-// state from before the swap and send to this socket for a moment: packetSock refuses writes after close.
-func (r *receiver) halt() {
-	r.stop.Store(true)
-	<-r.done
-	r.sock.close()
-}
 
 // state is swapped atomically on every snapshot change.
 type state struct {
@@ -101,6 +74,17 @@ func (e *Engine) Guard() *Guard { return e.guard }
 // Run loads the snapshot, sets up interfaces and sockets and relays until ctx is cancelled.
 // SIGHUP reloads the snapshot file.
 func (e *Engine) Run(ctx context.Context) error {
+	e.init()
+	e.loadBeaconKey()
+	e.logIfacePolicy()
+	if err := e.loadStored(); err != nil {
+		return err
+	}
+	e.serveAPI(ctx)
+	return e.loop(ctx)
+}
+
+func (e *Engine) init() {
 	if e.Log == nil {
 		e.Log = slog.Default()
 	}
@@ -109,20 +93,31 @@ func (e *Engine) Run(ctx context.Context) error {
 	e.mcast = newMemberships()
 	e.alarmLog = map[string]time.Time{}
 	e.started = time.Now()
+}
+
+// loadBeaconKey gives the guard the key that signs the beacons; without one the relay runs with unsigned beacons.
+func (e *Engine) loadBeaconKey() {
 	key, src, err := LoadBeaconKey(e.BeaconKey, filepath.Join(filepath.Dir(e.Path), "beacon.key"))
 	if err != nil {
 		e.Log.Warn("relay beacons are NOT signed: no key (set NSRELAY_BEACON_KEY or make the state directory writable); "+
 			"a forged beacon can put this relay into standby", "err", err)
-	} else {
-		e.guard.SetBeaconKey(key)
-		e.beaconAuth = src
-		e.Log.Info("relay beacons are signed", "key_from", src)
+		return
 	}
+	e.guard.SetBeaconKey(key)
+	e.beaconAuth = src
+	e.Log.Info("relay beacons are signed", "key_from", src)
+}
+
+func (e *Engine) logIfacePolicy() {
 	if len(e.AllowedIfaces) > 0 {
 		e.Log.Info("interfaces limited to NSRELAY_ALLOWED_IFACES", "allowed", e.AllowedIfaces)
-	} else {
-		e.Log.Info("NSRELAY_ALLOWED_IFACES not set: every interface a snapshot names is used, except the ones carrying the default route")
+		return
 	}
+	e.Log.Info("NSRELAY_ALLOWED_IFACES not set: every interface a snapshot names is used, except the ones carrying the default route")
+}
+
+// loadStored applies the stored snapshot. A missing or refused one leaves the engine idle but running.
+func (e *Engine) loadStored() error {
 	switch err := e.Reload(); {
 	case errors.Is(err, os.ErrNotExist):
 		e.Log.Warn("no snapshot yet, waiting for apply via the engine API", "path", e.Path)
@@ -132,14 +127,23 @@ func (e *Engine) Run(ctx context.Context) error {
 	case err != nil:
 		return err
 	}
-	if e.Socket != "" {
-		go func() {
-			if err := engineapi.Serve(ctx, e.Socket, e.SocketGID, e); err != nil {
-				e.Log.Error("engine API stopped", "socket", e.Socket, "err", err)
-			}
-		}()
-		e.Log.Info("engine API listening", "socket", e.Socket)
+	return nil
+}
+
+func (e *Engine) serveAPI(ctx context.Context) {
+	if e.Socket == "" {
+		return
 	}
+	go func() {
+		if err := engineapi.Serve(ctx, e.Socket, e.SocketGID, e); err != nil {
+			e.Log.Error("engine API stopped", "socket", e.Socket, "err", err)
+		}
+	}()
+	e.Log.Info("engine API listening", "socket", e.Socket)
+}
+
+// loop runs the timers and SIGHUP reloads until ctx is cancelled.
+func (e *Engine) loop(ctx context.Context) error {
 	hup := make(chan os.Signal, 1)
 	signal.Notify(hup, syscall.SIGHUP)
 	defer signal.Stop(hup)
@@ -221,467 +225,6 @@ func (e *Engine) Apply(s *compile.Snapshot) error {
 	return compile.WriteSnapshotFile(e.Path, s)
 }
 
-// Players lists recent discovery senders (engine API).
-func (e *Engine) Players() []engineapi.Player {
-	list := e.guard.Players.List()
-	out := append(make([]engineapi.Player, 0, len(list)+16), list...)
-	for _, s := range e.guard.Probe.Servers() {
-		out = append(out, engineapi.Player{Rule: s.Rule, Src: s.Src, VID: s.VID, First: s.First, Last: s.Last, Count: s.Count,
-			Server: true, Port: s.Port, Name: s.Name, Map: s.Map, Game: s.Game, Num: s.Num, Max: s.Max})
-	}
-	return out
-}
-
-// ProbeNow runs one server probe round right away (engine API, admin probe).
-func (e *Engine) ProbeNow() {
-	if st := e.st.Load(); st != nil {
-		e.probe(st)
-	}
-}
-
-// Ack acknowledges all alarms of a kind (engine API).
-func (e *Engine) Ack(kind, by string) int {
-	n := e.guard.Alarms.Ack(kind, by, time.Now())
-	e.Log.Info("alarm acknowledged", "kind", kind, "by", by, "alarms", n)
-	return n
-}
-
-// FinderStart starts a port finder session (engine API).
-func (e *Engine) FinderStart(req engineapi.FinderStart) error {
-	fr := FinderRequest{VIDs: req.VIDs, Duration: time.Duration(req.Seconds) * time.Second}
-	if req.Src != "" {
-		a, err := netip.ParseAddr(req.Src)
-		if err != nil || !a.Is4() {
-			return fmt.Errorf("bad sender address %q", req.Src)
-		}
-		fr.Src = a
-	}
-	var have []int
-	if st := e.st.Load(); st != nil {
-		for _, v := range st.table.Snapshot.VLANs {
-			have = append(have, v.VID)
-		}
-	}
-	if err := CheckFinderVIDs(req.VIDs, have); err != nil {
-		return err
-	}
-	if err := e.guard.Finder.Start(fr, time.Now()); err != nil {
-		return err
-	}
-	e.Log.Info("port finder started", "vids", req.VIDs, "src", req.Src, "seconds", req.Seconds)
-	return nil
-}
-
-// FinderStop ends the port finder session (engine API).
-func (e *Engine) FinderStop() {
-	e.guard.Finder.Stop(time.Now())
-	e.Log.Info("port finder stopped")
-}
-
-// Finder reports the port finder state (engine API).
-func (e *Engine) Finder() engineapi.FinderStatus {
-	return FinderAPI(e.guard.Finder.Status(time.Now()))
-}
-
-// FinderPcap writes the capture of the last session (engine API).
-func (e *Engine) FinderPcap(w io.Writer) error { return e.guard.Finder.WritePcap(w) }
-
-// Status reports the engine state (engine API).
-func (e *Engine) Status() engineapi.Status {
-	st := engineapi.Status{Version: e.Version, Started: e.started, Standby: e.guard.Standby(),
-		RX: e.Counters.RX.Load(), Sent: e.Counters.Sent.Load(),
-		Reasons: e.Counters.ReasonCounts(), BeaconAuth: e.beaconAuth, IfacePolicy: "auto"}
-	if is := e.hostIssues.Load(); is != nil {
-		for _, x := range *is {
-			st.HostIssues = append(st.HostIssues, engineapi.HostIssue{Code: x.Code, Detail: x.Detail})
-			st.SelfTest = append(st.SelfTest, x.Code+": "+x.Detail)
-		}
-	}
-	if len(e.AllowedIfaces) > 0 {
-		st.IfacePolicy = "list"
-	}
-	if cur := e.st.Load(); cur != nil {
-		snap := cur.table.Snapshot
-		st.Mode, st.SnapshotHash, st.VLANs, st.Rules = snap.Mode, snap.Hash, len(snap.VLANs), len(snap.Rules)
-		st.Sending = e.guard.Sending(time.Now()) && snap.Mode == compile.ModeActive
-		for _, r := range cur.table.RuleStats() {
-			st.RuleStats = append(st.RuleStats, engineapi.RuleStat{ID: r.ID, RX: r.RX, Relayed: r.Relayed})
-		}
-		rs := e.rates.Load()
-		for _, v := range cur.table.VLANs {
-			vs := engineapi.VLANStat{VID: v.VID, Name: v.Name, Group: v.Group, Interface: netif.LinkName(v.VLAN),
-				In: e.Counters.VLANIn[v.VID].Load(), Out: e.Counters.VLANOut[v.VID].Load()}
-			if rs != nil {
-				vs.InRate, vs.LastIn = rs.vlanRate[v.VID], rs.lastIn[v.VID]
-			}
-			st.VLANStats = append(st.VLANStats, vs)
-		}
-		if rs != nil {
-			st.RXRate, st.SentRate = rs.rxRate, rs.sentRate
-		}
-	}
-	for _, a := range e.guard.Alarms.List() {
-		st.Alarms = append(st.Alarms, engineapi.Alarm(a))
-	}
-	st.TopUnknown = topUnknown(&e.Counters, 10)
-	return st
-}
-
-func topUnknown(c *Counters, n int) []engineapi.PortCount {
-	var out []engineapi.PortCount
-	for p := range c.UnknownPorts {
-		if v := c.UnknownPorts[p].Load(); v > 0 {
-			out = append(out, engineapi.PortCount{Port: uint16(p), Count: v})
-		}
-	}
-	sort.Slice(out, func(i, j int) bool { return out[i].Count > out[j].Count })
-	if len(out) > n {
-		out = out[:n]
-	}
-	return out
-}
-
-// apply sets up interfaces and sockets for the snapshot and swaps the lookup table. VLANs that stay are not
-// interrupted; removed VLANs lose their receiver and engine-created interface.
-func (e *Engine) apply(s *compile.Snapshot) error {
-	e.mu.Lock()
-	defer e.mu.Unlock()
-
-	if err := e.checkIfaces(s); err != nil { // also for the stored snapshot at start and on SIGHUP
-		return err
-	}
-	macs := map[int]pkt.MAC{}
-	links := map[int]netif.Link{}
-	keep := map[string]bool{}
-	for _, v := range s.VLANs {
-		l, err := netif.Ensure(v)
-		if err != nil {
-			return err
-		}
-		links[v.VID] = l
-		macs[v.VID] = l.MAC
-		keep[l.Name] = true
-	}
-	tb, err := NewTable(s, macs)
-	if err != nil {
-		return err
-	}
-	// The interfaces exist now: shield them before anything is received or sent on them (no routing, host
-	// firewall, management routes). What cannot be done is reported, the relay works without it.
-	issues := hostprep.Apply(s)
-	e.hostIssues.Store(&issues)
-	for _, is := range issues {
-		e.Log.Warn("host preparation incomplete (optional by hand: deploy/host/setup.sh)", "what", is.Code, "detail", is.Detail)
-	}
-	if len(issues) == 0 {
-		e.Log.Info("host prepared: relay interfaces do not route, host firewall and management routes are in place")
-	}
-	for _, c := range tb.Clamped {
-		e.Log.Warn("snapshot limit outside the engine's bounds, corrected", "limit", c)
-	}
-	for i := range tb.VLANs {
-		tb.VLANs[i].Ifindex = links[tb.VLANs[i].VID].Index
-	}
-	// open sockets for new interfaces; their receivers start only after the new state is in place
-	var starting []*receiver
-	// replaced holds receivers whose interface was recreated under the same name (new ifindex): their socket is
-	// bound to the interface that is gone, so they are stopped once the new state is in place.
-	var replaced []*receiver
-	for _, v := range s.VLANs {
-		l := links[v.VID]
-		old, exists := e.receivers[l.Name]
-		if exists && old.sock.ifindex == l.Index {
-			old.vid.Store(int32(v.VID))
-			continue
-		}
-		sock, err := openPacketSock(l.Name, l.Index, readTimeout)
-		if err != nil {
-			for _, r := range starting { // not started yet: just close
-				r.sock.close()
-				delete(e.receivers, r.sock.name)
-			}
-			for _, r := range replaced { // still running and still part of the current state: keep them
-				e.receivers[r.sock.name] = r
-			}
-			return err
-		}
-		if exists {
-			replaced = append(replaced, old)
-		}
-		r := newReceiver(sock, v.VID)
-		e.receivers[l.Name] = r
-		starting = append(starting, r)
-	}
-	st := &state{table: tb, out: make([]*packetSock, len(tb.VLANs)), index: map[*packetSock]int{}}
-	for i, v := range tb.VLANs {
-		r := e.receivers[links[v.VID].Name]
-		st.out[i] = r.sock
-		st.index[r.sock] = i
-	}
-	e.guard.SetPorts(s)
-	old := e.st.Swap(st)
-	keepProbe := map[string]bool{}
-	for _, r := range s.Rules {
-		if r.Probe && s.Probe {
-			keepProbe[r.ID] = true
-		}
-	}
-	e.guard.Probe.Forget(keepProbe)
-	for _, r := range starting {
-		e.wg.Add(1)
-		go e.receive(r)
-	}
-	if err := e.mcast.sync(tb); err != nil {
-		e.Log.Warn("multicast membership", "err", err)
-	}
-	// stop receivers of removed and of recreated interfaces (after the swap, so nothing sends to them any more)
-	for _, r := range replaced {
-		r.halt()
-	}
-	for name, r := range e.receivers {
-		if !keep[name] {
-			r.halt()
-			delete(e.receivers, name)
-		}
-	}
-	deleted, err := netif.Cleanup(keep)
-	if err != nil {
-		e.Log.Warn("interface cleanup", "err", err)
-	}
-	oldHash := ""
-	if old != nil {
-		oldHash = old.table.Snapshot.Hash
-	}
-	e.Log.Info("snapshot applied", "hash", short(s.Hash), "previous", short(oldHash), "mode", s.Mode,
-		"vlans", len(s.VLANs), "rules", len(s.Rules), "removed_links", deleted)
-	return nil
-}
-
-func (e *Engine) receive(r *receiver) {
-	defer e.wg.Done()
-	defer close(r.done)
-	buf := make([]byte, 2048)
-	p := NewProcessor(&e.Counters, e.guard)
-	for !r.stop.Load() {
-		n, ok, err := r.sock.read(buf)
-		if err != nil {
-			if !r.stop.Load() {
-				e.Log.Error("receive", "if", r.sock.name, "err", err)
-				time.Sleep(time.Second)
-			}
-			continue
-		}
-		if !ok {
-			continue
-		}
-		if n >= pkt.EthHeaderLen && binary.BigEndian.Uint16(buf[ethOffType:]) == BeaconEtherType {
-			if e.guard.SeeFrame(buf[:n], int(r.vid.Load()), time.Now()) {
-				e.Log.Warn("dual-active guard: another active relay started earlier, going to STANDBY", "if", r.sock.name)
-			}
-			continue
-		}
-		// A receiver can run before any state exists, and a network with constant broadcasts delivers a frame
-		// in exactly that moment: such a frame is skipped.
-		st := e.st.Load()
-		if st == nil {
-			continue
-		}
-		in, known := st.index[r.sock]
-		if !known {
-			continue
-		}
-		if buf[0]&1 == 0 { // unicast passes the filter only as an answer to the server probe
-			if out := e.probeReplySafe(&st.table.VLANs[in], buf[:n]); out != nil {
-				if err := r.sock.write(out); err != nil {
-					e.Log.Debug("probe follow-up", "if", r.sock.name, "err", err)
-				}
-			}
-			continue
-		}
-		e.processSafe(p, st, in, buf[:n])
-	}
-}
-
-// probeReplySafe handles one answer to the server probe; like processSafe a panic only costs this frame.
-func (e *Engine) probeReplySafe(v *VLANRuntime, frame []byte) (out []byte) {
-	defer func() {
-		if r := recover(); r != nil {
-			e.Counters.Reasons[DropPanic].Add(1)
-			e.Log.Error("panic while handling a probe answer (frame dropped)", "panic", r, "vlan", v.VID, "len", len(frame))
-			out = nil
-		}
-	}()
-	return e.guard.Probe.Reply(v, frame, time.Now())
-}
-
-// processSafe handles one frame; a panic is logged and counted instead of taking down the whole engine.
-func (e *Engine) processSafe(p *Processor, st *state, in int, frame []byte) {
-	defer func() {
-		if r := recover(); r != nil {
-			e.Counters.Reasons[DropPanic].Add(1)
-			e.Log.Error("panic while processing a frame (frame dropped)", "panic", r, "vlan_index", in, "len", len(frame))
-		}
-	}()
-	p.Process(st.table, in, frame, func(out int, b []byte) error {
-		err := st.out[out].write(b)
-		if err != nil && !errors.Is(err, errSockClosed) { // a socket closed by an apply is no news
-			e.Log.Debug("send", "if", st.out[out].name, "err", err)
-		}
-		return err
-	})
-}
-
-// everySecond runs the storm brake, the dual-active timeout, beacons, alarm logging and bucket GC. n counts the
-// calls, that is the seconds since the start.
-func (e *Engine) everySecond(n int) {
-	now := time.Now()
-	st := e.st.Load()
-	if st == nil {
-		return
-	}
-	e.sampleRates(st)
-	if id, vid := e.guard.StormTick(st.table, &e.Counters, now); id != "" {
-		e.Log.Error("storm brake: rule auto-paused for 60 s for frames from one VLAN", "rule", id, "vlan", vid)
-	}
-	if e.guard.PeerTick(now) {
-		e.Log.Warn("dual-active guard: earlier relay silent, leaving standby")
-	}
-	e.sendBeacons()
-	if n%int(ProbeInterval/time.Second) == 5 {
-		e.probe(st)
-	}
-	for _, a := range e.guard.Alarms.List() {
-		k := a.Kind + "|" + a.Key
-		if last, ok := e.alarmLog[k]; !ok || (a.Last.After(last) && now.Sub(last) >= time.Minute) {
-			e.Log.Warn("alarm", "kind", a.Kind, "key", a.Key, "count", a.Count, "detail", a.Detail)
-			e.alarmLog[k] = now
-		}
-	}
-	if n%60 == 30 {
-		e.refreshHost()
-	}
-	if n%60 == 0 {
-		e.guard.GC(now)
-		e.guard.Players.GC(now)
-		e.guard.Probe.GC(now)
-	}
-}
-
-// refreshHost repeats the host preparation once a minute (hostprep.Refresh) and logs what is new.
-func (e *Engine) refreshHost() {
-	e.mu.Lock() // not while a snapshot is being applied
-	defer e.mu.Unlock()
-	st := e.st.Load()
-	if st == nil {
-		return
-	}
-	next := hostprep.Refresh(st.table.Snapshot)
-	known := map[string]bool{}
-	if cur := e.hostIssues.Load(); cur != nil {
-		for _, x := range *cur {
-			known[x.Code] = true
-		}
-	}
-	for _, is := range next {
-		if !known[is.Code] {
-			e.Log.Warn("host preparation incomplete (optional by hand: deploy/host/setup.sh)", "what", is.Code, "detail", is.Detail)
-		}
-	}
-	e.hostIssues.Store(&next)
-}
-
-// probe replays the learned server queries from the relay address of every VLAN (probe.go). Not in pause
-// (emergency stop) or standby, and only when the snapshot switches it on.
-func (e *Engine) probe(st *state) {
-	t := st.table
-	if !t.Snapshot.Probe || !e.guard.Sending(time.Now()) || (t.Mode != compile.ModeActive && t.Mode != compile.ModeObserve) {
-		return
-	}
-	now := time.Now()
-	groups := map[string]map[string]bool{} // rule -> VLAN groups in its flows: probes stay inside the matrix
-	for _, r := range t.rules {
-		if !r.Probe {
-			continue
-		}
-		g := map[string]bool{}
-		for _, f := range r.Flows {
-			g[f.Src], g[f.Dst] = true, true
-		}
-		groups[r.ID] = g
-		if ps, err := parsePorts(r.Ports); err == nil {
-			e.guard.Probe.Seed(r.ID, ps, now)
-		}
-	}
-	qs := e.guard.Probe.Queries(now)
-	var buf []byte
-	sent := 0
-	for i := range t.VLANs {
-		v := &t.VLANs[i]
-		if !v.RelayIP.IsValid() || v.MAC == (pkt.MAC{}) {
-			continue
-		}
-		for _, q := range qs {
-			if !groups[q.Rule][v.Group] {
-				continue
-			}
-			b, err := BuildProbe(buf, v, q, uint16(sent))
-			if err != nil {
-				continue
-			}
-			buf = b
-			if err := st.out[i].write(b); err != nil {
-				e.Log.Debug("probe", "vlan", v.VID, "err", err)
-				continue
-			}
-			sent++
-		}
-	}
-	if sent > 0 {
-		e.Log.Debug("server probe sent", "queries", len(qs), "frames", sent)
-	}
-}
-
-func (e *Engine) sampleRates(st *state) {
-	now := time.Now()
-	cur := rateSample{rx: e.Counters.RX.Load(), sent: e.Counters.Sent.Load(), vlanIn: map[int]uint64{}, vlanRate: map[int]uint64{},
-		lastIn: map[int]time.Time{}}
-	prev := e.prevRates
-	if prev.vlanIn != nil {
-		cur.rxRate, cur.sentRate = cur.rx-prev.rx, cur.sent-prev.sent
-	}
-	for _, v := range st.table.VLANs {
-		in := e.Counters.VLANIn[v.VID].Load()
-		cur.vlanIn[v.VID] = in
-		if t, ok := prev.lastIn[v.VID]; ok {
-			cur.lastIn[v.VID] = t
-		}
-		if p, ok := prev.vlanIn[v.VID]; ok {
-			cur.vlanRate[v.VID] = in - p
-			if in > p {
-				cur.lastIn[v.VID] = now
-			}
-		} else if in > 0 {
-			cur.lastIn[v.VID] = now
-		}
-	}
-	e.prevRates = cur
-	e.rates.Store(&cur)
-}
-
-// sendBeacons announces this engine on every VLAN (dual-active guard).
-func (e *Engine) sendBeacons() {
-	st := e.st.Load()
-	if st == nil {
-		return
-	}
-	now := time.Now()
-	for i, v := range st.table.VLANs {
-		if err := st.out[i].write(e.guard.BeaconFrame(v.MAC, st.table.Snapshot, now)); err != nil {
-			e.Log.Debug("beacon", "vlan", v.VID, "err", err)
-		}
-	}
-}
-
 func (e *Engine) shutdown() {
 	e.mcast.close()
 	e.mu.Lock()
@@ -692,18 +235,6 @@ func (e *Engine) shutdown() {
 	}
 	e.wg.Wait()
 	// interfaces stay: a restart re-adopts them without flapping the links
-}
-
-func (e *Engine) logStats() {
-	st := e.st.Load()
-	if st == nil {
-		return
-	}
-	attrs := []any{"rx", e.Counters.RX.Load(), "sent", e.Counters.Sent.Load(), "standby", e.guard.Standby()}
-	for k, v := range e.Counters.ReasonCounts() {
-		attrs = append(attrs, k, v)
-	}
-	e.Log.Info("stats", attrs...)
 }
 
 func short(h string) string {

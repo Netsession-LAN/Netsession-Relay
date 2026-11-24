@@ -2,6 +2,14 @@
 
 All notable changes to Netsession Relay. Versions follow [Semantic Versioning](https://semver.org/).
 
+## [1.0.2] - 2026-11-24
+
+### Changed
+- Maintainability: the code smells reported by qlty went from 94 to 2 (no function above a cognitive complexity
+  of 17; the largest files split along their responsibilities). Behaviour is unchanged: the rendered pages, JSON
+  and CLI output are byte-identical, the packet path stays allocation-free.
+- Scrutinizer analyses the code and measures the unit test coverage (`.scrutinizer.yml`).
+
 ## [1.0.1] - 2026-11-24
 
 ### Security

@@ -163,49 +163,22 @@ func (s *Server) oidcCallback(w http.ResponseWriter, r *http.Request) {
 		fail(msgOIDCOff, nil)
 		return
 	}
-	c, err := r.Cookie(oidcCookie)
-	parts := []string{}
-	if err == nil {
-		parts = strings.Split(c.Value, ".")
-	}
-	if len(parts) != 3 || r.URL.Query().Get("state") != parts[0] {
+	q := r.URL.Query()
+	st, ok := readOIDCState(r)
+	if !ok {
 		fail(msgOIDCExpired, nil)
 		return
 	}
-	if e := r.URL.Query().Get("error"); e != "" {
-		fail(msgOIDCDenied, errors.New(e+": "+r.URL.Query().Get("error_description")))
+	if e := q.Get("error"); e != "" {
+		fail(msgOIDCDenied, errors.New(e+": "+q.Get("error_description")))
 		return
 	}
 	ctx, cancel := context.WithTimeout(r.Context(), 10*time.Second)
 	defer cancel()
-	tok, err := s.oidc.oauth.Exchange(ctx, r.URL.Query().Get("code"), oauth2.VerifierOption(parts[2]))
-	if err != nil {
-		fail(msgOIDCToken, err)
+	cl, msg, err := s.oidcIdentity(ctx, q.Get("code"), st)
+	if msg != "" {
+		fail(msg, err)
 		return
-	}
-	raw, ok := tok.Extra("id_token").(string)
-	if !ok {
-		fail(msgOIDCNoToken, nil)
-		return
-	}
-	idt, err := s.oidc.verifier.Verify(ctx, raw)
-	if err != nil {
-		fail(msgOIDCBad, err)
-		return
-	}
-	var cl oidcClaims
-	if err := idt.Claims(&cl); err != nil || cl.Nonce != parts[1] {
-		fail(msgOIDCNonce, err)
-		return
-	}
-	if len(cl.Groups) == 0 {
-		// some setups put groups only into userinfo
-		if ui, err := s.oidc.provider.UserInfo(ctx, oauth2.StaticTokenSource(tok)); err == nil {
-			var more oidcClaims
-			if ui.Claims(&more) == nil {
-				cl.Groups = more.Groups
-			}
-		}
 	}
 	role := s.oidc.cfg.role(cl.Groups)
 	if role == "" {
@@ -228,4 +201,60 @@ func (s *Server) oidcCallback(w http.ResponseWriter, r *http.Request) {
 	s.setSessionCookie(w, r, token, int(store.SessionTTL.Seconds()))
 	s.Log.Info("login", "name", u.Name, "kind", "oidc", "role", role)
 	http.Redirect(w, r, "/", http.StatusSeeOther)
+}
+
+// oidcState is what oidcLogin stored in the login cookie: the state, the nonce expected in the ID token and the
+// PKCE verifier.
+type oidcState struct{ state, nonce, verifier string }
+
+// readOIDCState reads the login cookie; ok is false when it is missing, malformed or belongs to another state
+// than the one the identity provider sent back (expired or foreign login).
+func readOIDCState(r *http.Request) (oidcState, bool) {
+	c, err := r.Cookie(oidcCookie)
+	if err != nil {
+		return oidcState{}, false
+	}
+	parts := strings.Split(c.Value, ".")
+	if len(parts) != 3 || r.URL.Query().Get("state") != parts[0] {
+		return oidcState{}, false
+	}
+	return oidcState{state: parts[0], nonce: parts[1], verifier: parts[2]}, true
+}
+
+// oidcIdentity redeems the authorization code and returns the claims of the verified ID token. On failure msg is
+// the text for the user and err (may be nil) the detail for the log.
+func (s *Server) oidcIdentity(ctx context.Context, code string, st oidcState) (cl oidcClaims, msg string, err error) {
+	tok, err := s.oidc.oauth.Exchange(ctx, code, oauth2.VerifierOption(st.verifier))
+	if err != nil {
+		return cl, msgOIDCToken, err
+	}
+	raw, ok := tok.Extra("id_token").(string)
+	if !ok {
+		return cl, msgOIDCNoToken, nil
+	}
+	idt, err := s.oidc.verifier.Verify(ctx, raw)
+	if err != nil {
+		return cl, msgOIDCBad, err
+	}
+	if err = idt.Claims(&cl); err != nil || cl.Nonce != st.nonce {
+		return cl, msgOIDCNonce, err
+	}
+	if len(cl.Groups) == 0 {
+		cl.Groups = s.oidcUserInfoGroups(ctx, tok)
+	}
+	return cl, "", nil
+}
+
+// oidcUserInfoGroups reads the groups from the userinfo endpoint, for setups that put them only there (nil when
+// that fails).
+func (s *Server) oidcUserInfoGroups(ctx context.Context, tok *oauth2.Token) []string {
+	ui, err := s.oidc.provider.UserInfo(ctx, oauth2.StaticTokenSource(tok))
+	if err != nil {
+		return nil
+	}
+	var more oidcClaims
+	if ui.Claims(&more) != nil {
+		return nil
+	}
+	return more.Groups
 }

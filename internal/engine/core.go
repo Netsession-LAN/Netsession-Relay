@@ -1,5 +1,6 @@
-// Package engine is the packet data plane: per-packet decisions (this file, portable and unit-tested on every
-// OS) and the Linux runtime with AF_PACKET sockets (engine_linux.go).
+// Package engine is the packet data plane: per-packet decisions (this file, the lookup table in table.go and the
+// copies in fanout.go; portable and unit-tested on every OS) and the Linux runtime with AF_PACKET sockets
+// (engine_linux.go, apply_linux.go, receive_linux.go).
 //
 // Processing order per received frame:
 //
@@ -18,7 +19,7 @@
 //     engine not sending (observe/paused mode, standby, start holdoff) -> drop mode
 //  10. fan-out: build one frame per target VLAN; a copy that cannot be built or sent -> send_error
 //
-// A panic while a frame is handled costs that frame only -> drop panic (engine_linux.go).
+// A panic while a frame is handled costs that frame only -> drop panic (receive_linux.go).
 package engine
 
 import (
@@ -75,132 +76,6 @@ func (r Reason) String() string {
 	return reasonNames[r]
 }
 
-// VLANRuntime is a snapshot VLAN plus what the runtime learned about its interface.
-type VLANRuntime struct {
-	compile.VLAN
-	Index     int // position in Table.VLANs
-	Ifindex   int // kernel interface index (0 in unit tests)
-	MAC       pkt.MAC
-	Broadcast netip.Addr // directed broadcast of CIDR
-}
-
-type ruleRT struct {
-	compile.Rule
-	group netip.Addr // multicast only
-	// targets[in] = VLAN indexes a frame arriving on VLAN in is sent to
-	targets [][]int
-	// srcAllow[in] = allowed source prefixes for frames arriving on VLAN in (nil = unrestricted)
-	srcAllow [][]netip.Prefix
-	rx       atomic.Uint64
-	relayed  atomic.Uint64
-	copies   []atomic.Uint64 // copies[in] = frames sent for frames that arrived on VLAN in (storm brake)
-}
-
-type mcastKey struct {
-	group netip.Addr
-	port  uint16
-}
-
-// Table is the immutable lookup structure built from a snapshot. The engine swaps tables atomically.
-type Table struct {
-	Snapshot *compile.Snapshot
-	VLANs    []VLANRuntime
-	Mode     string
-
-	// Clamped lists the limits of the snapshot the engine did not take as they were (bounds.go), for the log.
-	Clamped []string
-
-	limits    compile.Limits // the snapshot's limits inside the engine's hard bounds
-	copyRate  int            // copies per second one ingress VLAN may cause (AllowCopies)
-	ownMACs   map[pkt.MAC]bool
-	broadcast [65536]*ruleRT
-	multicast map[mcastKey]*ruleRT
-	rules     []*ruleRT
-}
-
-// NewTable builds the lookup table. macs maps VLAN ID -> interface MAC (from the runtime; may be empty in tests).
-func NewTable(s *compile.Snapshot, macs map[int]pkt.MAC) (*Table, error) {
-	t := &Table{Snapshot: s, Mode: s.Mode, ownMACs: map[pkt.MAC]bool{}, multicast: map[mcastKey]*ruleRT{}}
-	t.limits = t.boundLimits(s.Limits)
-	t.copyRate = max(t.limits.StormPPS/2, 1)
-	groupVLANs := map[string][]int{}
-	for i, v := range s.VLANs {
-		if v.VID < 1 || v.VID > MaxVID {
-			return nil, fmt.Errorf("VLAN %d (%s): VID out of range 1..%d", v.VID, v.Name, MaxVID)
-		}
-		v.RatePPS, v.Burst = t.boundVLAN(v)
-		rt := VLANRuntime{VLAN: v, Index: i, MAC: macs[v.VID], Broadcast: pkt.SubnetBroadcast(v.CIDR)}
-		t.VLANs = append(t.VLANs, rt)
-		groupVLANs[v.Group] = append(groupVLANs[v.Group], i)
-		if rt.MAC != (pkt.MAC{}) {
-			t.ownMACs[rt.MAC] = true
-		}
-	}
-	for _, p := range s.Peers {
-		for _, m := range p.MACs {
-			hw, err := parseMAC(m)
-			if err != nil {
-				return nil, fmt.Errorf("peer %s: %w", p.Name, err)
-			}
-			t.ownMACs[hw] = true
-		}
-	}
-	for _, r := range s.Rules {
-		r = t.boundRule(r)
-		rt := &ruleRT{Rule: r, targets: make([][]int, len(t.VLANs)), srcAllow: make([][]netip.Prefix, len(t.VLANs)),
-			copies: make([]atomic.Uint64, len(t.VLANs))}
-		for in, v := range t.VLANs {
-			for _, p := range r.SrcAllow {
-				if compile.PrefixWithin(p, v.CIDR) {
-					rt.srcAllow[in] = append(rt.srcAllow[in], p)
-				}
-			}
-			seen := map[int]bool{}
-			for _, e := range r.Flows {
-				if e.Src != v.Group {
-					continue
-				}
-				for _, out := range groupVLANs[e.Dst] {
-					if out != in && !seen[out] {
-						seen[out] = true
-						rt.targets[in] = append(rt.targets[in], out)
-					}
-				}
-			}
-		}
-		ps, err := parsePorts(r.Ports)
-		if err != nil {
-			return nil, fmt.Errorf("rule %s: %w", r.ID, err)
-		}
-		switch r.Kind {
-		case gamedb.KindBroadcast:
-			for _, p := range ps {
-				if t.broadcast[p] != nil {
-					return nil, fmt.Errorf("rule %s: port %d already used by %s", r.ID, p, t.broadcast[p].ID)
-				}
-				t.broadcast[p] = rt
-			}
-		case gamedb.KindMulticast:
-			g, err := netip.ParseAddr(r.Group)
-			if err != nil || !g.Is4() || !g.IsMulticast() {
-				return nil, fmt.Errorf("rule %s: bad group %q", r.ID, r.Group)
-			}
-			rt.group = g
-			for _, p := range ps {
-				k := mcastKey{g, p}
-				if other := t.multicast[k]; other != nil {
-					return nil, fmt.Errorf("rule %s: group %s port %d already used by %s", r.ID, g, p, other.ID)
-				}
-				t.multicast[k] = rt
-			}
-		default:
-			return nil, fmt.Errorf("rule %s: kind %q", r.ID, r.Kind)
-		}
-		t.rules = append(t.rules, rt)
-	}
-	return t, nil
-}
-
 // Counters are engine-wide statistics. All fields are safe for concurrent use.
 type Counters struct {
 	RX           atomic.Uint64
@@ -242,74 +117,125 @@ func (p *Processor) Process(t *Table, in int, frame []byte, emit Emit) Reason {
 	return r
 }
 
+// pass is a pipeline step's result for a frame the step lets through to the next step.
+const pass = Relayed
+
 func (p *Processor) process(t *Table, in int, frame []byte, emit Emit) Reason {
 	f, err := pkt.Parse(frame)
 	if err != nil {
 		return DropParse
 	}
-	// 1. own or partner frames
-	if t.ownMACs[f.SrcMAC] {
-		return DropOwnMAC
-	}
-	// 2. fixed block list
-	if f.DstPort == 67 || f.DstPort == 68 || f.SrcPort == 67 || f.SrcPort == 68 || f.Src.IsUnspecified() {
-		return DropBlocked
-	}
-	vin := &t.VLANs[in]
-	// 3. source subnet
-	if !vin.CIDR.Contains(f.Src) {
-		for i := range t.VLANs {
-			if i != in && t.VLANs[i].CIDR.Contains(f.Src) {
-				if p.g != nil {
-					p.g.Alarms.Raise(AlarmForeignRelay, fmt.Sprintf("%d", vin.VID), p.g.Now(),
-						"VLAN %d (%s) receives frames from %s (network of VLAN %d): another relay is active",
-						vin.VID, vin.Name, f.Src, t.VLANs[i].VID)
-				}
-				return DropForeignRelay
-			}
-		}
-		return DropSrcSubnet
+	// 1.-3. sender
+	if r := p.checkSender(t, in, &f); r != pass {
+		return r
 	}
 	// 4. rule lookup
-	var rule *ruleRT
-	switch {
-	case f.Dst.IsMulticast():
-		rule = t.multicast[mcastKey{f.Dst, f.DstPort}]
-	case f.Dst == pkt.LimitedBroadcast || f.Dst == vin.Broadcast:
-		rule = t.broadcast[f.DstPort]
-		if rule == nil {
-			p.c.UnknownPorts[f.DstPort].Add(1)
-		}
-	default:
-		return DropNotBroadcast
+	vin := &t.VLANs[in]
+	rule, r := p.lookupRule(t, vin, &f)
+	if r != pass {
+		return r
 	}
-	if p.g != nil && p.g.Finder.active.Load() {
-		id := ""
-		if rule != nil {
-			id = rule.ID
-		}
-		p.g.Finder.Observe(vin.VID, &f, frame, id, p.g.Now())
-	}
+	p.observe(vin, &f, frame, rule)
 	if rule == nil {
 		return DropUnknownPort
 	}
+	// 4.-6. the rule's own checks
+	if r := p.admit(t, rule, in, &f); r != pass {
+		return r
+	}
+	// 7.-9. guard
+	if r := p.protect(t, rule, in, &f); r != pass {
+		return r
+	}
+	if t.Mode != compile.ModeActive {
+		return DropMode
+	}
+	// 10. fan-out
+	return p.fanOut(t, rule, in, &f, emit)
+}
+
+// checkSender drops frames of own or partner MACs, of the fixed block list and from outside the ingress VLAN's
+// network (steps 1-3).
+func (p *Processor) checkSender(t *Table, in int, f *pkt.Frame) Reason {
+	if t.ownMACs[f.SrcMAC] {
+		return DropOwnMAC
+	}
+	if isBlocked(f) {
+		return DropBlocked
+	}
+	if !t.VLANs[in].CIDR.Contains(f.Src) {
+		return p.foreignSource(t, in, f.Src)
+	}
+	return pass
+}
+
+// isBlocked reports frames of the fixed block list: DHCP and senders without an address.
+func isBlocked(f *pkt.Frame) bool {
+	return isDHCPPort(f.DstPort) || isDHCPPort(f.SrcPort) || f.Src.IsUnspecified()
+}
+
+func isDHCPPort(port uint16) bool { return port == 67 || port == 68 }
+
+// foreignSource classifies a source outside the ingress VLAN's network: in the network of another VLAN another
+// relay is active (alarm), otherwise the sender is simply misconfigured.
+func (p *Processor) foreignSource(t *Table, in int, src netip.Addr) Reason {
+	for i := range t.VLANs {
+		if i != in && t.VLANs[i].CIDR.Contains(src) {
+			p.raiseForeignRelay(&t.VLANs[in], src, t.VLANs[i].VID)
+			return DropForeignRelay
+		}
+	}
+	return DropSrcSubnet
+}
+
+func (p *Processor) raiseForeignRelay(vin *VLANRuntime, src netip.Addr, otherVID int) {
+	if p.g == nil {
+		return
+	}
+	p.g.Alarms.Raise(AlarmForeignRelay, fmt.Sprintf("%d", vin.VID), p.g.Now(),
+		"VLAN %d (%s) receives frames from %s (network of VLAN %d): another relay is active",
+		vin.VID, vin.Name, src, otherVID)
+}
+
+// lookupRule finds the rule of a multicast or broadcast frame (nil: no rule for the port; broadcasts on such ports
+// are counted for the port finder). Other destinations are not relayed at all.
+func (p *Processor) lookupRule(t *Table, vin *VLANRuntime, f *pkt.Frame) (*ruleRT, Reason) {
+	switch {
+	case f.Dst.IsMulticast():
+		return t.multicast[mcastKey{f.Dst, f.DstPort}], pass
+	case f.Dst == pkt.LimitedBroadcast || f.Dst == vin.Broadcast:
+		rule := t.broadcast[f.DstPort]
+		if rule == nil {
+			p.c.UnknownPorts[f.DstPort].Add(1)
+		}
+		return rule, pass
+	}
+	return nil, DropNotBroadcast
+}
+
+// observe hands the frame to the game finder while it records.
+func (p *Processor) observe(vin *VLANRuntime, f *pkt.Frame, frame []byte, rule *ruleRT) {
+	if p.g == nil || !p.g.Finder.active.Load() {
+		return
+	}
+	id := ""
+	if rule != nil {
+		id = rule.ID
+	}
+	p.g.Finder.Observe(vin.VID, f, frame, id, p.g.Now())
+}
+
+// admit applies the rule's source filter, records the sender, and checks targets, size and TTL (steps 4-6).
+// With TTL mode decrement it lowers the frame's TTL.
+func (p *Processor) admit(t *Table, rule *ruleRT, in int, f *pkt.Frame) Reason {
 	if allow := rule.srcAllow[in]; allow != nil && !containsAddr(allow, f.Src) {
 		return DropSrcFilter
 	}
 	rule.rx.Add(1)
-	if p.g != nil {
-		p.g.Players.Seen(rule.ID, f.Src, vin.VID, p.g.Now())
-		// only payloads the rule would relay are replayed by the server probe
-		if rule.Probe && t.Snapshot.Probe && len(f.Payload) <= rule.PayloadMax {
-			p.g.Probe.Learn(rule.ID, f.DstPort, f.Payload, p.g.Now())
-		}
-	}
-	// 5. targets
-	targets := rule.targets[in]
-	if len(targets) == 0 {
+	p.learn(t, rule, t.VLANs[in].VID, f)
+	if len(rule.targets[in]) == 0 {
 		return DropNoTarget
 	}
-	// 6. size
 	if len(f.Payload) == 0 || len(f.Payload) > rule.PayloadMax {
 		return DropSize
 	}
@@ -319,101 +245,60 @@ func (p *Processor) process(t *Table, in int, frame []byte, emit Emit) Reason {
 		}
 		f.TTL--
 	}
-	if g := p.g; g != nil {
-		now := g.Now()
-		// 7. loop detection across VLANs
-		if g.SeenElsewhere(&f, in, now, time.Duration(t.limits.DedupMS)*time.Millisecond) {
-			g.Alarms.Raise(AlarmLoop, rule.ID, now, "same datagram from %s:%d seen on several VLANs (loop or second relay)", f.Src, f.SrcPort)
-			return DropLoop
-		}
-		// 8. storm brake: before the rate limits, so a paused flood does not use up the budgets of its network
-		// and other games from there keep working
-		if g.Paused(rule.ID, vin.VID, now) {
-			return DropAutoPaused
-		}
-		// 9. rate limits
-		if !g.AllowFlow(rule.ID, f.Src, f.DstPort, rule.RatePPS, rule.RateBurst, now) {
-			return DropRate
-		}
-		vr, vb := cmp.Or(vin.RatePPS, t.limits.VLANPPS), cmp.Or(vin.Burst, t.limits.VLANBurst)
-		if !g.AllowVLAN(vin.VID, vr, vb, now) {
-			return DropRate
-		}
-		if !g.AllowCopies(vin.VID, len(targets), t.copyRate, t.copyRate, now) {
-			return DropRate
-		}
-		if !g.Sending(now) {
-			return DropMode
-		}
+	return pass
+}
+
+// learn notes the player for the players page and the payload for the server probe.
+func (p *Processor) learn(t *Table, rule *ruleRT, vid int, f *pkt.Frame) {
+	g := p.g
+	if g == nil {
+		return
 	}
-	if t.Mode != compile.ModeActive {
+	g.Players.Seen(rule.ID, f.Src, vid, g.Now())
+	// only payloads the rule would relay are replayed by the server probe
+	if rule.Probe && t.Snapshot.Probe && len(f.Payload) <= rule.PayloadMax {
+		g.Probe.Learn(rule.ID, f.DstPort, f.Payload, g.Now())
+	}
+}
+
+// protect runs the guard: loop detection, storm brake, rate limits and whether the engine sends (steps 7-9).
+func (p *Processor) protect(t *Table, rule *ruleRT, in int, f *pkt.Frame) Reason {
+	g := p.g
+	if g == nil {
+		return pass
+	}
+	now := g.Now()
+	// 7. loop detection across VLANs
+	if g.SeenElsewhere(f, in, now, time.Duration(t.limits.DedupMS)*time.Millisecond) {
+		g.Alarms.Raise(AlarmLoop, rule.ID, now, "same datagram from %s:%d seen on several VLANs (loop or second relay)", f.Src, f.SrcPort)
+		return DropLoop
+	}
+	// 8. storm brake: before the rate limits, so a paused flood does not use up the budgets of its network
+	// and other games from there keep working
+	if g.Paused(rule.ID, t.VLANs[in].VID, now) {
+		return DropAutoPaused
+	}
+	// 9. rate limits
+	if !p.withinRates(t, rule, in, f, now) {
+		return DropRate
+	}
+	if !g.Sending(now) {
 		return DropMode
 	}
-	// 10. fan-out
-	sent, failed := 0, 0
-	limited := f.Dst == pkt.LimitedBroadcast
-	orig := f
-	for _, out := range targets {
-		vout := &t.VLANs[out]
-		f = orig
-		f.SrcMAC = vout.MAC
-		if rule.Kind == gamedb.KindMulticast {
-			f.DstMAC = pkt.MulticastMAC(f.Dst)
-		} else {
-			f.DstMAC = pkt.BroadcastMAC
-			switch rule.DstMode {
-			case gamedb.DstLimited:
-				f.Dst = pkt.LimitedBroadcast
-			case gamedb.DstSubnet:
-				f.Dst = vout.Broadcast
-			default: // keep
-				if !limited {
-					f.Dst = vout.Broadcast
-				}
-			}
-		}
-		if rule.SourceMode != gamedb.SourceOriginal && vout.RelayIP.IsValid() {
-			f.Src = vout.RelayIP
-		}
-		b, err := pkt.Build(p.buf, &f)
-		if err != nil {
-			failed++
-			continue
-		}
-		p.buf = b[:0]
-		if emit(out, b) != nil {
-			failed++
-			continue
-		}
-		sent++
-		p.c.Sent.Add(1)
-		p.c.VLANOut[vout.VID].Add(1)
-	}
-	if sent == 0 {
-		return DropSendError // there were targets (step 5), so every copy failed
-	}
-	if failed > 0 {
-		p.c.Reasons[DropSendError].Add(1) // some copies went out: relayed, and the failure is counted too
-	}
-	rule.relayed.Add(1)
-	rule.copies[in].Add(uint64(sent))
-	return Relayed
+	return pass
 }
 
-// RuleStats is a per-rule counter snapshot.
-type RuleStats struct {
-	ID      string
-	RX      uint64
-	Relayed uint64
-}
-
-// RuleStats returns counters of all rules in snapshot order.
-func (t *Table) RuleStats() []RuleStats {
-	out := make([]RuleStats, 0, len(t.rules))
-	for _, r := range t.rules {
-		out = append(out, RuleStats{r.ID, r.rx.Load(), r.relayed.Load()})
+// withinRates takes the frame from the token buckets per flow, per ingress VLAN and per ingress VLAN's copies.
+func (p *Processor) withinRates(t *Table, rule *ruleRT, in int, f *pkt.Frame, now time.Time) bool {
+	g, vin := p.g, &t.VLANs[in]
+	if !g.AllowFlow(rule.ID, f.Src, f.DstPort, rule.RatePPS, rule.RateBurst, now) {
+		return false
 	}
-	return out
+	vr, vb := cmp.Or(vin.RatePPS, t.limits.VLANPPS), cmp.Or(vin.Burst, t.limits.VLANBurst)
+	if !g.AllowVLAN(vin.VID, vr, vb, now) {
+		return false
+	}
+	return g.AllowCopies(vin.VID, len(rule.targets[in]), t.copyRate, t.copyRate, now)
 }
 
 // ReasonCounts returns the reason counters as a map (for logs and the API).

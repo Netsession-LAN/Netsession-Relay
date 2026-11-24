@@ -211,3 +211,22 @@ func TestSettingDefault(t *testing.T) {
 		t.Error("ping on a closed database succeeded")
 	}
 }
+
+func TestKeepsNothing(t *testing.T) {
+	for _, tt := range []struct {
+		g        EventGameConfig
+		override string
+		want     bool
+	}{
+		{EventGameConfig{ID: "a"}, "", true},
+		{EventGameConfig{ID: "a"}, "{}", true},
+		{EventGameConfig{ID: "a"}, "null", true},
+		{EventGameConfig{ID: "a"}, `{"dst_mode":"subnet"}`, false},
+		{EventGameConfig{ID: "a", FlowProfile: "p"}, "{}", false},
+		{EventGameConfig{ID: "a", Sources: []string{"10.0.0.1"}}, "{}", false},
+	} {
+		if got := keepsNothing(tt.g, tt.override); got != tt.want {
+			t.Errorf("keepsNothing(%+v, %q) = %v, want %v", tt.g, tt.override, got, tt.want)
+		}
+	}
+}

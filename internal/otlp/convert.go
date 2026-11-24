@@ -61,76 +61,104 @@ func ModeNumber(mode string) int64 {
 // engine restart shows as a counter reset. Without the engine only engine.up, event.active and the outputs go
 // out, never frozen counters.
 func FromReport(rep monitor.Report, rules []engineapi.RuleStat, outputs []notify.Status, now, webStart time.Time, withRules bool) []Metric {
-	gauge := func(name, unit, desc string, v int64, attrs ...KV) Metric {
-		return Metric{Name: name, Unit: unit, Desc: desc, Time: now, Points: []Point{{Attrs: attrs, Value: v}}}
-	}
-	ms := []Metric{
-		gauge("nsrelay.engine.up", "1", "1 if the engine answers the web part.", int64(rep.EngineUp)),
-		gauge("nsrelay.event.active", "1", "1 if an event is active.", int64(rep.EventActive)),
-	}
+	b := metricSet{now: now}
+	b.gauge("nsrelay.engine.up", "1", "1 if the engine answers the web part.", one(int64(rep.EngineUp)))
+	b.gauge("nsrelay.event.active", "1", "1 if an event is active.", one(int64(rep.EventActive)))
 	if rep.EngineUp == 1 {
 		start := now.Add(-time.Duration(rep.UptimeS) * time.Second)
-		sum := func(name, unit, desc string, pts []Point) Metric {
-			return Metric{Name: name, Unit: unit, Desc: desc, Sum: true, Start: start, Time: now, Points: pts}
-		}
-		one := func(v uint64, attrs ...KV) []Point { return []Point{{Attrs: attrs, Value: int64(v)}} }
-		ms = append(ms,
-			gauge("nsrelay.uptime", "s", "Seconds since the engine started.", rep.UptimeS),
-			gauge("nsrelay.info", "1", "Mode, snapshot and engine version as attributes.", 1,
-				KV{"nsrelay.mode", rep.Mode}, KV{"nsrelay.snapshot", rep.Snapshot}, KV{"nsrelay.engine.version", rep.EngineVersion}),
-			gauge("nsrelay.mode", "1", "0 unknown, 1 active, 2 observe, 3 paused.", ModeNumber(rep.Mode)),
-			gauge("nsrelay.standby", "1", "1 if a second relay put this one in standby.", int64(rep.Standby)),
-			gauge("nsrelay.sending", "1", "1 if the engine currently relays.", int64(rep.Sending)),
-			gauge("nsrelay.vlans", "{vlan}", "VLANs in the active snapshot.", int64(rep.VLANs)),
-			gauge("nsrelay.rules", "{rule}", "Rules in the active snapshot.", int64(rep.Rules)),
-			gauge("nsrelay.selftest.findings", "{finding}", "Host self-test findings at engine start.", int64(rep.SelfTest)),
-			sum("nsrelay.rx", "{frame}", "Frames received after the kernel filter.", one(rep.RXTotal)),
-			sum("nsrelay.sent", "{frame}", "Frames sent (all copies).", one(rep.SentTotal)),
-		)
-		var drops []Point
-		for _, r := range monitor.DropReasons {
-			drops = append(drops, Point{Attrs: []KV{{"reason", r}}, Value: int64(rep.Drops[r])})
-		}
-		ms = append(ms, sum("nsrelay.drops", "{frame}", "Frames not relayed, by reason.", drops))
-		var act, acked, occ []Point
-		for _, k := range monitor.Kinds {
-			a := rep.Alarms[k]
-			act = append(act, Point{Attrs: []KV{{"kind", k}}, Value: int64(a.Active)})
-			acked = append(acked, Point{Attrs: []KV{{"kind", k}}, Value: int64(a.Acked)})
-			occ = append(occ, Point{Attrs: []KV{{"kind", k}}, Value: int64(a.Count)})
-		}
-		m := gauge("nsrelay.alarms.active", "{alarm}", "Unacknowledged alarms seen in the last 5 minutes, by kind.", 0)
-		m.Points = act
-		ms = append(ms, m)
-		m = gauge("nsrelay.alarms.acked", "{alarm}", "Acknowledged alarms still known, by kind.", 0)
-		m.Points = acked
-		ms = append(ms, m, sum("nsrelay.alarm.occurrences", "{occurrence}", "Alarm occurrences since engine start, by kind.", occ))
-		var in, out, silentS, silent []Point
-		for _, v := range rep.VLANList {
-			attrs := []KV{{"vlan", int64(v.VID)}, {"vlan.name", v.Name}, {"vlan.group", v.Group}}
-			in = append(in, Point{Attrs: attrs, Value: int64(v.In)})
-			out = append(out, Point{Attrs: attrs, Value: int64(v.Out)})
-			silentS = append(silentS, Point{Attrs: attrs, Value: v.SilentS})
-			silent = append(silent, Point{Attrs: attrs, Value: int64(v.Silent)})
-		}
-		ms = append(ms, sum("nsrelay.vlan.in", "{frame}", "Frames received per VLAN.", in),
-			sum("nsrelay.vlan.out", "{frame}", "Frames sent per VLAN.", out))
-		m = gauge("nsrelay.vlan.silent.duration", "s", "Seconds without received frames per VLAN.", 0)
-		m.Points = silentS
-		ms = append(ms, m)
-		m = gauge("nsrelay.vlan.silent", "1", "1 if the VLAN counts as silent (vlan_silent).", 0)
-		m.Points = silent
-		ms = append(ms, m)
+		b.engine(rep, start)
+		b.alarms(rep, start)
+		b.vlans(rep, start)
 		if withRules {
-			var rx, rel []Point
-			for _, r := range rules {
-				rx = append(rx, Point{Attrs: []KV{{"rule", r.ID}}, Value: int64(r.RX)})
-				rel = append(rel, Point{Attrs: []KV{{"rule", r.ID}}, Value: int64(r.Relayed)})
-			}
-			ms = append(ms, sum("nsrelay.rule.rx", "{frame}", "Frames matched per rule.", rx),
-				sum("nsrelay.rule.relayed", "{frame}", "Frames relayed per rule.", rel))
+			b.rules(rules, start)
 		}
 	}
+	b.outputs(outputs, webStart)
+	return b.ms
+}
+
+// metricSet collects the metrics of one export, all taken at now.
+type metricSet struct {
+	now time.Time
+	ms  []Metric
+}
+
+// gauge adds a gauge.
+func (b *metricSet) gauge(name, unit, desc string, pts []Point) {
+	b.ms = append(b.ms, Metric{Name: name, Unit: unit, Desc: desc, Time: b.now, Points: pts})
+}
+
+// counter adds a monotonic counter that counts since start.
+func (b *metricSet) counter(name, unit, desc string, start time.Time, pts []Point) {
+	b.ms = append(b.ms, Metric{Name: name, Unit: unit, Desc: desc, Sum: true, Start: start, Time: b.now, Points: pts})
+}
+
+// one is a single data point.
+func one(v int64, attrs ...KV) []Point { return []Point{{Attrs: attrs, Value: v}} }
+
+// engine adds the state and the totals of the engine.
+func (b *metricSet) engine(rep monitor.Report, start time.Time) {
+	b.gauge("nsrelay.uptime", "s", "Seconds since the engine started.", one(rep.UptimeS))
+	b.gauge("nsrelay.info", "1", "Mode, snapshot and engine version as attributes.", one(1,
+		KV{"nsrelay.mode", rep.Mode}, KV{"nsrelay.snapshot", rep.Snapshot}, KV{"nsrelay.engine.version", rep.EngineVersion}))
+	b.gauge("nsrelay.mode", "1", "0 unknown, 1 active, 2 observe, 3 paused.", one(ModeNumber(rep.Mode)))
+	b.gauge("nsrelay.standby", "1", "1 if a second relay put this one in standby.", one(int64(rep.Standby)))
+	b.gauge("nsrelay.sending", "1", "1 if the engine currently relays.", one(int64(rep.Sending)))
+	b.gauge("nsrelay.vlans", "{vlan}", "VLANs in the active snapshot.", one(int64(rep.VLANs)))
+	b.gauge("nsrelay.rules", "{rule}", "Rules in the active snapshot.", one(int64(rep.Rules)))
+	b.gauge("nsrelay.selftest.findings", "{finding}", "Host self-test findings at engine start.", one(int64(rep.SelfTest)))
+	b.counter("nsrelay.rx", "{frame}", "Frames received after the kernel filter.", start, one(int64(rep.RXTotal)))
+	b.counter("nsrelay.sent", "{frame}", "Frames sent (all copies).", start, one(int64(rep.SentTotal)))
+	var drops []Point
+	for _, r := range monitor.DropReasons {
+		drops = append(drops, Point{Attrs: []KV{{"reason", r}}, Value: int64(rep.Drops[r])})
+	}
+	b.counter("nsrelay.drops", "{frame}", "Frames not relayed, by reason.", start, drops)
+}
+
+// alarms adds the alarm summaries by kind.
+func (b *metricSet) alarms(rep monitor.Report, start time.Time) {
+	var act, acked, occ []Point
+	for _, k := range monitor.Kinds {
+		a := rep.Alarms[k]
+		act = append(act, Point{Attrs: []KV{{"kind", k}}, Value: int64(a.Active)})
+		acked = append(acked, Point{Attrs: []KV{{"kind", k}}, Value: int64(a.Acked)})
+		occ = append(occ, Point{Attrs: []KV{{"kind", k}}, Value: int64(a.Count)})
+	}
+	b.gauge("nsrelay.alarms.active", "{alarm}", "Unacknowledged alarms seen in the last 5 minutes, by kind.", act)
+	b.gauge("nsrelay.alarms.acked", "{alarm}", "Acknowledged alarms still known, by kind.", acked)
+	b.counter("nsrelay.alarm.occurrences", "{occurrence}", "Alarm occurrences since engine start, by kind.", start, occ)
+}
+
+// vlans adds the counters and the silence per VLAN.
+func (b *metricSet) vlans(rep monitor.Report, start time.Time) {
+	var in, out, silentS, silent []Point
+	for _, v := range rep.VLANList {
+		attrs := []KV{{"vlan", int64(v.VID)}, {"vlan.name", v.Name}, {"vlan.group", v.Group}}
+		in = append(in, Point{Attrs: attrs, Value: int64(v.In)})
+		out = append(out, Point{Attrs: attrs, Value: int64(v.Out)})
+		silentS = append(silentS, Point{Attrs: attrs, Value: v.SilentS})
+		silent = append(silent, Point{Attrs: attrs, Value: int64(v.Silent)})
+	}
+	b.counter("nsrelay.vlan.in", "{frame}", "Frames received per VLAN.", start, in)
+	b.counter("nsrelay.vlan.out", "{frame}", "Frames sent per VLAN.", start, out)
+	b.gauge("nsrelay.vlan.silent.duration", "s", "Seconds without received frames per VLAN.", silentS)
+	b.gauge("nsrelay.vlan.silent", "1", "1 if the VLAN counts as silent (vlan_silent).", silent)
+}
+
+// rules adds the counters per rule.
+func (b *metricSet) rules(rules []engineapi.RuleStat, start time.Time) {
+	var rx, rel []Point
+	for _, r := range rules {
+		rx = append(rx, Point{Attrs: []KV{{"rule", r.ID}}, Value: int64(r.RX)})
+		rel = append(rel, Point{Attrs: []KV{{"rule", r.ID}}, Value: int64(r.Relayed)})
+	}
+	b.counter("nsrelay.rule.rx", "{frame}", "Frames matched per rule.", start, rx)
+	b.counter("nsrelay.rule.relayed", "{frame}", "Frames relayed per rule.", start, rel)
+}
+
+// outputs adds the state of the enabled monitoring targets; their counters run since the web part started.
+func (b *metricSet) outputs(outputs []notify.Status, webStart time.Time) {
 	var up, sent, dropped []Point
 	for _, o := range outputs {
 		if o.State == "off" {
@@ -145,14 +173,12 @@ func FromReport(rep monitor.Report, rules []engineapi.RuleStat, outputs []notify
 		sent = append(sent, Point{Attrs: attrs, Value: int64(o.Sent)})
 		dropped = append(dropped, Point{Attrs: attrs, Value: int64(o.Dropped)})
 	}
-	if len(up) > 0 {
-		m := gauge("nsrelay.output.up", "1", "1 unless the monitoring target is failing.", 0)
-		m.Points = up
-		ms = append(ms, m,
-			Metric{Name: "nsrelay.output.sent", Unit: "{event}", Desc: "Events delivered per monitoring target.", Sum: true, Start: webStart, Time: now, Points: sent},
-			Metric{Name: "nsrelay.output.dropped", Unit: "{event}", Desc: "Events dropped per monitoring target.", Sum: true, Start: webStart, Time: now, Points: dropped})
+	if len(up) == 0 {
+		return
 	}
-	return ms
+	b.gauge("nsrelay.output.up", "1", "1 unless the monitoring target is failing.", up)
+	b.counter("nsrelay.output.sent", "{event}", "Events delivered per monitoring target.", webStart, sent)
+	b.counter("nsrelay.output.dropped", "{event}", "Events dropped per monitoring target.", webStart, dropped)
 }
 
 func anyValue(v any) *commonpb.AnyValue {

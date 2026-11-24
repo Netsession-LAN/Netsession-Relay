@@ -2,6 +2,7 @@
 package auth
 
 import (
+	"cmp"
 	"crypto/rand"
 	"crypto/subtle"
 	"encoding/base64"
@@ -41,9 +42,11 @@ const (
 )
 
 func (p Params) valid() bool {
-	return p.Memory >= MinMemory && p.Memory <= MaxMemory && p.Passes >= 1 && p.Passes <= maxPasses &&
-		p.Threads >= 1 && p.Threads <= maxThreads
+	return within(p.Memory, MinMemory, MaxMemory) && within(p.Passes, 1, maxPasses) && within(p.Threads, 1, maxThreads)
 }
+
+// within reports whether lo <= v <= hi.
+func within[T cmp.Ordered](v, lo, hi T) bool { return v >= lo && v <= hi }
 
 var b64 = base64.RawStdEncoding
 
@@ -98,7 +101,7 @@ func Verify(password, encoded string) error {
 	if err != nil {
 		return fmt.Errorf("%w: key", ErrFormat)
 	}
-	if !p.valid() || len(salt) < minSaltLen || len(salt) > maxSaltLen || len(want) < minKeyLen || len(want) > maxKeyLen {
+	if !p.valid() || !within(len(salt), minSaltLen, maxSaltLen) || !within(len(want), minKeyLen, maxKeyLen) {
 		return ErrParams
 	}
 	got := argon2.IDKey([]byte(password), salt, p.Passes, p.Memory, p.Threads, uint32(len(want)))

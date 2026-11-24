@@ -1,53 +1,16 @@
 package web
 
 import (
-	"encoding/json"
 	"errors"
-	"fmt"
-	"github.com/Netsession-LAN/Netsession-Relay/internal/uimsg"
 	"net/http"
 	"net/url"
-	"strconv"
 	"strings"
-	"time"
+
+	"github.com/Netsession-LAN/Netsession-Relay/internal/uimsg"
 
 	"github.com/Netsession-LAN/Netsession-Relay/internal/gamedb"
 	"github.com/Netsession-LAN/Netsession-Relay/internal/store"
 )
-
-// gameForm is the create/edit form of a game (operator and up). Values stay strings so a rejected form is
-// shown again as typed.
-type gameForm struct {
-	New        bool
-	From       string // "finder" when opened from the port finder (origin sniffer)
-	ID, Name   string
-	Aliases    string // comma separated
-	Category   string
-	Confidence string
-	Notes      string
-	Enable     bool
-	Specs      []specForm
-	Origin     string // edit: seed | custom | sniffer | import
-	Err        string
-}
-
-// specForm is one discovery row. Adv carries the fields the form does not show (source/dst/TTL mode, rate,
-// payload limit) as JSON, so editing a seed game keeps them.
-type specForm struct {
-	Kind, Ports, Group, Direction string
-	Adv                           string
-}
-
-// emptySpecRows is the number of blank discovery rows offered below the existing ones.
-const emptySpecRows = 2
-
-func blankSpec() specForm { return specForm{Kind: gamedb.KindBroadcast, Direction: "both"} }
-
-func (f *gameForm) pad() {
-	for range emptySpecRows {
-		f.Specs = append(f.Specs, blankSpec())
-	}
-}
 
 func (s *Server) gameNewForm(w http.ResponseWriter, r *http.Request) {
 	q := r.URL.Query()
@@ -85,107 +48,6 @@ func (s *Server) gameEditForm(w http.ResponseWriter, r *http.Request) {
 	s.render(w, r, "game-edit", s.T(r)("%s bearbeiten", g.Name), "games", f)
 }
 
-// readGameForm reads the posted form. The port finder used to post a single spec without index (kind, ports,
-// group, direction); that is still accepted as row 0.
-func readGameForm(r *http.Request, isNew bool) gameForm {
-	v := func(k string) string { return strings.TrimSpace(r.PostFormValue(k)) }
-	f := gameForm{New: isNew, From: v("from"), ID: v("id"), Name: v("name"), Aliases: v("aliases"),
-		Category: v("category"), Confidence: v("confidence"), Notes: v("notes"), Enable: v("enable") == "1"}
-	if v("ports") != "" {
-		f.Specs = append(f.Specs, specForm{Kind: v("kind"), Ports: v("ports"), Group: v("group"), Direction: v("direction")})
-	}
-	for i := 0; i < 32; i++ {
-		k := strconv.Itoa(i)
-		if _, ok := r.PostForm["kind"+k]; !ok {
-			break
-		}
-		f.Specs = append(f.Specs, specForm{Kind: v("kind" + k), Ports: v("ports" + k), Group: v("group" + k),
-			Direction: v("direction" + k), Adv: v("adv" + k)})
-	}
-	return f
-}
-
-// advOf is the hidden form value for the fields of a spec the form does not show ("" when all are defaults).
-func advOf(sp gamedb.Spec) string {
-	sp.Kind, sp.Ports, sp.Group, sp.Direction = "", "", "", ""
-	if sp == (gamedb.Spec{}) {
-		return ""
-	}
-	b, _ := json.Marshal(sp)
-	return string(b)
-}
-
-// game builds the game from the form; base is the stored game when editing (keeps game ports, sources …). The
-// error text comes back in the language of T. The hidden advanced fields (source/destination/TTL mode, rate,
-// payload limit) are an admin matter: from anybody else they are only taken when they are exactly what a row
-// of the stored game already has, so an operator can edit ports without losing or changing them.
-func (f gameForm) game(base gamedb.Game, actor string, admin bool, T translator) (gamedb.Game, string) {
-	stored := map[string]bool{}
-	for _, sp := range base.Discovery {
-		stored[advOf(sp)] = true
-	}
-	g := base
-	g.ID, g.Name, g.Notes = f.ID, f.Name, f.Notes
-	if f.Category != "" {
-		g.Category = f.Category
-	}
-	if g.Category == "" {
-		g.Category = gamedb.CategoryGame
-	}
-	if f.Confidence != "" {
-		g.Confidence = f.Confidence
-	}
-	if g.Confidence == "" {
-		g.Confidence = "low"
-	}
-	if g.SourceIP == "" {
-		g.SourceIP = gamedb.SourceOriginal
-	}
-	g.Aliases = nil
-	for _, a := range strings.Split(f.Aliases, ",") {
-		if a = strings.TrimSpace(a); a != "" {
-			g.Aliases = append(g.Aliases, a)
-		}
-	}
-	g.Discovery = nil
-	for i, sp := range f.Specs {
-		if sp.Ports == "" {
-			continue
-		}
-		var spec gamedb.Spec
-		if sp.Adv != "" {
-			if err := json.Unmarshal([]byte(sp.Adv), &spec); err != nil || (!admin && !stored[advOf(spec)]) {
-				return g, T("Zeile %d: interne Felder beschädigt, bitte die Seite neu laden.", i+1)
-			}
-		}
-		spec.Kind, spec.Ports, spec.Direction, spec.Group = sp.Kind, sp.Ports, sp.Direction, ""
-		if sp.Kind == gamedb.KindMulticast {
-			spec.Group = sp.Group
-		}
-		if spec.Direction == "" {
-			spec.Direction = "both"
-		}
-		g.Discovery = append(g.Discovery, spec)
-	}
-	switch {
-	case len(g.Discovery) > 0:
-		g.RelayNeeded = gamedb.RelayYes
-	case base.RelayNeeded == gamedb.RelayNo:
-		g.RelayNeeded = gamedb.RelayNo
-	default:
-		return g, T("Bitte mindestens einen UDP-Port eintragen.")
-	}
-	if g.RelayNeeded != gamedb.RelayYes {
-		g.DefaultEnabled = false
-	}
-	src := "Web-UI"
-	if f.From == "finder" {
-		src = "Port-Finder"
-	}
-	g.Sources = append(g.Sources, fmt.Sprintf("%s %s (%s)", src, time.Now().Format("2006-01-02"), actor))
-	return g, ""
-}
-
 func (s *Server) gameCreate(w http.ResponseWriter, r *http.Request) {
 	T := s.T(r)
 	f := readGameForm(r, true)
@@ -210,25 +72,29 @@ func (s *Server) gameCreate(w http.ResponseWriter, r *http.Request) {
 		reject(msg)
 		return
 	}
-	origin := "custom"
-	if f.From == "finder" {
-		origin = "sniffer"
-	}
-	if err := s.Store.AddGame(r.Context(), s.actor(r), origin, g); err != nil {
+	if err := s.Store.AddGame(r.Context(), s.actor(r), f.origin(), g); err != nil {
 		reject(s.gameError(r, err))
 		return
 	}
 	msg = T("%s angelegt (aus).", f.Name)
 	if f.Enable {
-		if err := s.Store.SetGameEnabled(r.Context(), s.actor(r), g.ID, true); err == nil {
-			if a := s.applyNow(r, g.ID+" angelegt und an"); a.OK {
-				msg = T("%s angelegt und eingeschaltet (Revision %d).", f.Name, a.Revision)
-			} else {
-				msg = T("%s angelegt, Anwenden fehlgeschlagen: %s", f.Name, a.Error)
-			}
-		}
+		msg = s.enableNewGame(r, f.Name, g.ID, msg)
 	}
 	http.Redirect(w, r, "/spiele/"+url.PathEscape(g.ID)+"?ok="+urlQuery(msg), http.StatusSeeOther)
+}
+
+// enableNewGame switches a just created game on and applies the config. It returns the message for the
+// redirect; created is kept when switching it on fails.
+func (s *Server) enableNewGame(r *http.Request, name, id, created string) string {
+	T := s.T(r)
+	if err := s.Store.SetGameEnabled(r.Context(), s.actor(r), id, true); err != nil {
+		return created
+	}
+	a := s.applyNow(r, id+" angelegt und an")
+	if !a.OK {
+		return T("%s angelegt, Anwenden fehlgeschlagen: %s", name, a.Error)
+	}
+	return T("%s angelegt und eingeschaltet (Revision %d).", name, a.Revision)
 }
 
 func (s *Server) gameUpdate(w http.ResponseWriter, r *http.Request) {

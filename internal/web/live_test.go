@@ -282,3 +282,51 @@ func waitUntil(t *testing.T, cond func() bool) {
 	}
 	t.Fatal("condition not reached within 3 s")
 }
+
+func TestLiveHelpers(t *testing.T) {
+	for _, c := range []struct {
+		rev  store.Revision
+		hash string
+		want bool
+	}{
+		{store.Revision{Hash: "a", AppliedOK: true}, "b", true},
+		{store.Revision{Hash: "a", AppliedOK: true}, "a", false},
+		{store.Revision{Hash: "a", AppliedOK: false}, "b", false},
+		{store.Revision{Hash: "a", AppliedOK: true}, "", false},
+	} {
+		if got := liveEngineBehind(c.rev, c.hash); got != c.want {
+			t.Errorf("liveEngineBehind(%+v, %q) = %v", c.rev, c.hash, got)
+		}
+	}
+	var row busyRow
+	row.nameGames([]gameRef{{ID: "flatout2", Name: "FlatOut 2 (PC)"}, {ID: "x", Name: "X"}})
+	if row.Game != "flatout2" || row.Names != "FlatOut 2 +1" || row.All != "FlatOut 2 (PC) · X" {
+		t.Errorf("nameGames = %+v", row)
+	}
+	ch := make(chan []byte, 1)
+	hubOfferLatest(ch, []byte("old"))
+	hubOfferLatest(ch, []byte("new")) // a slow reader gets the newest sample
+	if got := string(<-ch); got != "new" {
+		t.Errorf("hubOfferLatest kept %q", got)
+	}
+}
+
+func TestGroupAlarms(t *testing.T) {
+	t0 := time.Date(2026, 11, 24, 12, 0, 0, 0, time.UTC)
+	got := groupAlarms([]engineapi.Alarm{
+		{Kind: "foreign_relay", Key: "1102", Count: 2, Last: t0, Detail: "a", AckedAt: t0, AckedBy: "kim"},
+		{Kind: "foreign_relay", Key: "1101", Count: 3, Last: t0.Add(time.Second), Detail: "b"},
+		{Kind: "custom", Key: "x", Count: 1, Last: t0, AckedAt: t0, AckedBy: "jo"},
+	}, compile.ModeObserve)
+	if len(got) != 2 {
+		t.Fatalf("groups = %+v", got)
+	}
+	fr, cu := got[0], got[1]
+	if fr.Kind != "foreign_relay" || fr.Acked || fr.By != "kim" || fr.Count != 5 || fr.Detail != "b" ||
+		fr.Where != "1101 · 1102" || fr.Hint != "Erwartet, solange ein anderes Relay parallel läuft." {
+		t.Errorf("foreign relay group = %+v", fr)
+	}
+	if cu.Title != "custom" || !cu.Acked || cu.By != "jo" {
+		t.Errorf("group without a title = %+v", cu)
+	}
+}

@@ -104,6 +104,21 @@ func Build(st engineapi.Status, engineErr error, webVersion string, eventActive 
 		r.EngineError = engineErr.Error()
 		return r
 	}
+	r.setEngine(st, now)
+	for _, a := range st.Alarms {
+		r.Alarms[a.Kind] = addAlarm(r.Alarms[a.Kind], a, now)
+	}
+	r.addVLANs(st, eventActive && st.Mode == "active" && !st.Standby, now)
+	for _, s := range r.Alarms {
+		sort.Strings(s.Keys)
+		r.AlarmsActive += s.Active
+	}
+	return r
+}
+
+// setEngine copies the facts and counters of an engine that answered; every known drop reason is reported,
+// "relayed" is not a drop.
+func (r *Report) setEngine(st engineapi.Status, now time.Time) {
 	for _, k := range DropReasons {
 		r.Drops[k] = 0
 	}
@@ -121,38 +136,35 @@ func Build(st engineapi.Status, engineErr error, webVersion string, eventActive 
 		}
 	}
 	r.SelfTest = len(st.SelfTest)
+}
 
-	for _, a := range st.Alarms {
-		s := r.Alarms[a.Kind]
-		if s.Keys == nil {
-			s.Keys = []string{}
-		}
-		s.Count += a.Count
-		if u := a.Last.Unix(); !a.Last.IsZero() && u > s.Last {
-			s.Last = u
-		}
-		switch {
-		case !a.AckedAt.IsZero():
-			s.Acked++
-		case now.Sub(a.Last) <= ActiveWindow:
-			s.Active++
-			s.Keys = append(s.Keys, a.Key)
-		}
-		r.Alarms[a.Kind] = s
+// addAlarm counts one engine alarm into the summary of its kind: acknowledged ones as acked, unacknowledged ones
+// seen within ActiveWindow as active with their key.
+func addAlarm(s AlarmSummary, a engineapi.Alarm, now time.Time) AlarmSummary {
+	if s.Keys == nil {
+		s.Keys = []string{}
 	}
+	s.Count += a.Count
+	if u := a.Last.Unix(); !a.Last.IsZero() && u > s.Last {
+		s.Last = u
+	}
+	switch {
+	case !a.AckedAt.IsZero():
+		s.Acked++
+	case now.Sub(a.Last) <= ActiveWindow:
+		s.Active++
+		s.Keys = append(s.Keys, a.Key)
+	}
+	return s
+}
 
-	watch := eventActive && st.Mode == "active" && !st.Standby
+// addVLANs lists the VLANs; while watch is set (event active, relay active and not in standby) a VLAN without
+// received frames for SilentAfter counts as an active vlan_silent alarm.
+func (r *Report) addVLANs(st engineapi.Status, watch bool, now time.Time) {
 	silent := r.Alarms["vlan_silent"]
 	for _, v := range st.VLANStats {
-		x := VLAN{VID: v.VID, Name: v.Name, Group: v.Group, Interface: v.Interface, In: v.In, Out: v.Out, InPerS: v.InRate}
-		since := st.Started
-		if !v.LastIn.IsZero() {
-			x.LastIn, since = v.LastIn.Unix(), v.LastIn
-		}
-		if !since.IsZero() {
-			x.SilentS = int64(now.Sub(since) / time.Second)
-		}
-		if watch && !since.IsZero() && now.Sub(since) >= SilentAfter {
+		x, quiet := vlanReport(v, st.Started, now)
+		if watch && quiet {
 			x.Silent = 1
 			silent.Active++
 			silent.Keys = append(silent.Keys, fmt.Sprint(v.VID))
@@ -160,11 +172,21 @@ func Build(st engineapi.Status, engineErr error, webVersion string, eventActive 
 		r.VLANList = append(r.VLANList, x)
 	}
 	r.Alarms["vlan_silent"] = silent
-	for _, s := range r.Alarms {
-		sort.Strings(s.Keys)
-		r.AlarmsActive += s.Active
+}
+
+// vlanReport converts the counters of one VLAN and tells whether it has been silent for SilentAfter, counted
+// from its last received frame or, without one, from the engine start.
+func vlanReport(v engineapi.VLANStat, started, now time.Time) (VLAN, bool) {
+	x := VLAN{VID: v.VID, Name: v.Name, Group: v.Group, Interface: v.Interface, In: v.In, Out: v.Out, InPerS: v.InRate}
+	since := started
+	if !v.LastIn.IsZero() {
+		x.LastIn, since = v.LastIn.Unix(), v.LastIn
 	}
-	return r
+	if since.IsZero() {
+		return x, false
+	}
+	x.SilentS = int64(now.Sub(since) / time.Second)
+	return x, now.Sub(since) >= SilentAfter
 }
 
 func b2f(b bool) float64 { return float64(b2i(b)) }

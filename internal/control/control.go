@@ -4,22 +4,12 @@ package control
 
 import (
 	"context"
-	"database/sql"
 	"encoding/json"
 	"errors"
 	"fmt"
-	"os"
-	"path/filepath"
-	"slices"
-	"sort"
-	"strings"
-	"time"
-
-	"gopkg.in/yaml.v3"
 
 	"github.com/Netsession-LAN/Netsession-Relay/internal/compile"
 	"github.com/Netsession-LAN/Netsession-Relay/internal/engineapi"
-	"github.com/Netsession-LAN/Netsession-Relay/internal/gamedb"
 	"github.com/Netsession-LAN/Netsession-Relay/internal/store"
 )
 
@@ -27,108 +17,6 @@ import (
 type Engine interface {
 	Validate(context.Context, *compile.Snapshot) (engineapi.Result, error)
 	Apply(context.Context, *compile.Snapshot) (engineapi.Result, error)
-}
-
-// Presets of `nsrelay admin init`. The usual way to a first configuration is the setup in the browser; the
-// presets are for scripted installations and the lab. Like the setup, every preset starts in the mode observe:
-// the relay counts and warns, and sends only after `nsrelay admin mode active` and an apply.
-const (
-	// PresetLAN is a small example to start from: game servers in VLAN 100 (10.10.0.0/24), four tables in VLANs
-	// 101-104 (10.10.n.0/24), relay IP .250 (what the setup in the browser suggests).
-	PresetLAN = "lan"
-	// PresetNetsession is the event network of the Netsession LAN party, as an example of a bigger event: game
-	// servers 1100 = 10.10.0.0/24, table n = VLAN 1100+n = 10.10.n.0/24 (n = 1..14), WiFi 1253, orga 1254, relay
-	// IP .55, WiFi not in the matrix.
-	PresetNetsession = "netsession"
-	// PresetLab is the layout of the network lab (lab/up.sh): VLANs 1100-1103.
-	PresetLab = "lab"
-)
-
-// Presets lists the preset names for help texts.
-const Presets = PresetLAN + "|" + PresetNetsession + "|" + PresetLab
-
-// ErrUnknownPreset is returned by Preset and Init for a name that is not a preset.
-var ErrUnknownPreset = errors.New("unknown preset")
-
-// Preset returns an initial configuration: the networks of the preset on the trunk parent, the default matrix
-// between the groups that have a network, and the games the database switches on by default.
-func Preset(name, parent string, db *gamedb.DB) (store.Config, error) {
-	vlan := func(vid int, name, group string, third, host int) store.VLANConfig {
-		return store.VLANConfig{VID: vid, Name: name, Group: group, CIDR: fmt.Sprintf("10.10.%d.0/24", third),
-			RelayIP: fmt.Sprintf("10.10.%d.%d", third, host), Attach: compile.AttachTrunk, Parent: parent, Enabled: true}
-	}
-	var event string
-	var vlans []store.VLANConfig
-	switch name {
-	case PresetLAN:
-		event = "LAN"
-		vlans = append(vlans, vlan(100, "Gameserver", compile.GroupGameserver, 0, 250))
-		for n := 1; n <= 4; n++ {
-			vlans = append(vlans, vlan(100+n, fmt.Sprintf("Tisch %d", n), compile.GroupTables, n, 250))
-		}
-	case PresetNetsession:
-		event = "Netsession LAN"
-		vlans = append(vlans, vlan(1100, "Gameserver", compile.GroupGameserver, 0, 55))
-		for n := 1; n <= 14; n++ {
-			vlans = append(vlans, vlan(1100+n, fmt.Sprintf("Tisch %d", n), compile.GroupTables, n, 55))
-		}
-		vlans = append(vlans, vlan(1253, "User-WiFi", compile.GroupWiFi, 253, 55), vlan(1254, "Orga", compile.GroupOrga, 254, 55))
-	case PresetLab:
-		event = "Labor"
-		vlans = append(vlans, vlan(1100, "Gameserver", compile.GroupGameserver, 0, 55))
-		for n := 1; n <= 3; n++ {
-			vlans = append(vlans, vlan(1100+n, fmt.Sprintf("Tisch %d", n), compile.GroupTables, n, 55))
-		}
-	default:
-		return store.Config{}, fmt.Errorf("%w %q (%s)", ErrUnknownPreset, name, Presets)
-	}
-	return SetupConfig(event, compile.ModeObserve, vlans, db), nil
-}
-
-// SetupConfig is the configuration the first-run setup in the browser creates: the given networks, the default
-// matrix (tables, game servers and orga see each other; only groups that have a network) and the games the
-// database switches on by default.
-func SetupConfig(event, mode string, vlans []store.VLANConfig, db *gamedb.DB) store.Config {
-	c := store.Config{Version: 1, Event: event, Mode: mode, VLANs: vlans}
-	used := map[string]bool{}
-	for _, v := range vlans {
-		used[v.Group] = true
-	}
-	prof := compile.DefaultFlowProfile()
-	p := store.ProfileConfig{Name: prof.Name, Default: true}
-	for _, e := range prof.Edges {
-		if used[e.Src] && used[e.Dst] {
-			p.Edges = append(p.Edges, e)
-		}
-	}
-	c.Profiles = []store.ProfileConfig{p}
-	for _, g := range db.Games {
-		if g.DefaultEnabled {
-			c.Games = append(c.Games, store.EventGameConfig{ID: g.ID})
-		}
-	}
-	return c
-}
-
-// Init creates a fresh configuration: seed games plus preset, mode observe. Refuses if a configuration exists
-// unless force.
-func Init(ctx context.Context, st *store.Store, user, preset, parent string, force bool) (store.SeedResult, error) {
-	seed, err := gamedb.Seed()
-	if err != nil {
-		return store.SeedResult{}, err
-	}
-	res, err := st.SyncSeed(ctx, seed)
-	if err != nil {
-		return res, err
-	}
-	if _, err := st.ActiveEvent(ctx); err == nil && !force {
-		return res, errors.New("configuration exists already (use -force to replace it)")
-	}
-	c, err := Preset(preset, parent, seed)
-	if err != nil {
-		return res, err
-	}
-	return res, st.ImportConfig(ctx, user, c)
 }
 
 // ApplyResult describes one apply.
@@ -185,26 +73,29 @@ func Apply(ctx context.Context, st *store.Store, eng Engine, user, note string, 
 	if err != nil {
 		return res, fmt.Errorf("%w: %w", ErrEngineUnreachable, err)
 	}
+	res.Revision, err = st.AddRevision(ctx, newRevision(user, note, cfg, snap, warns, res.Engine))
+	if err != nil {
+		return res, err
+	}
+	if !res.Engine.OK {
+		_ = st.Audit(ctx, user, "apply.rejected", fmt.Sprintf("revision %d", res.Revision), "", snap.Hash)
+		return res, fmt.Errorf("%w: %s", ErrEngineRejected, res.Engine.Error)
+	}
+	_ = st.Audit(ctx, user, "apply", fmt.Sprintf("revision %d", res.Revision), "", snap.Hash)
+	return res, nil
+}
+
+// newRevision is the record of an apply the engine answered: the configuration that was compiled, the snapshot,
+// the warnings and the engine's verdict.
+func newRevision(user, note string, cfg store.Config, snap *compile.Snapshot, warns []compile.Warning, eng engineapi.Result) store.Revision {
 	sj, _ := json.Marshal(snap)
 	cj, _ := json.Marshal(cfg)
 	ws := make([]string, len(warns))
 	for i, w := range warns {
 		ws[i] = w.String()
 	}
-	res.Revision, err = st.AddRevision(ctx, store.Revision{User: user, Note: note, Hash: snap.Hash, Snapshot: string(sj),
-		Config: string(cj), Warnings: ws, AppliedOK: res.Engine.OK, EngineMessage: res.Engine.Error})
-	if err != nil {
-		return res, err
-	}
-	action := "apply"
-	if !res.Engine.OK {
-		action = "apply.rejected"
-	}
-	_ = st.Audit(ctx, user, action, fmt.Sprintf("revision %d", res.Revision), "", snap.Hash)
-	if !res.Engine.OK {
-		return res, fmt.Errorf("%w: %s", ErrEngineRejected, res.Engine.Error)
-	}
-	return res, nil
+	return store.Revision{User: user, Note: note, Hash: snap.Hash, Snapshot: string(sj), Config: string(cj), Warnings: ws,
+		AppliedOK: eng.OK, EngineMessage: eng.Error}
 }
 
 // StatusEngine is an Engine that also reports which snapshot it runs.
@@ -235,18 +126,9 @@ func Refresh(ctx context.Context, st *store.Store, eng StatusEngine, note string
 	if !rev.AppliedOK || status.SnapshotHash != rev.Hash {
 		return 0, nil
 	}
-	var old store.Config
-	if err := json.Unmarshal([]byte(rev.Config), &old); err != nil {
-		return 0, nil //nolint:nilerr // a revision that cannot be read is left alone like any other mismatch; retrying would not help
-	}
-	cur, err := st.ExportConfig(ctx)
-	if err != nil {
+	same, err := sameConfig(ctx, st, rev)
+	if err != nil || !same {
 		return 0, err
-	}
-	a, _ := json.Marshal(old)
-	b, _ := json.Marshal(cur)
-	if string(a) != string(b) {
-		return 0, nil
 	}
 	dry, err := Apply(ctx, st, eng, "", "", true)
 	if err != nil || dry.Snapshot.Hash == rev.Hash {
@@ -254,6 +136,30 @@ func Refresh(ctx context.Context, st *store.Store, eng StatusEngine, note string
 	}
 	res, err := Apply(ctx, st, eng, "system", note, false)
 	return res.Revision, err
+}
+
+// sameConfig reports whether the active configuration is still the one the revision recorded. A revision whose
+// configuration cannot be read counts as different: it is left alone like any other mismatch, retrying would
+// not help.
+func sameConfig(ctx context.Context, st *store.Store, rev store.Revision) (bool, error) {
+	old, ok := recordedConfig(rev)
+	if !ok {
+		return false, nil
+	}
+	cur, err := st.ExportConfig(ctx)
+	if err != nil {
+		return false, err
+	}
+	a, _ := json.Marshal(old)
+	b, _ := json.Marshal(cur)
+	return string(a) == string(b), nil
+}
+
+// recordedConfig decodes the configuration a revision recorded; ok is false when it cannot be read.
+func recordedConfig(rev store.Revision) (store.Config, bool) {
+	var c store.Config
+	err := json.Unmarshal([]byte(rev.Config), &c)
+	return c, err == nil
 }
 
 // Rollback restores the configuration of a revision and applies it (a new revision is recorded).
@@ -274,217 +180,4 @@ func Rollback(ctx context.Context, st *store.Store, eng Engine, user string, id 
 	}
 	_ = st.Audit(ctx, user, "rollback", fmt.Sprintf("revision %d", id), "", "")
 	return Apply(ctx, st, eng, user, fmt.Sprintf("rollback to revision %d", id), false)
-}
-
-// Backup writes a consistent SQLite copy (VACUUM INTO) and a readable YAML export of the active
-// configuration into dir, keeping the newest keep backups. Returns the database copy path. Both files are
-// readable by the owner only: the database holds password hashes and the secrets of the monitoring targets.
-// The name carries the time to the second; a second backup within the same second gets a counter ("-2").
-func Backup(ctx context.Context, st *store.Store, dir string, keep int) (string, error) {
-	if err := os.MkdirAll(dir, 0o750); err != nil {
-		return "", err
-	}
-	stamp := st.Now().UTC().Format(backupStamp)
-	// SQLite would create the copy with the permissions the umask leaves (usually readable by everybody), so the
-	// file is created here, empty and private; VACUUM INTO accepts an empty file as its target.
-	base, err := createBackupFile(dir, stamp)
-	if err != nil {
-		return "", fmt.Errorf("backup: %w", err)
-	}
-	dbPath := base + ".db"
-	if err := st.VacuumInto(ctx, dbPath); err != nil {
-		os.Remove(dbPath)
-		return "", fmt.Errorf("backup: %w", err)
-	}
-	if cfg, err := st.ExportConfig(ctx); err == nil {
-		b, _ := yaml.Marshal(cfg)
-		header := "# Netsession Relay configuration export " + stamp + " (readable copy; restore uses the .db file)\n"
-		if err := os.WriteFile(base+".yaml", append([]byte(header), b...), 0o600); err != nil {
-			return dbPath, err
-		}
-	}
-	return dbPath, prune(dir, keep)
-}
-
-// backupStamp is the time in a backup's file name: nsrelay-<stamp>.db, nsrelay-<stamp>-<n>.db for a further
-// backup within the same second.
-const backupStamp = "20060102-150405"
-
-// createBackupFile creates the empty, private database file of a new backup and returns its path without the
-// extension. The file is created exclusively, so two backups at the same moment never share a name.
-func createBackupFile(dir, stamp string) (string, error) {
-	for n := 1; n <= 1000; n++ {
-		base := filepath.Join(dir, "nsrelay-"+stamp)
-		if n > 1 {
-			base += fmt.Sprintf("-%d", n)
-		}
-		f, err := os.OpenFile(base+".db", os.O_WRONLY|os.O_CREATE|os.O_EXCL, 0o600)
-		if errors.Is(err, os.ErrExist) {
-			continue
-		}
-		if err != nil {
-			return "", err
-		}
-		return base, f.Close()
-	}
-	return "", fmt.Errorf("no free file name for nsrelay-%s in %s", stamp, dir)
-}
-
-// backupFiles lists the database copies in dir, oldest first. Sorted without the extension, by length first: a
-// counter suffix makes the name longer, so "-2" follows the plain name and "-10" follows "-9".
-func backupFiles(dir string) ([]string, error) {
-	m, err := filepath.Glob(filepath.Join(dir, "nsrelay-*.db"))
-	if err != nil {
-		return nil, err
-	}
-	key := func(p string) (string, string) {
-		name := strings.TrimSuffix(filepath.Base(p), ".db")
-		stamp := name
-		if len(stamp) > len("nsrelay-")+len(backupStamp) {
-			stamp = stamp[:len("nsrelay-")+len(backupStamp)]
-		}
-		return stamp, name
-	}
-	sort.Slice(m, func(i, j int) bool {
-		si, ni := key(m[i])
-		sj, nj := key(m[j])
-		if si != sj {
-			return si < sj
-		}
-		if len(ni) != len(nj) {
-			return len(ni) < len(nj)
-		}
-		return ni < nj
-	})
-	return m, nil
-}
-
-// BackupTemp writes a backup for a download into a fresh private directory and returns the database copy and a
-// function that removes the directory again. The directory is created in the first of dirs that is writable,
-// last in the temporary directory of the system: in the container the root file system is read-only, so /tmp
-// may not exist as a writable place, while the backup directory and the data directory are volumes.
-// Directories a crashed download left behind are removed when they are older than an hour.
-func BackupTemp(ctx context.Context, st *store.Store, dirs ...string) (path string, cleanup func(), err error) {
-	const prefix = ".nsrelay-download-"
-	var tmp string
-	for _, d := range append(slices.Clone(dirs), os.TempDir()) {
-		if d == "" {
-			continue
-		}
-		if old, _ := filepath.Glob(filepath.Join(d, prefix+"*")); len(old) > 0 {
-			for _, o := range old {
-				if fi, serr := os.Stat(o); serr == nil && fi.IsDir() && time.Since(fi.ModTime()) > time.Hour {
-					os.RemoveAll(o)
-				}
-			}
-		}
-		if tmp, err = os.MkdirTemp(d, prefix); err == nil {
-			break
-		}
-	}
-	if err != nil {
-		return "", nil, fmt.Errorf("backup: no writable directory for the temporary copy: %w", err)
-	}
-	cleanup = func() { os.RemoveAll(tmp) }
-	path, err = Backup(ctx, st, tmp, 0)
-	if err != nil {
-		cleanup()
-		return "", nil, err
-	}
-	return path, cleanup, nil
-}
-
-// LastBackup returns the time of the newest backup in dir (from its file name), zero if there is none.
-func LastBackup(dir string) time.Time {
-	m, _ := backupFiles(dir)
-	for i := len(m) - 1; i >= 0; i-- {
-		stamp := strings.TrimSuffix(strings.TrimPrefix(filepath.Base(m[i]), "nsrelay-"), ".db")
-		if len(stamp) > len(backupStamp) {
-			stamp = stamp[:len(backupStamp)]
-		}
-		if t, err := time.Parse(backupStamp, stamp); err == nil {
-			return t
-		}
-	}
-	return time.Time{}
-}
-
-// BackupEvery is the rhythm of the automatic backup.
-const BackupEvery = 24 * time.Hour
-
-// AutoBackup writes a backup into dir whenever the newest one is older than BackupEvery (checked a minute after
-// the start, then every hour) and keeps the newest keep. It replaces a timer on the host; backups written by
-// `nsrelay backup` in between count, too. report gets every attempt. Returns when ctx ends.
-func AutoBackup(ctx context.Context, st *store.Store, dir string, keep int, report func(path string, err error)) {
-	wait := time.Minute
-	for {
-		select {
-		case <-ctx.Done():
-			return
-		case <-time.After(wait):
-		}
-		wait = time.Hour
-		if !backupDue(dir, st.Now()) {
-			continue
-		}
-		path, err := Backup(ctx, st, dir, keep)
-		report(path, err)
-	}
-}
-
-// backupDue: no backup yet or the newest one is a day old (five minutes of slack for the hourly check).
-func backupDue(dir string, now time.Time) bool {
-	last := LastBackup(dir)
-	return last.IsZero() || now.Sub(last) >= BackupEvery-5*time.Minute
-}
-
-func prune(dir string, keep int) error {
-	if keep <= 0 {
-		return nil
-	}
-	m, err := backupFiles(dir)
-	if err != nil {
-		return err
-	}
-	for len(m) > keep {
-		old := m[0]
-		m = m[1:]
-		os.Remove(old)
-		os.Remove(strings.TrimSuffix(old, ".db") + ".yaml")
-	}
-	return nil
-}
-
-// Restore replaces the database at dbPath with a backup file after checking it opens and has a schema.
-// The current database is kept as <dbPath>.before-restore-<time>. The web part must be stopped.
-func Restore(dbPath, backup string) (string, error) {
-	db, err := sql.Open("sqlite", "file:"+backup+"?mode=ro")
-	if err != nil {
-		return "", err
-	}
-	var n int
-	err = db.QueryRow(`SELECT count(*) FROM schema_migration`).Scan(&n)
-	db.Close()
-	if err != nil {
-		return "", fmt.Errorf("%s is not a relay backup: %w", backup, err)
-	}
-	if n == 0 {
-		return "", fmt.Errorf("%s is not a relay backup: no migrations recorded", backup)
-	}
-	keep := dbPath + ".before-restore-" + time.Now().UTC().Format("20060102-150405")
-	if _, err := os.Stat(dbPath); err == nil {
-		if err := os.Rename(dbPath, keep); err != nil {
-			return "", err
-		}
-		for _, suf := range []string{"-wal", "-shm"} {
-			os.Remove(dbPath + suf)
-		}
-	} else {
-		keep = ""
-	}
-	b, err := os.ReadFile(backup)
-	if err != nil {
-		return keep, err
-	}
-	return keep, os.WriteFile(dbPath, b, 0o600) //nolint:gosec // G703: the backup file is named by the operator on the command line
 }

@@ -40,6 +40,9 @@
   var phone = window.matchMedia("(pointer: coarse), (max-width: 700px)");
 
   function all(sel, root) { return Array.prototype.slice.call((root || doc).querySelectorAll(sel)); }
+  // a plain left click: with a modifier key or another button the browser opens the link its own way
+  var MODIFIERS = ["metaKey", "ctrlKey", "shiftKey", "altKey"];
+  function plainClick(e) { return e.button === 0 && !MODIFIERS.some(function (k) { return e[k]; }); }
   function parse(url) {
     try { var u = new URL(url, location.origin); return u.origin === location.origin ? u : null; } catch (e) { return null; }
   }
@@ -227,7 +230,7 @@
     }, true);
     cw.document.addEventListener("click", function (e) {
       var a = e.target && e.target.closest ? e.target.closest("a[href]") : null;
-      if (!a || e.defaultPrevented || e.button !== 0 || e.metaKey || e.ctrlKey || e.shiftKey || e.altKey) return;
+      if (!a || e.defaultPrevented || !plainClick(e)) return;
       if (a.target || a.hasAttribute("download")) return;
       var u = parse(a.href), app = u ? appOf(u.href) : "";
       // a link into another program opens or focuses that program; everything else stays in this window
@@ -313,7 +316,7 @@
   // ---- desktop icons, Start menu, tray: program links open windows ----
   doc.addEventListener("click", function (e) {
     var a = e.target.closest ? e.target.closest("a[data-app]") : null;
-    if (!a || e.button !== 0 || e.metaKey || e.ctrlKey || e.shiftKey || e.altKey) return;
+    if (!a || !plainClick(e)) return;
     e.preventDefault();
     closeStart();
     openApp(a.getAttribute("href"), false);
