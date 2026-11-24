@@ -22,3 +22,6 @@ __pycache__/
 
 # lab build output
 /lab/.bin/
+/lab/.cover/
+/.cover-unit/
+/coverage.out

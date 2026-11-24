@@ -63,11 +63,21 @@ event is known for; the file pins the FlatOut series, the reason this relay exis
    changes on purpose, update it with `go test ./internal/compile -update`.
 4. Open a pull request, or use the issue template "New game / port correction" if you only have the facts.
 
-At the LAN the **Port-Finder** page does step 1 without Wireshark: pick the VLAN (and the test PC's address), start a
-session (up to 10 minutes), open the game's LAN browser. Every broadcast/multicast destination shows up with packet
-count, interval, size, senders and the first 64 bytes; destinations that appear after the start are marked *neu*,
-common noise (Steam 27036, mDNS, SSDP, NetBIOS …) can be hidden, and ports that belong to a game in the database
-but switched off are named. **Spiel anlegen** turns an unknown port into a game (`origin: sniffer`,
-`confidence: low`) and can switch it on right away. Download the capture as `.pcap` and attach it to the pull request
-or issue. On the command line: `nsrelay admin finder-start -vlans 1101 -src 10.10.1.23 -seconds 300`,
-`nsrelay admin finder`, `nsrelay admin finder-pcap capture.pcap`.
+At the LAN the page **Port-Finder** (Port finder) does step 1 without Wireshark: pick the VLAN (and the test PC's
+address), start a session (up to 10 minutes), open the game's LAN browser. Every broadcast/multicast destination
+shows up with packet count, interval, size, senders and the first 64 bytes; destinations that appear after the
+start are marked *neu* (*new*), common noise (Steam 27036, mDNS, SSDP, NetBIOS …) can be hidden, and ports that
+belong to a game in the database but switched off are named. **Spiel anlegen** (Add game) turns an unknown port
+into a game (`origin: sniffer`, `confidence: low`) and can switch it on right away. Download the capture as
+`.pcap` with the button on the page and attach it to the pull request or issue.
+
+The same on the command line. `-vlans` takes VLAN IDs of networks the relay has (it refuses others and lists the
+ones it knows); here VLAN 101 of the example configuration:
+
+```sh
+docker compose exec web nsrelay admin finder-start -vlans 101 -src 10.10.1.23 -seconds 300
+docker compose exec web nsrelay admin finder
+docker compose exec -T web nsrelay admin finder-pcap - > capture.pcap
+```
+
+`finder-pcap -` writes the capture to standard output, because inside the container only `/backups` is writable.

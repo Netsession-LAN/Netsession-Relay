@@ -1,0 +1,35 @@
+# golangci-lint (v2) for Netsession Relay. CI runs: go run github.com/golangci/golangci-lint/v2/cmd/golangci-lint@v2.15.0 run
+version: "2"
+
+linters:
+  # errcheck, govet, ineffassign, staticcheck, unused
+  default: standard
+  enable:
+    - bodyclose   # HTTP response bodies are closed
+    - errorlint   # errors are compared with errors.Is/As, wrapped with %w
+    - gosec       # security checks
+    - misspell
+    - nilerr      # no "return nil" right after checking an error
+    - unconvert   # no needless conversions
+  settings:
+    staticcheck:
+      checks: ["all", "-ST1000", "-ST1003"]
+    gosec:
+      excludes:
+        - G104  # unchecked errors: errcheck reports them (with the standard exclusions)
+        - G115  # integer conversions: lengths bounded by the MTU, counters and wire fields of fixed width
+    misspell:
+      # British and American spelling are both fine; the UI's source texts are German
+      ignore-rules: [konfiguration, verifikation]
+  exclusions:
+    presets:
+      - std-error-handling      # unchecked fmt.Fprint* to the terminal, Close in defer
+      - common-false-positives
+    rules:
+      # tests may ignore errors of their helpers and build fixtures freely
+      - path: _test\.go
+        linters: [errcheck, gosec, bodyclose]
+
+formatters:
+  enable:
+    - gofmt

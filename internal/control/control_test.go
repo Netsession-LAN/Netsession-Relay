@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"fmt"
 	"github.com/Netsession-LAN/Netsession-Relay/internal/gamedb"
 	"os"
 	"path/filepath"
@@ -75,7 +76,18 @@ func TestInitNetsessionPreset(t *testing.T) {
 	if len(s.VLANs) != 17 || !hasRule(s, "23757") || res.Revision != 1 {
 		t.Fatalf("vlans=%d flatout=%v rev=%d", len(s.VLANs), hasRule(s, "23757"), res.Revision)
 	}
-	// same result as the compiler golden test: the preset is the real event network
+	// a preset starts like the setup in the browser: it counts and sends nothing until somebody switches it on
+	if s.Mode != compile.ModeObserve {
+		t.Errorf("mode after init = %s, want observe", s.Mode)
+	}
+	if err := st.SetMode(context.Background(), "test", compile.ModeActive); err != nil {
+		t.Fatal(err)
+	}
+	if res, err = Apply(context.Background(), st, eng, "test", "", true); err != nil {
+		t.Fatal(err)
+	}
+	s = res.Snapshot
+	// switched on, it is the same as the compiler golden test: the preset is the real event network
 	golden, err := os.ReadFile(filepath.Join("..", "compile", "testdata", "example_snapshot.json"))
 	if err != nil {
 		t.Fatal(err)
@@ -230,13 +242,13 @@ func TestRefreshAfterUpdate(t *testing.T) {
 	if err := st.SetSetting(ctx, store.SettingProbeServers, "1"); err != nil {
 		t.Fatal(err)
 	}
-	if err := st.SetMode(ctx, "test", compile.ModeObserve); err != nil {
+	if err := st.SetMode(ctx, "test", compile.ModeActive); err != nil {
 		t.Fatal(err)
 	}
 	if rev, err := Refresh(ctx, st, eng, "update"); err != nil || rev != 0 {
 		t.Fatalf("unapplied change: rev=%d err=%v", rev, err)
 	}
-	if err := st.SetMode(ctx, "test", compile.ModeActive); err != nil {
+	if err := st.SetMode(ctx, "test", compile.ModeObserve); err != nil {
 		t.Fatal(err)
 	}
 	// engine runs something else (e.g. a snapshot file put there by hand): left alone
@@ -360,5 +372,126 @@ func TestRollbackErrors(t *testing.T) {
 	}
 	if _, err := Rollback(ctx, st, eng, "test", r1.Revision); !errors.Is(err, ErrRevisionRestore) {
 		t.Errorf("revision with a deleted game: %v", err)
+	}
+}
+
+// Two backups within one second (a script, an impatient admin) both succeed: the second one gets a counter, counts
+// as the newest and is pruned in the order of creation.
+func TestBackupSameSecond(t *testing.T) {
+	ctx := context.Background()
+	st, _ := setup(t, "lab")
+	dir := t.TempDir()
+	clock := time.Date(2026, 11, 24, 10, 0, 0, 0, time.UTC)
+	st.Now = func() time.Time { return clock }
+	var paths []string
+	for range 11 {
+		p, err := Backup(ctx, st, dir, 0)
+		if err != nil {
+			t.Fatal(err)
+		}
+		paths = append(paths, p)
+	}
+	if filepath.Base(paths[0]) != "nsrelay-20261124-100000.db" || filepath.Base(paths[1]) != "nsrelay-20261124-100000-2.db" ||
+		filepath.Base(paths[10]) != "nsrelay-20261124-100000-11.db" {
+		t.Fatalf("names: %v", paths)
+	}
+	for _, p := range paths {
+		if _, err := os.Stat(strings.TrimSuffix(p, ".db") + ".yaml"); err != nil {
+			t.Errorf("yaml next to %s: %v", filepath.Base(p), err)
+		}
+	}
+	if got, err := backupFiles(dir); err != nil || !slices.Equal(got, paths) {
+		t.Errorf("order of the backups: %v, %v", got, err)
+	}
+	if last := LastBackup(dir); !last.Equal(clock) {
+		t.Errorf("LastBackup = %v, want %v", last, clock)
+	}
+	// an older backup with a counter sorts before a newer one without
+	clock = clock.Add(time.Second)
+	newest, err := Backup(ctx, st, dir, 2)
+	if err != nil {
+		t.Fatal(err)
+	}
+	got, _ := backupFiles(dir)
+	if !slices.Equal(got, []string{paths[10], newest}) {
+		t.Errorf("after prune: %v, want the last two", got)
+	}
+	if last := LastBackup(dir); !last.Equal(clock) {
+		t.Errorf("LastBackup after prune = %v, want %v", last, clock)
+	}
+}
+
+// The copy for a download goes into the first writable directory given and leaves nothing behind; without one
+// that is writable the error says so.
+func TestBackupTemp(t *testing.T) {
+	ctx := context.Background()
+	st, _ := setup(t, "lab")
+	dir := t.TempDir()
+	missing := filepath.Join(dir, "missing", "deeper")
+	for _, k := range []string{"TMPDIR", "TMP", "TEMP"} {
+		t.Setenv(k, missing)
+	}
+	// a directory a crashed download left behind
+	stale := filepath.Join(dir, ".nsrelay-download-old")
+	if err := os.Mkdir(stale, 0o700); err != nil {
+		t.Fatal(err)
+	}
+	old := time.Now().Add(-2 * time.Hour)
+	if err := os.Chtimes(stale, old, old); err != nil {
+		t.Fatal(err)
+	}
+	path, cleanup, err := BackupTemp(ctx, st, "", missing, dir)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.HasPrefix(path, dir) {
+		t.Errorf("copy at %s, want it below %s", path, dir)
+	}
+	if fi, err := os.Stat(path); err != nil || fi.Size() == 0 {
+		t.Errorf("copy: %v", err)
+	}
+	if _, err := os.Stat(stale); err == nil {
+		t.Error("stale download directory kept")
+	}
+	if m, _ := filepath.Glob(filepath.Join(dir, "nsrelay-*.db")); len(m) != 0 {
+		t.Errorf("download counted as a backup: %v", m)
+	}
+	cleanup()
+	if left, _ := os.ReadDir(dir); len(left) != 0 {
+		t.Errorf("left behind: %v", left)
+	}
+	if _, _, err := BackupTemp(ctx, st, missing); err == nil {
+		t.Error("no writable directory, but no error")
+	}
+}
+
+// The lan preset is what a new user starts from without the browser: relay address .250 like the setup suggests,
+// mode observe, and a second init needs -force.
+func TestInitLANPreset(t *testing.T) {
+	ctx := context.Background()
+	st, eng := setup(t, PresetLAN)
+	cfg, err := st.ExportConfig(ctx)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if cfg.Mode != compile.ModeObserve || len(cfg.VLANs) != 5 {
+		t.Fatalf("mode %s, %d networks", cfg.Mode, len(cfg.VLANs))
+	}
+	for i, v := range cfg.VLANs {
+		if want := fmt.Sprintf("10.10.%d.250", i); v.VID != 100+i || v.RelayIP != want {
+			t.Errorf("network %d: VLAN %d, relay address %s, want VLAN %d, %s", i, v.VID, v.RelayIP, 100+i, want)
+		}
+	}
+	if res, err := Apply(ctx, st, eng, "test", "", false); err != nil || res.Snapshot.Mode != compile.ModeObserve {
+		t.Errorf("apply: %v", err)
+	}
+	if _, err := Init(ctx, st, "test", PresetLAN, "trunk0", false); err == nil || !strings.Contains(err.Error(), "-force") {
+		t.Errorf("second init without -force: %v", err)
+	}
+	if _, err := Init(ctx, st, "test", PresetLAN, "eth1", true); err != nil {
+		t.Errorf("init -force: %v", err)
+	}
+	if cfg, _ := st.ExportConfig(ctx); cfg.VLANs[0].Parent != "eth1" {
+		t.Errorf("init -force kept the old configuration: parent %s", cfg.VLANs[0].Parent)
 	}
 }

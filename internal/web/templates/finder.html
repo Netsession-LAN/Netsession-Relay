@@ -31,7 +31,7 @@
   </tbody>
 </table></div>
 {{else}}<p class="quiet">{{icon "info"}}<span>{{if $s.Active}}{{t "Noch nichts angekommen. Ist das Spiel im LAN-Browser?"}}{{else}}{{t "In dieser Sitzung kam nichts an."}}{{end}}</span></p>{{end}}
-{{if .Hidden}}<p class="small muted finder-foot">{{t "%d Ziele mit bekanntem Lärm (Steam, mDNS, SSDP …) ausgeblendet." .Hidden}} <a href="/finder?laerm=1">{{t "Einblenden"}}</a></p>
+{{if .Hidden}}<p class="small muted finder-foot">{{if eq .Hidden 1}}{{t "1 Ziel mit bekanntem Lärm (Steam, mDNS, SSDP …) ausgeblendet."}}{{else}}{{t "%d Ziele mit bekanntem Lärm (Steam, mDNS, SSDP …) ausgeblendet." .Hidden}}{{end}} <a href="/finder?laerm=1">{{t "Einblenden"}}</a></p>
 {{else if .ShowNoise}}<p class="small muted finder-foot">{{t "Bekannter Lärm (Steam, mDNS, SSDP …) ist eingeblendet."}} <a href="/finder">{{t "Lärm ausblenden"}}</a></p>{{end}}
 {{if $s.Captured}}<p class="actions finder-foot"><a class="btn-outline" href="/finder/mitschnitt.pcap">{{icon "download"}}<span>{{t "Mitschnitt laden (.pcap)"}}</span></a><span class="small muted">{{t "Öffnet in Wireshark."}}</span></p>{{end}}
 {{end}}

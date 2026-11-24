@@ -2,7 +2,7 @@
 
 ## Build and test
 
-Go 1.26 or newer (CI and the release image use 1.27). The binary is built without CGO; only the race detector needs a C compiler.
+Go 1.26 or newer; `go.mod` names the toolchain (`go1.27.4`), which the go command fetches by itself when yours is older. The binary is built without CGO; only the race detector needs a C compiler.
 
 ```sh
 go build ./cmd/nsrelay
@@ -10,7 +10,7 @@ go test ./...                 # unit tests (pure logic, web handlers with a fake
 gofmt -l cmd internal games   # must print nothing
 go mod tidy -diff             # must print nothing
 go vet ./... && GOOS=windows go vet ./...     # pure-logic packages stay portable
-go run honnef.co/go/tools/cmd/staticcheck@v0.8.2 -checks all,-ST1000,-ST1003 ./...
+go run github.com/golangci/golangci-lint/v2/cmd/golangci-lint@v2.15.0 run ./...
 go run golang.org/x/vuln/cmd/govulncheck@v1.9.0 ./...
 CGO_ENABLED=1 go test -race ./...
 ```
@@ -21,7 +21,7 @@ Layout:
 
 | Package | |
 |---|---|
-| `cmd/nsrelay` | the one binary: `engine`, `web`, `admin`, `backup`, `health`, `lab`, `snmp-mib` |
+| `cmd/nsrelay` | the one binary: `engine`, `web`, `admin`, `backup`, `cleanup`, `health`, `lab`, `snmp-mib`, `version` |
 | `games` | `games.yaml`, the game database, embedded into the binary |
 | `internal/pkt` | Ethernet/IPv4/UDP parse and build, checksums |
 | `internal/portspec` | `27015-27020,2302-2470/12` port specifications |
@@ -45,7 +45,8 @@ Layout:
 | `internal/lab` | packet tools behind `nsrelay lab` for the network lab |
 
 Texts of the web UI are written in German in the templates and the Go code; `internal/web/i18n/en-*.json` maps
-each German text to its English one. A test renders every page in English and fails on a text without entry.
+each German text to its English one. A test renders every page in English and fails on a text without entry;
+every page a test fetches is also checked for leftovers of a broken format verb (`%!d(...)`).
 
 ## Network lab
 
@@ -54,17 +55,21 @@ each German text to its English one. A test renders every page in English and fa
 with a management interface. The real engine runs inside.
 
 ```sh
-bash lab/run-docker.sh        # needs Docker with --privileged (Linux, or Docker Desktop/WSL2)
+bash lab/run-docker.sh        # needs Docker with --privileged (Linux, or Docker Desktop/WSL2) and Go 1.26+
 ```
+
+The script first builds the Linux binary with the Go of your machine (Go 1.26 or newer; an older Go downloads a
+matching toolchain itself unless `GOTOOLCHAIN=local` is set), then runs the lab in a container.
 
 It checks, among others: FlatOut query and answer across VLANs with the original source IP, Source engine query,
 DHCP never relayed, foreign relay dropped, Minecraft multicast, unknown ports, rate limit, IGMP membership, observe
 mode, snapshot change under load without loss, a second engine going to standby, a second instance for other
 ports next to the first, a forged relay beacon, the storm brake, the source filter, an interface recreated under
 the same name, the host shielding (no routing, firewall, management routes), a network whose interface is down
-(its copies are counted as `send_error`, the others still arrive), the CLI (init/apply/rollback), the
-port finder, the server probe, an engine restart without the web part, and the first apply while broadcasts flood
-in.
+(its copies are counted as `send_error`, the others still arrive), the CLI (init/apply/rollback, export and
+import through standard output and input), the port finder, the server probe, an engine restart without the web
+part, the first apply while broadcasts flood in, and removing the relay (`nsrelay cleanup` and the manual
+commands of the documentation).
 
 Add a lab case for every engine feature.
 

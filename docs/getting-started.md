@@ -54,16 +54,18 @@ Open `http://<server>:8080`.
 
 The games that are usual at LAN parties are switched on from the start; more under **Spiele** (Games). The UI is
 German by default, the language switch is on the setup page and in the account menu (or set `NSRELAY_LANG=en`).
+These pages name pages and buttons in both languages: **German** (English).
 
 ## 4. Go active
 
-In observe mode a "foreign relay" alarm means another relay is still forwarding. That is expected while you
-compare; it also proves the trunk delivers all VLANs. When you are ready, stop the other relay and switch to
-**Aktiv** (Active) under **System**. Never run two active relays for the same networks.
+In observe mode the alarm "Fremdes Relay aktiv" ("Foreign relay active") means another relay is still
+forwarding. That is expected while you compare; it also proves the trunk delivers the VLANs where the alarm
+shows. When you are ready, stop the other relay and switch to **Aktiv** (Active) under **System**. Never run two
+active relays for the same networks.
 
-Test with a real game: host a LAN game at one table and open the LAN browser at another. The game page ("Wird es
-gefunden?") shows each step from "packet received" to "copied into the target network". If a game is not found,
-see [Troubleshooting](troubleshooting.md).
+Test with a real game: host a LAN game at one table and open the LAN browser at another. The game's page, section
+"Wird es gefunden?" ("Can it be found?"), shows each step from "packet received" to "copied into the target
+network". If a game is not found, see [Troubleshooting](troubleshooting.md).
 
 ## What the relay does to the host
 
@@ -81,6 +83,9 @@ It never touches the interface with the default route. The web UI listens on por
 host except the relay addresses. If the engine cannot do one of these things, the relay still works and the
 **System** page tells what is missing.
 
+All of this stays on the host when the containers stop. To take the relay out of service, see
+[Removing the relay](operations.md#removing-the-relay).
+
 `deploy/host/setup.sh <trunk> [mgmt]` is optional: it hardens a machine that does nothing but relay (Docker without
 forwarding and iptables, a firewall that leaves only the management interface open). Do not run it on a host that
 runs other containers.
@@ -91,15 +96,18 @@ runs other containers.
   **System**. See [Operating](operations.md#backup-and-restore).
 - **Single network card?** If the game VLANs arrive on the same interface as the default route, allow it
   explicitly: put `NSRELAY_ALLOWED_IFACES=eth0` into a file `.env` next to `compose.yaml` and run
-  `docker compose up -d` again.
+  `docker compose up -d` again. The list is exclusive: name every interface the relay uses (the trunk too), for
+  example `NSRELAY_ALLOWED_IFACES=eth0,eth1` when another interface carries more networks.
 - **Bind one address only:** `NSRELAY_HTTP_ADDR=192.0.2.10:8080` in `.env`.
 - **Forgot the password?** `docker compose exec web nsrelay admin set-password <name>` prints a new one.
 - **Reverse proxy, single sign-on, two relays side by side:** "Security settings" in [Operating](operations.md).
 - Everything the setup does can also be scripted: `docker compose exec web nsrelay admin` lists the commands
-  (`init -preset lab`, `import`, `apply` …).
+  (`init -preset lan`, `import`, `apply` …), see "Command line" in [Operating](operations.md#command-line).
+- **Taking the relay out of service:** `docker compose down` alone leaves the VLAN interfaces and firewall rules
+  of the relay on the host, see [Removing the relay](operations.md#removing-the-relay).
 
 ## Try it without a network
 
 `nsrelay web -demo` serves the UI with an invented engine (accounts `demo`/`op`/`view`, password `demo`),
 `nsrelay web -demo-setup` shows the first-run setup. `bash lab/run-docker.sh` runs the real engine in a
-network-namespace lab, see [Development](development.md).
+network-namespace lab (needs Docker and Go 1.26 or newer), see [Development](development.md).

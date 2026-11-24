@@ -10,6 +10,7 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"slices"
 	"sort"
 	"strings"
 	"time"
@@ -29,10 +30,11 @@ type Engine interface {
 }
 
 // Presets of `nsrelay admin init`. The usual way to a first configuration is the setup in the browser; the
-// presets are for scripted installations and the lab.
+// presets are for scripted installations and the lab. Like the setup, every preset starts in the mode observe:
+// the relay counts and warns, and sends only after `nsrelay admin mode active` and an apply.
 const (
 	// PresetLAN is a small example to start from: game servers in VLAN 100 (10.10.0.0/24), four tables in VLANs
-	// 101-104 (10.10.n.0/24), relay IP .2.
+	// 101-104 (10.10.n.0/24), relay IP .250 (what the setup in the browser suggests).
 	PresetLAN = "lan"
 	// PresetNetsession is the event network of the Netsession LAN party, as an example of a bigger event: game
 	// servers 1100 = 10.10.0.0/24, table n = VLAN 1100+n = 10.10.n.0/24 (n = 1..14), WiFi 1253, orga 1254, relay
@@ -60,9 +62,9 @@ func Preset(name, parent string, db *gamedb.DB) (store.Config, error) {
 	switch name {
 	case PresetLAN:
 		event = "LAN"
-		vlans = append(vlans, vlan(100, "Gameserver", compile.GroupGameserver, 0, 2))
+		vlans = append(vlans, vlan(100, "Gameserver", compile.GroupGameserver, 0, 250))
 		for n := 1; n <= 4; n++ {
-			vlans = append(vlans, vlan(100+n, fmt.Sprintf("Tisch %d", n), compile.GroupTables, n, 2))
+			vlans = append(vlans, vlan(100+n, fmt.Sprintf("Tisch %d", n), compile.GroupTables, n, 250))
 		}
 	case PresetNetsession:
 		event = "Netsession LAN"
@@ -80,7 +82,7 @@ func Preset(name, parent string, db *gamedb.DB) (store.Config, error) {
 	default:
 		return store.Config{}, fmt.Errorf("%w %q (%s)", ErrUnknownPreset, name, Presets)
 	}
-	return SetupConfig(event, compile.ModeActive, vlans, db), nil
+	return SetupConfig(event, compile.ModeObserve, vlans, db), nil
 }
 
 // SetupConfig is the configuration the first-run setup in the browser creates: the given networks, the default
@@ -108,7 +110,8 @@ func SetupConfig(event, mode string, vlans []store.VLANConfig, db *gamedb.DB) st
 	return c
 }
 
-// Init creates a fresh configuration: seed games plus preset. Refuses if a configuration exists unless force.
+// Init creates a fresh configuration: seed games plus preset, mode observe. Refuses if a configuration exists
+// unless force.
 func Init(ctx context.Context, st *store.Store, user, preset, parent string, force bool) (store.SeedResult, error) {
 	seed, err := gamedb.Seed()
 	if err != nil {
@@ -234,7 +237,7 @@ func Refresh(ctx context.Context, st *store.Store, eng StatusEngine, note string
 	}
 	var old store.Config
 	if err := json.Unmarshal([]byte(rev.Config), &old); err != nil {
-		return 0, nil
+		return 0, nil //nolint:nilerr // a revision that cannot be read is left alone like any other mismatch; retrying would not help
 	}
 	cur, err := st.ExportConfig(ctx)
 	if err != nil {
@@ -276,21 +279,19 @@ func Rollback(ctx context.Context, st *store.Store, eng Engine, user string, id 
 // Backup writes a consistent SQLite copy (VACUUM INTO) and a readable YAML export of the active
 // configuration into dir, keeping the newest keep backups. Returns the database copy path. Both files are
 // readable by the owner only: the database holds password hashes and the secrets of the monitoring targets.
+// The name carries the time to the second; a second backup within the same second gets a counter ("-2").
 func Backup(ctx context.Context, st *store.Store, dir string, keep int) (string, error) {
 	if err := os.MkdirAll(dir, 0o750); err != nil {
 		return "", err
 	}
-	stamp := st.Now().UTC().Format("20060102-150405")
-	dbPath := filepath.Join(dir, "nsrelay-"+stamp+".db")
+	stamp := st.Now().UTC().Format(backupStamp)
 	// SQLite would create the copy with the permissions the umask leaves (usually readable by everybody), so the
 	// file is created here, empty and private; VACUUM INTO accepts an empty file as its target.
-	f, err := os.OpenFile(dbPath, os.O_WRONLY|os.O_CREATE|os.O_EXCL, 0o600)
+	base, err := createBackupFile(dir, stamp)
 	if err != nil {
 		return "", fmt.Errorf("backup: %w", err)
 	}
-	if err := f.Close(); err != nil {
-		return "", fmt.Errorf("backup: %w", err)
-	}
+	dbPath := base + ".db"
 	if err := st.VacuumInto(ctx, dbPath); err != nil {
 		os.Remove(dbPath)
 		return "", fmt.Errorf("backup: %w", err)
@@ -298,20 +299,110 @@ func Backup(ctx context.Context, st *store.Store, dir string, keep int) (string,
 	if cfg, err := st.ExportConfig(ctx); err == nil {
 		b, _ := yaml.Marshal(cfg)
 		header := "# Netsession Relay configuration export " + stamp + " (readable copy; restore uses the .db file)\n"
-		if err := os.WriteFile(filepath.Join(dir, "nsrelay-"+stamp+".yaml"), append([]byte(header), b...), 0o600); err != nil {
+		if err := os.WriteFile(base+".yaml", append([]byte(header), b...), 0o600); err != nil {
 			return dbPath, err
 		}
 	}
 	return dbPath, prune(dir, keep)
 }
 
+// backupStamp is the time in a backup's file name: nsrelay-<stamp>.db, nsrelay-<stamp>-<n>.db for a further
+// backup within the same second.
+const backupStamp = "20060102-150405"
+
+// createBackupFile creates the empty, private database file of a new backup and returns its path without the
+// extension. The file is created exclusively, so two backups at the same moment never share a name.
+func createBackupFile(dir, stamp string) (string, error) {
+	for n := 1; n <= 1000; n++ {
+		base := filepath.Join(dir, "nsrelay-"+stamp)
+		if n > 1 {
+			base += fmt.Sprintf("-%d", n)
+		}
+		f, err := os.OpenFile(base+".db", os.O_WRONLY|os.O_CREATE|os.O_EXCL, 0o600)
+		if errors.Is(err, os.ErrExist) {
+			continue
+		}
+		if err != nil {
+			return "", err
+		}
+		return base, f.Close()
+	}
+	return "", fmt.Errorf("no free file name for nsrelay-%s in %s", stamp, dir)
+}
+
+// backupFiles lists the database copies in dir, oldest first. Sorted without the extension, by length first: a
+// counter suffix makes the name longer, so "-2" follows the plain name and "-10" follows "-9".
+func backupFiles(dir string) ([]string, error) {
+	m, err := filepath.Glob(filepath.Join(dir, "nsrelay-*.db"))
+	if err != nil {
+		return nil, err
+	}
+	key := func(p string) (string, string) {
+		name := strings.TrimSuffix(filepath.Base(p), ".db")
+		stamp := name
+		if len(stamp) > len("nsrelay-")+len(backupStamp) {
+			stamp = stamp[:len("nsrelay-")+len(backupStamp)]
+		}
+		return stamp, name
+	}
+	sort.Slice(m, func(i, j int) bool {
+		si, ni := key(m[i])
+		sj, nj := key(m[j])
+		if si != sj {
+			return si < sj
+		}
+		if len(ni) != len(nj) {
+			return len(ni) < len(nj)
+		}
+		return ni < nj
+	})
+	return m, nil
+}
+
+// BackupTemp writes a backup for a download into a fresh private directory and returns the database copy and a
+// function that removes the directory again. The directory is created in the first of dirs that is writable,
+// last in the temporary directory of the system: in the container the root file system is read-only, so /tmp
+// may not exist as a writable place, while the backup directory and the data directory are volumes.
+// Directories a crashed download left behind are removed when they are older than an hour.
+func BackupTemp(ctx context.Context, st *store.Store, dirs ...string) (path string, cleanup func(), err error) {
+	const prefix = ".nsrelay-download-"
+	var tmp string
+	for _, d := range append(slices.Clone(dirs), os.TempDir()) {
+		if d == "" {
+			continue
+		}
+		if old, _ := filepath.Glob(filepath.Join(d, prefix+"*")); len(old) > 0 {
+			for _, o := range old {
+				if fi, serr := os.Stat(o); serr == nil && fi.IsDir() && time.Since(fi.ModTime()) > time.Hour {
+					os.RemoveAll(o)
+				}
+			}
+		}
+		if tmp, err = os.MkdirTemp(d, prefix); err == nil {
+			break
+		}
+	}
+	if err != nil {
+		return "", nil, fmt.Errorf("backup: no writable directory for the temporary copy: %w", err)
+	}
+	cleanup = func() { os.RemoveAll(tmp) }
+	path, err = Backup(ctx, st, tmp, 0)
+	if err != nil {
+		cleanup()
+		return "", nil, err
+	}
+	return path, cleanup, nil
+}
+
 // LastBackup returns the time of the newest backup in dir (from its file name), zero if there is none.
 func LastBackup(dir string) time.Time {
-	m, _ := filepath.Glob(filepath.Join(dir, "nsrelay-*.db"))
-	sort.Strings(m)
+	m, _ := backupFiles(dir)
 	for i := len(m) - 1; i >= 0; i-- {
 		stamp := strings.TrimSuffix(strings.TrimPrefix(filepath.Base(m[i]), "nsrelay-"), ".db")
-		if t, err := time.Parse("20060102-150405", stamp); err == nil {
+		if len(stamp) > len(backupStamp) {
+			stamp = stamp[:len(backupStamp)]
+		}
+		if t, err := time.Parse(backupStamp, stamp); err == nil {
 			return t
 		}
 	}
@@ -351,11 +442,10 @@ func prune(dir string, keep int) error {
 	if keep <= 0 {
 		return nil
 	}
-	m, err := filepath.Glob(filepath.Join(dir, "nsrelay-*.db"))
+	m, err := backupFiles(dir)
 	if err != nil {
 		return err
 	}
-	sort.Strings(m) // timestamped names sort chronologically
 	for len(m) > keep {
 		old := m[0]
 		m = m[1:]
@@ -375,8 +465,11 @@ func Restore(dbPath, backup string) (string, error) {
 	var n int
 	err = db.QueryRow(`SELECT count(*) FROM schema_migration`).Scan(&n)
 	db.Close()
-	if err != nil || n == 0 {
-		return "", fmt.Errorf("%s is not a relay backup: %v", backup, err)
+	if err != nil {
+		return "", fmt.Errorf("%s is not a relay backup: %w", backup, err)
+	}
+	if n == 0 {
+		return "", fmt.Errorf("%s is not a relay backup: no migrations recorded", backup)
 	}
 	keep := dbPath + ".before-restore-" + time.Now().UTC().Format("20060102-150405")
 	if _, err := os.Stat(dbPath); err == nil {
@@ -393,5 +486,5 @@ func Restore(dbPath, backup string) (string, error) {
 	if err != nil {
 		return keep, err
 	}
-	return keep, os.WriteFile(dbPath, b, 0o600)
+	return keep, os.WriteFile(dbPath, b, 0o600) //nolint:gosec // G703: the backup file is named by the operator on the command line
 }

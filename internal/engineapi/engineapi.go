@@ -45,7 +45,7 @@ type Alarm struct {
 	AckedBy string    `json:"acked_by,omitempty"`
 }
 
-// Player mirrors engine.Player: a sender of discovery packets for a rule.
+// Player is a sender of discovery packets for a rule (the engine's list of players and servers).
 type Player struct {
 	Rule  string     `json:"rule"`
 	Src   netip.Addr `json:"src"`
@@ -229,7 +229,7 @@ func Serve(ctx context.Context, path string, gid int, e Engine) error {
 	if err != nil {
 		return err
 	}
-	_ = os.Chmod(path, 0o660)
+	_ = os.Chmod(path, 0o660) //nolint:gosec // G302: the web part reaches the socket through its group
 	if gid >= 0 {
 		if err := os.Chown(path, -1, gid); err != nil {
 			l.Close()
@@ -237,7 +237,7 @@ func Serve(ctx context.Context, path string, gid int, e Engine) error {
 		}
 	}
 	srv := &http.Server{Handler: Handler(e), ReadHeaderTimeout: 5 * time.Second}
-	go func() {
+	go func() { //nolint:gosec // G118: shuts down after ctx is done, so it needs a fresh context
 		<-ctx.Done()
 		sctx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
 		defer cancel()

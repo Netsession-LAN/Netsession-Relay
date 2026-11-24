@@ -2,9 +2,11 @@ module github.com/Netsession-LAN/Netsession-Relay
 
 go 1.26.0
 
+toolchain go1.27.4
+
 require (
 	github.com/coreos/go-oidc/v3 v3.21.0
-	github.com/go-jose/go-jose/v4 v4.1.4
+	github.com/go-jose/go-jose/v4 v4.1.9
 	github.com/google/nftables v0.3.0
 	github.com/gosnmp/gosnmp v1.47.0
 	github.com/vishvananda/netlink v1.3.1

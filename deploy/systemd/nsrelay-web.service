@@ -10,6 +10,10 @@ EnvironmentFile=-/srv/nsrelay/.env
 Environment=NSRELAY_DB=/var/lib/nsrelay-web/nsrelay.db
 Environment=NSRELAY_SOCKET=/run/nsrelay/engine.sock
 Environment=NSRELAY_BACKUP_DIR=/srv/nsrelay/backups
+# Without NSRELAY_HTTP_ADDR the web part listens on 127.0.0.1:8080 only (for a reverse proxy on this host). To
+# reach it from the network, set the address in /srv/nsrelay/.env or here; ":8080" = every address of the host
+# except the relay addresses in the game networks:
+#Environment=NSRELAY_HTTP_ADDR=:8080
 ExecStart=/usr/local/bin/nsrelay web
 Restart=always
 RestartSec=2

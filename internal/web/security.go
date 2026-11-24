@@ -168,8 +168,21 @@ func (s *Server) sessionToken(r *http.Request) string {
 }
 
 func (s *Server) setSessionCookie(w http.ResponseWriter, r *http.Request, token string, maxAge int) {
-	http.SetCookie(w, &http.Cookie{Name: s.sessionCookieName(r), Value: token, Path: "/", HttpOnly: true, Secure: s.secure(r),
-		SameSite: http.SameSiteLaxMode, MaxAge: maxAge})
+	s.setCookie(w, r, &http.Cookie{Name: s.sessionCookieName(r), Value: token, Path: "/", MaxAge: maxAge}) //nolint:gosec // G124: setCookie sets HttpOnly, SameSite and, per request, Secure
+}
+
+// setCookie sets a cookie of the web UI. Every cookie goes through here, so none gets weaker attributes by
+// accident: always HttpOnly and SameSite=Lax, Secure when the request came over HTTPS (secure) or when the cookie
+// asks for it (the __Host- session cookie).
+func (s *Server) setCookie(w http.ResponseWriter, r *http.Request, c *http.Cookie) { //nolint:gosec // G124: setCookie sets HttpOnly, SameSite and, per request, Secure
+	c.HttpOnly, c.SameSite = true, http.SameSiteLaxMode
+	c.Secure = c.Secure || s.secure(r)
+	http.SetCookie(w, c) //nolint:gosec // G124: Secure is decided per request in secure(); HttpOnly and SameSite are always set
+}
+
+// clearCookie deletes a cookie set by setCookie.
+func (s *Server) clearCookie(w http.ResponseWriter, r *http.Request, name, path string, secure bool) {
+	s.setCookie(w, r, &http.Cookie{Name: name, Path: path, MaxAge: -1, Secure: secure}) //nolint:gosec // G124: setCookie sets HttpOnly, SameSite and, per request, Secure
 }
 
 func sameToken(a, b string) bool {
@@ -183,8 +196,7 @@ func (s *Server) loginCSRF(w http.ResponseWriter, r *http.Request) string {
 		return c.Value
 	}
 	tok := auth.Token(24)
-	http.SetCookie(w, &http.Cookie{Name: loginCookie, Value: tok, Path: "/", HttpOnly: true, Secure: s.secure(r),
-		SameSite: http.SameSiteLaxMode})
+	s.setCookie(w, r, &http.Cookie{Name: loginCookie, Value: tok, Path: "/"}) //nolint:gosec // G124: setCookie sets HttpOnly, SameSite and, per request, Secure
 	return tok
 }
 
@@ -204,8 +216,8 @@ const (
 	msgOIDCDown    = "Der Anmeldedienst ist gerade nicht erreichbar. Nimm die Notfall-Anmeldung."
 	msgOIDCExpired = "Anmeldung abgelaufen. Bitte noch einmal."
 	msgOIDCDenied  = "Der Anmeldedienst hat die Anmeldung abgelehnt."
-	msgOIDCToken   = "Anmeldung fehlgeschlagen (Token). Bitte noch einmal."
-	msgOIDCNoToken = "Anmeldung fehlgeschlagen (kein ID-Token)."
+	msgOIDCToken   = "Anmeldung fehlgeschlagen (Token). Bitte noch einmal." //nolint:gosec // G101: a setting or message name, not a credential
+	msgOIDCNoToken = "Anmeldung fehlgeschlagen (kein ID-Token)."            //nolint:gosec // G101: a setting or message name, not a credential
 	msgOIDCBad     = "Anmeldung fehlgeschlagen (Token ungültig)."
 	msgOIDCNonce   = "Anmeldung fehlgeschlagen (Nonce)."
 	msgOIDCGroup   = "Dein Konto ist in keiner Relay-Gruppe. Ein Admin kann dich beim Anmeldedienst in eine eintragen."
@@ -299,7 +311,7 @@ type throttleEntry struct {
 }
 
 const (
-	throttleFree   = 3                // failures without a pause
+	throttleFree   = 3                // attempts in a row that are checked without a wait
 	throttleMax    = 5 * time.Minute  // longest pause
 	throttleForget = 30 * time.Minute // a quiet key starts over
 	throttleKeys   = 8192
@@ -363,10 +375,10 @@ func (t *loginThrottle) begin(key string, now time.Time) time.Duration {
 	return 0
 }
 
-// throttlePause is the pause after the given number of failures in a row: none for the first throttleFree, then
-// 2 s, 4 s, 8 s … up to throttleMax.
+// throttlePause is the pause after the given number of failures in a row. throttleFree attempts are free: the
+// pause starts with the last of them, so the fourth attempt waits 2 s, the fifth 4 s, then 8 s … up to throttleMax.
 func throttlePause(fails int) time.Duration {
-	n := fails - throttleFree
+	n := fails - throttleFree + 1
 	switch {
 	case n <= 0:
 		return 0

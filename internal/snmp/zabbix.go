@@ -1,7 +1,7 @@
 package snmp
 
 import (
-	"crypto/sha1"
+	"crypto/sha1" //nolint:gosec // G505: SHA-1 only derives a stable name-based UUID for the Zabbix template
 	"encoding/hex"
 	"fmt"
 	"strings"
@@ -18,7 +18,7 @@ var zabbixNS = [16]byte{0x6f, 0x1d, 0x3c, 0x52, 0x0d, 0x1e, 0x4c, 0x55, 0x9a, 0x
 
 // zuuid is uuid5(zabbixNS, name) with the version/variant bits of a UUIDv4 (Zabbix only accepts v4 syntax).
 func zuuid(name string) string {
-	h := sha1.New()
+	h := sha1.New() //nolint:gosec // G401: SHA-1 only derives a stable name-based UUID for the Zabbix template
 	h.Write(zabbixNS[:])
 	h.Write([]byte(name))
 	b := h.Sum(nil)[:16]

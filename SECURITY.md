@@ -13,8 +13,8 @@ in the release notes unless you prefer otherwise.
 - The engine needs `CAP_NET_RAW`/`CAP_NET_ADMIN`; everything else (web UI, database) runs unprivileged.
 - The web UI is meant for the management network only. It uses server-side sessions, CSRF tokens on every write
   (logging out included), Argon2id password hashes and a strict Content-Security-Policy. Failed logins are slowed
-  down per client address (an IPv6 client: its /64) and account name: after three attempts every further one has
-  to wait for a pause that doubles up to five minutes. An attempt is counted when it arrives, before the password
+  down per client address (an IPv6 client: its /64) and account name: three attempts are free, from the fourth on
+  each one has to wait for a pause that doubles up to five minutes. An attempt is counted when it arrives, before the password
   is checked, so attempts sent in parallel do not get around the pause; a second, coarser budget limits all
   logins from one address. Accounts are never locked: a lock would let anybody keep the owner out.
 - **First start:** until the first account exists, the web UI shows the setup page to whoever opens it first.
@@ -29,5 +29,6 @@ in the release notes unless you prefer otherwise.
 - Request bodies and uploads are size-limited; an uploaded logo is decoded and re-encoded, never served as sent.
 - The image is distroless and read-only; the web part runs as an unprivileged user, the engine with
   `NET_RAW`, `NET_ADMIN` and `CHOWN` only.
-- CI runs govulncheck, staticcheck and the tests with the race detector on every change.
-- Supported versions: the latest release.
+- CI runs govulncheck, golangci-lint (including gosec) and the tests with the race detector on every change;
+  GitHub code scanning (CodeQL, security-extended queries) analyses the data flow on every change and weekly.
+- Supported versions: the latest release; fixes go into the next release.

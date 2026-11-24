@@ -2,12 +2,36 @@
 
 All notable changes to Netsession Relay. Versions follow [Semantic Versioning](https://semver.org/).
 
-## [Unreleased]
+## [1.0.1] - 2026-11-24
 
-- Builds and CI use Go 1.27 (Go 1.26 is still enough to build); staticcheck v0.8.2, govulncheck v1.9.0.
-- The container registry cleans itself after each release and weekly (multi-architecture aware).
-- The wiki is rebuilt from `docs/` on every change.
+### Security
+- go-jose 4.1.9 (used by the OpenID Connect login): fixes a denial of service when parsing a provider's RSA keys
+  and two panics (GHSA-mgcc-cww5-fp2q, GHSA-4w3g-jfj2-cw2q, GHSA-vvm8-gf78-28g4).
+- Login throttling as documented: three attempts are free, from the fourth on each one waits (2 s, 4 s … 5 min).
+- `go.mod` names the toolchain (`go1.27.4`), so building with an older Go fetches the patched standard library.
+
+### Fixed
+- The backup download under **System** works with the read-only container of `compose.yaml`.
+- Two backups within the same second no longer collide.
+- The port finder page showed a broken placeholder for the port.
 - A failed rollback says why (revision missing, or a game in it no longer exists).
+
+### Changed
+- The presets of `nsrelay admin init` start in **observe** mode, like the setup in the browser; the `lan` preset uses
+  the relay address `.250`.
+- `nsrelay admin export -`, `import -` and `finder-pcap -` use standard output and input, for `docker compose exec`.
+- The port finder refuses VLAN IDs that are not networks of the relay.
+
+### Added
+- `nsrelay cleanup` removes everything the engine created on the host (VLAN interfaces, firewall table, routes).
+- Documentation website on Read the Docs (netsession-relay.readthedocs.io); it replaces the wiki.
+
+### Development
+- Go 1.27 for CI and the image (Go 1.26 is still enough to build).
+- golangci-lint (`.golangci.yml`: staticcheck, govet, errcheck, gosec, errorlint and more); every accepted gosec
+  finding carries its reason in the code. govulncheck, CodeQL code scanning and qlty (`.qlty/qlty.toml`).
+- Test coverage of unit tests and the network lab together (`tools/coverage.sh`).
+- The container registry cleans itself after each release and weekly.
 
 ## [1.0.0] - 2026-11-23
 

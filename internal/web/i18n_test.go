@@ -19,6 +19,7 @@ import (
 	"testing"
 
 	"github.com/Netsession-LAN/Netsession-Relay/internal/control"
+	"github.com/Netsession-LAN/Netsession-Relay/internal/engineapi"
 	"github.com/Netsession-LAN/Netsession-Relay/internal/monitor"
 	"github.com/Netsession-LAN/Netsession-Relay/internal/store"
 )
@@ -96,6 +97,14 @@ func TestEnglishComplete(t *testing.T) {
 		}
 	}
 	e.eng.down = false
+	// the port finder with a running session and results
+	e.eng.finder = &engineapi.FinderStart{VIDs: []int{1101}, Seconds: 60}
+	for _, p := range []string{"/finder", "/finder?teil=ergebnis", "/finder?laerm=1"} {
+		if code, body := get(t, c, e.srv.URL+p); code != 200 || !strings.Contains(body, "First bytes") {
+			t.Errorf("GET %s with finder results = %d", p, code)
+		}
+	}
+	e.eng.finder = nil
 	// the joke theme "98" has its own markup (Start menu, taskbar)
 	u, _ := url.Parse(e.srv.URL)
 	c.Jar.SetCookies(u, []*http.Cookie{{Name: themeCookie, Value: theme98, Path: "/"}})

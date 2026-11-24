@@ -17,6 +17,7 @@ import (
 	"time"
 
 	"github.com/Netsession-LAN/Netsession-Relay/internal/auth"
+	"github.com/Netsession-LAN/Netsession-Relay/internal/compile"
 	"github.com/Netsession-LAN/Netsession-Relay/internal/control"
 	"github.com/Netsession-LAN/Netsession-Relay/internal/demo"
 	"github.com/Netsession-LAN/Netsession-Relay/internal/engineapi"
@@ -100,6 +101,11 @@ func runWeb(args []string, _, stderr io.Writer) int {
 	defer ui.Outputs.Close()
 	go ui.WatchAlarms(ctx, 10*time.Second) // alarm open/clear events for the monitoring targets
 	go refreshAfterUpdate(ctx, st, eng, log)
+	// a backup download needs a place for its copy: the root file system of the container is read-only
+	if dir := os.Getenv("NSRELAY_BACKUP_DIR"); dir != "" {
+		ui.ScratchDirs = append(ui.ScratchDirs, dir)
+	}
+	ui.ScratchDirs = append(ui.ScratchDirs, filepath.Dir(af.db))
 	// Nightly backup without a timer on the host: on unless NSRELAY_BACKUP_AUTO=0 or no directory is set.
 	if dir := os.Getenv("NSRELAY_BACKUP_DIR"); dir != "" && os.Getenv("NSRELAY_BACKUP_AUTO") != "0" {
 		ui.BackupDir, ui.BackupKeep = dir, envInt("NSRELAY_BACKUP_KEEP", 14)
@@ -157,6 +163,11 @@ func runWebDemo(ctx context.Context, addr string, log *slog.Logger, fresh bool, 
 	}
 	if _, err := control.Init(ctx, st, "demo", "netsession", "ens19", false); err != nil {
 		log.Error("demo init", "err", err)
+		return 1
+	}
+	// a preset starts in observe; the demo shows a relay that is switched on
+	if err := st.SetMode(ctx, "demo", compile.ModeActive); err != nil {
+		log.Error("demo mode", "err", err)
 		return 1
 	}
 	for name, role := range map[string]string{"demo": store.RoleAdmin, "op": store.RoleOperator, "view": store.RoleViewer} {
@@ -244,7 +255,7 @@ func serveWeb(ctx context.Context, addr string, ui *web.Server, log *slog.Logger
 	// not have a write timeout); the server bounds the header phase, idle connections and the header size.
 	srv := &http.Server{Addr: addr, Handler: ui, ReadHeaderTimeout: 10 * time.Second, IdleTimeout: 2 * time.Minute,
 		MaxHeaderBytes: 64 << 10}
-	go func() {
+	go func() { //nolint:gosec // G118: shuts down after ctx is done, so it needs a fresh context
 		<-ctx.Done()
 		ui.Close()
 		sctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)

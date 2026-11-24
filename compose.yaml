@@ -46,6 +46,9 @@ services:
     # a password check takes 64 MiB (Argon2id), at most three run at once; the limit keeps a flood of logins
     # from starving the engine on the same host
     mem_limit: 512m
+    # the root file system is read-only; a small /tmp in memory for whatever expects one (the backup download
+    # itself writes its copy into /backups)
+    tmpfs: ["/tmp:size=16m,mode=1777"]
     environment:
       GOMEMLIMIT: 400MiB
       # ":8080" = every address of the host except the relay addresses in the game networks (those connections

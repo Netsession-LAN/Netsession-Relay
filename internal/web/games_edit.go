@@ -67,7 +67,7 @@ func (s *Server) gameNewForm(w http.ResponseWriter, r *http.Request) {
 func (s *Server) finderNewForm(w http.ResponseWriter, r *http.Request) {
 	q := r.URL.Query()
 	q.Set("from", "finder")
-	http.Redirect(w, r, "/spiele/neu?"+q.Encode(), http.StatusSeeOther)
+	http.Redirect(w, r, "/spiele/neu?"+q.Encode(), http.StatusSeeOther) //nolint:gosec // G710: the target is checked by localPath or is a fixed path
 }
 
 func (s *Server) gameEditForm(w http.ResponseWriter, r *http.Request) {

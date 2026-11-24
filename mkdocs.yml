@@ -1,0 +1,54 @@
+# Documentation site (Read the Docs builds it from docs/ with .readthedocs.yaml; locally: pip install -r
+# docs/requirements.txt && mkdocs serve)
+site_name: Netsession Relay
+site_description: UDP broadcast and multicast relay for LAN parties – every table sees every LAN game again.
+site_url: https://netsession-relay.readthedocs.io/
+repo_url: https://github.com/Netsession-LAN/Netsession-Relay
+repo_name: Netsession-LAN/Netsession-Relay
+edit_uri: ""
+docs_dir: docs
+strict: true
+exclude_docs: requirements.txt
+
+nav:
+  - Home: README.md
+  - Getting started: getting-started.md
+  - How it works: architecture.md
+  - Game database: game-database.md
+  - Running it at your LAN: operations.md
+  - Troubleshooting: troubleshooting.md
+  - Development and lab: development.md
+
+theme:
+  name: material
+  logo: assets/logo.svg
+  favicon: assets/favicon.svg
+  font: false                # brand fonts come from docs/assets/fonts, no Google Fonts
+  palette:
+    - media: "(prefers-color-scheme: dark)"
+      scheme: slate
+      primary: custom
+      accent: custom
+      toggle: {icon: material/weather-sunny, name: Light mode}
+    - media: "(prefers-color-scheme: light)"
+      scheme: default
+      primary: custom
+      accent: custom
+      toggle: {icon: material/weather-night, name: Dark mode}
+  features:
+    - navigation.sections
+    - navigation.top
+    - search.suggest
+    - search.highlight
+    - content.code.copy
+
+extra_css:
+  - assets/netsession.css
+
+markdown_extensions:
+  - admonition
+  - tables
+  - toc:
+      permalink: true
+  - pymdownx.highlight
+  - pymdownx.superfences

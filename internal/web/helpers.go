@@ -14,13 +14,13 @@ import (
 
 // icon renders an inline reference to the icon sprite.
 func icon(name string) template.HTML {
-	return template.HTML(`<svg class="ic" aria-hidden="true"><use href="/static/icons.svg#i-` +
+	return template.HTML(`<svg class="ic" aria-hidden="true"><use href="/static/icons.svg#i-` + //nolint:gosec // G203: every variable part is escaped (HTMLEscapeString / escapeArgs)
 		template.HTMLEscapeString(name) + `"></use></svg>`)
 }
 
 // icon98 is a colour icon of the joke theme "98" (static/icons98.svg).
 func icon98(name string) template.HTML {
-	return template.HTML(`<svg class="ic98" aria-hidden="true"><use href="/static/icons98.svg#w-` +
+	return template.HTML(`<svg class="ic98" aria-hidden="true"><use href="/static/icons98.svg#w-` + //nolint:gosec // G203: every variable part is escaped (HTMLEscapeString / escapeArgs)
 		template.HTMLEscapeString(name) + `"></use></svg>`)
 }
 
@@ -145,7 +145,7 @@ func timeTag(v any, kind string) template.HTML {
 	if name, off := t.Local().Zone(); off == 0 {
 		text += " " + name
 	}
-	return template.HTML(`<time datetime="` + t.UTC().Format(time.RFC3339) + `" data-fmt="` + template.HTMLEscapeString(kind) +
+	return template.HTML(`<time datetime="` + t.UTC().Format(time.RFC3339) + `" data-fmt="` + template.HTMLEscapeString(kind) + //nolint:gosec // G203: every variable part is escaped (HTMLEscapeString / escapeArgs)
 		`">` + template.HTMLEscapeString(text) + `</time>`)
 }
 

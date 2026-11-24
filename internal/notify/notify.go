@@ -169,7 +169,7 @@ func (w *worker) run() {
 			w.mu.Unlock()
 			if err != nil && w.sender.Reliable() {
 				w.log.Debug("monitoring target", "target", w.t.Name, "err", err)
-				wait := backoff + time.Duration(rand.Int64N(int64(backoff/2)+1))
+				wait := backoff + time.Duration(rand.Int64N(int64(backoff/2)+1)) //nolint:gosec // G404: jitter for retry backoff, not security relevant
 				backoff = min(backoff*2, maxBackoff)
 				select {
 				case <-w.stop:

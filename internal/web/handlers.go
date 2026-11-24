@@ -6,7 +6,6 @@ import (
 	"errors"
 	"fmt"
 	"net/http"
-	"os"
 	"path/filepath"
 	"slices"
 	"sort"
@@ -468,7 +467,7 @@ type auditView struct {
 	Tone   string
 }
 
-var auditTexts = map[string]string{
+var auditTexts = map[string]string{ //nolint:gosec // G101: a setting or message name, not a credential
 	"login":                 "Angemeldet",
 	"probe.on":              "Server-Abfrage eingeschaltet",
 	"probe.off":             "Server-Abfrage ausgeschaltet",
@@ -709,17 +708,14 @@ func (s *Server) rollback(w http.ResponseWriter, r *http.Request) {
 }
 
 func (s *Server) downloadBackup(w http.ResponseWriter, r *http.Request) {
-	dir, err := os.MkdirTemp("", "nsrelay-dl-")
-	if err != nil {
-		s.failInternal(w, r, "backup download: temporary directory", err)
-		return
-	}
-	defer os.RemoveAll(dir)
-	path, err := control.Backup(r.Context(), s.Store, dir, 0)
+	// the temporary copy goes next to the backups or the database (volumes); the root file system of the
+	// container is read-only, /tmp is only the last resort
+	path, cleanup, err := control.BackupTemp(r.Context(), s.Store, s.ScratchDirs...)
 	if err != nil {
 		s.failInternal(w, r, "backup download", err)
 		return
 	}
+	defer cleanup()
 	s.audit(r.Context(), s.actor(r), "backup.download", filepath.Base(path), "", "")
 	w.Header().Set("Cache-Control", "no-store")
 	w.Header().Set("Content-Type", "application/vnd.sqlite3")

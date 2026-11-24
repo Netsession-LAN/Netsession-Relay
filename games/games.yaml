@@ -74,7 +74,7 @@
   notes: '23757 = LAN discovery to 255.255.255.255 (SDH: "Flatout 2 - Works", also in GB whitelist). 23756 = game port (portforward.com,
     FO2 Chloe Online docs). Some forum guides list 23756-23758 TCP+UDP; 23758 is not confirmed as LAN-relevant. Same Bugbear
     netcode lineage as FO1; the official v1.1 patch notes document "-private_addr=ip: Forces the game to report this private
-    address to other players" => host IP travels inside the payload like in FO1, so source rewriting (-s 1.1.1.2) should be
+    address to other players" => host IP travels inside the payload like in FO1, so rewriting the sender to the relay address (source rewriting to 1.1.1.2 in udpbroadcastrelay) should be
     harmless; NOT yet verified by capture for FO2 (do a Wireshark check: does the client connect to the host''s real IP on
     23756 after a relayed discovery?). LAN mode is identical in retail 1.2, Steam, GOG and ZOOM builds as far as known (GOG
     staff: LAN works; Steam/ZOOM builds only changed the online master from GameSpy to OpenSpy). Command line: -lan -host
@@ -1275,7 +1275,7 @@
   notes: 'Microsoft protocol spec MC-DPL4CS: the client sends DPSP_MSG_ENUMSESSIONS to the broadcast address on UDP 47624
     and then listens for DPSP_MSG_ENUMSESSIONSREPLY on its DirectPlay TCP port. The message header carries a SockAddr with
     the client''s port (sample: 2300) and address 0.0.0.0 => the host must use the packet SOURCE IP to reach the client. With
-    source rewriting (-s 1.1.1.2 on the old box51) the host tries to open TCP to the relay => enumeration fails. TCP 2300-2400
+    source rewriting to the relay address (to 1.1.1.2 in udpbroadcastrelay, as on our earlier relay box) the host tries to open TCP to the relay => enumeration fails. TCP 2300-2400
     must be routable in BOTH directions between VLANs (host -> client for the reply). Microsoft KB 240429/895864 list 47624
     + 2300-2400. Modern Windows needs the DirectPlay optional feature.'
   sources:
@@ -1975,7 +1975,7 @@
     tcp: '25565'
   notes: 'Host announces "[MOTD]..[/MOTD][AD]port[/AD]" every 1.5 s to 224.0.2.60:4445. Minecraft Wiki protocol page: "The
     IP Address is the same as the sender''s one", port from [AD] (25565 if not numeric) => relay must keep the original source
-    (no -s). Port of "Open to LAN" is random unless set. Note: SDH and the old box52 entry relayed 4445 as BROADCAST only
+    (no source rewriting). Port of "Open to LAN" is random unless set. Note: SDH and the old box52 entry relayed 4445 as BROADCAST only
     (SDH pcap filter "ether dst ff:ff:ff:ff:ff:ff") - that never matched this multicast.'
   sources:
   - https://minecraft.wiki/w/Java_Edition_protocol/Server_List_Ping
@@ -2690,8 +2690,8 @@
   - kind: broadcast
     ports: '137'
     direction: both
-  notes: 'Name resolution for Windows network neighbourhood; replies unicast to sender. udpbroadcastrelay README: needs instances
-    for 137, 138 (and 1900) with -f.'
+  notes: 'Name resolution for Windows network neighbourhood; replies unicast to sender. udpbroadcastrelay README: needs one instance
+    each for 137, 138 (and 1900), running in the background.'
   sources:
   - https://github.com/marjohn56/udpbroadcastrelay
 
@@ -2727,7 +2727,7 @@
     ports: '5353'
     group: 224.0.0.251
     source_mode: relay
-  notes: Link-local multicast (TTL 255). Some consumers (Chromecast) need -s 1.1.1.1. Rarely game-relevant (a few modern indie
+  notes: Link-local multicast (TTL 255). Some consumers (Chromecast) need the sender rewritten to the relay address (source rewriting to 1.1.1.1 in udpbroadcastrelay). Rarely game-relevant (a few modern indie
     games and Steam Link use it).
   sources:
   - https://github.com/marjohn56/udpbroadcastrelay

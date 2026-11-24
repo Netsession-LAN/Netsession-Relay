@@ -82,6 +82,45 @@ func prepare(s *compile.Snapshot, rewrite bool) []Issue {
 	return issues
 }
 
+// Remove takes back what Apply set up on the host: the nftables table of the engine, the policy rules with the
+// management priority and the routes of the management table. It returns what it removed, in words. The settings
+// of the relay interfaces (no routing, ARP, IPv6) go away with the VLAN interfaces themselves (netif.Cleanup);
+// on a trunk without an address and on an interface attached as a device they stay until the next boot.
+func Remove() (removed []string, err error) {
+	var errs []error
+	if c, cerr := nftables.New(); cerr != nil {
+		errs = append(errs, fmt.Errorf("nftables: %w", cerr))
+	} else if t, _ := c.ListTableOfFamily(TableName, nftables.TableFamilyINet); t != nil {
+		if werr := writeFirewall(nil, false); werr != nil {
+			errs = append(errs, fmt.Errorf("nftables table %s: %w", TableName, werr))
+		} else {
+			removed = append(removed, "nftables table inet "+TableName)
+		}
+	}
+	rules := 0
+	if have, lerr := netlink.RuleList(netlink.FAMILY_V4); lerr != nil {
+		errs = append(errs, fmt.Errorf("policy rules: %w", lerr))
+	} else {
+		for i := range have {
+			if have[i].Priority == MgmtPriority {
+				rules++
+			}
+		}
+		m, rerr := removeStaleMgmtRules(map[string]*netlink.Rule{})
+		errs = append(errs, rerr)
+		errs = append(errs, m.errs...)
+	}
+	if rules > 0 {
+		removed = append(removed, fmt.Sprintf("%d policy rule(s) with priority %d", rules, MgmtPriority))
+	}
+	routes, _ := netlink.RouteListFiltered(netlink.FAMILY_V4, &netlink.Route{Table: MgmtTable}, netlink.RT_FILTER_TABLE)
+	errs = append(errs, syncMgmtTable(nil)...)
+	if len(routes) > 0 {
+		removed = append(removed, fmt.Sprintf("%d route(s) in table %d", len(routes), MgmtTable))
+	}
+	return removed, errors.Join(errs...)
+}
+
 func forwardingOn() bool {
 	b, err := os.ReadFile("/proc/sys/net/ipv4/ip_forward")
 	return err == nil && strings.TrimSpace(string(b)) != "0"

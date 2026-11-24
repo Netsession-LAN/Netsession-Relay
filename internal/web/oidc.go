@@ -132,8 +132,7 @@ func (s *Server) oidcLogin(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	state, nonce, verifier := auth.Token(24), auth.Token(24), oauth2.GenerateVerifier()
-	http.SetCookie(w, &http.Cookie{Name: oidcCookie, Value: state + "." + nonce + "." + verifier, Path: "/oidc/",
-		HttpOnly: true, Secure: s.secure(r), SameSite: http.SameSiteLaxMode, MaxAge: 600})
+	s.setCookie(w, r, &http.Cookie{Name: oidcCookie, Value: state + "." + nonce + "." + verifier, Path: "/oidc/", MaxAge: 600}) //nolint:gosec // G124: setCookie sets HttpOnly, SameSite and, per request, Secure
 	url := s.oidc.oauth.AuthCodeURL(state, oidc.Nonce(nonce), oauth2.S256ChallengeOption(verifier))
 	http.Redirect(w, r, url, http.StatusSeeOther)
 }
@@ -153,7 +152,7 @@ func (s *Server) oidcCallback(w http.ResponseWriter, r *http.Request) {
 		if err != nil {
 			s.Log.Warn("oidc login", "err", err)
 		}
-		http.SetCookie(w, &http.Cookie{Name: oidcCookie, Value: "", Path: "/oidc/", MaxAge: -1})
+		s.clearCookie(w, r, oidcCookie, "/oidc/", false)
 		back(w, r, "/login", "", errors.New(msg))
 	}
 	if !s.loginLimit.allow("oidc|"+limitKey(s.clientIP(r)), time.Now()) {
@@ -225,7 +224,7 @@ func (s *Server) oidcCallback(w http.ResponseWriter, r *http.Request) {
 		s.fail(w, r, http.StatusInternalServerError, "Anmeldung gerade nicht möglich.")
 		return
 	}
-	http.SetCookie(w, &http.Cookie{Name: oidcCookie, Value: "", Path: "/oidc/", MaxAge: -1})
+	s.clearCookie(w, r, oidcCookie, "/oidc/", false)
 	s.setSessionCookie(w, r, token, int(store.SessionTTL.Seconds()))
 	s.Log.Info("login", "name", u.Name, "kind", "oidc", "role", role)
 	http.Redirect(w, r, "/", http.StatusSeeOther)

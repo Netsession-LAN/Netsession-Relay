@@ -245,8 +245,9 @@ func TestLoginLimiterAndThrottle(t *testing.T) {
 	if k != throttleKey("192.0.2.1", "admin") || k == throttleKey("192.0.2.2", "admin") {
 		t.Error("throttle key must ignore case and separate addresses")
 	}
-	// an attempt counts when it begins: the first throttleFree+1 are let through one after the other, every
-	// further one has to wait for the pause the one before started, and the pause grows up to throttleMax
+	// an attempt counts when it begins: the first throttleFree are let through one after the other, every
+	// further one has to wait for the pause the one before started (the fourth one 2 s), and the pause grows up
+	// to throttleMax
 	at := now
 	var last time.Duration
 	for i := 1; i <= 20; i++ {
@@ -257,8 +258,11 @@ func TestLoginLimiterAndThrottle(t *testing.T) {
 		if d == 0 {
 			th.cancel(k) // no pause: the question itself was counted as an attempt, take it back
 		}
-		if (i <= throttleFree) != (d == 0) || d < last || d > throttleMax {
+		if (i < throttleFree) != (d == 0) || d < last || d > throttleMax {
 			t.Fatalf("failure %d: pause %s after %s", i, d, last)
+		}
+		if i == throttleFree && d != 2*time.Second {
+			t.Fatalf("the attempt after the %d free ones waits %s, want 2s", throttleFree, d)
 		}
 		last = d
 		at = at.Add(d)
@@ -461,8 +465,8 @@ func TestParallelLoginsAreThrottled(t *testing.T) {
 	}
 	close(start)
 	wg.Wait()
-	if c := checked.Load(); c < 1 || c > throttleFree+1 {
-		t.Errorf("%d of %d parallel attempts got their password checked, want at most %d", c, attempts, throttleFree+1)
+	if c := checked.Load(); c < 1 || c > throttleFree {
+		t.Errorf("%d of %d parallel attempts got their password checked, want at most %d", c, attempts, throttleFree)
 	}
 	if int(checked.Load()+paused.Load()) != attempts || other.Load() != 0 {
 		t.Errorf("answers: %d checked, %d paused, %d other", checked.Load(), paused.Load(), other.Load())

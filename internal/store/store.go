@@ -150,7 +150,7 @@ func (s *Store) tx(ctx context.Context, fn func(*sql.Tx) error) error {
 		return err
 	}
 	if err := fn(tx); err != nil {
-		tx.Rollback()
+		_ = tx.Rollback() // the error of fn is the one that matters
 		return err
 	}
 	return tx.Commit()

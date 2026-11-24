@@ -1,0 +1,40 @@
+# qlty (code quality and coverage, https://qlty.sh). Locally: qlty check --all, qlty smells --all
+config_version = "0"
+
+exclude_patterns = [
+  "**/testdata/**",
+  "docs/assets/**",
+]
+
+test_patterns = [
+  "**/*_test.go",
+  "lab/**",
+]
+
+[smells]
+mode = "comment"
+
+# Go returns early on every error (if err != nil { return … }); counting returns punishes the idiom
+[smells.return_statements]
+enabled = false
+
+[[source]]
+name = "default"
+default = true
+
+[[plugin]]
+name = "golangci-lint"     # uses .golangci.yml; same version as CI
+version = "2.15.0"
+mode = "comment"
+
+[[plugin]]
+name = "gofmt"
+
+[[plugin]]
+name = "actionlint"        # GitHub workflows
+
+[[plugin]]
+name = "hadolint"          # Dockerfile
+
+[[plugin]]
+name = "osv-scanner"       # known vulnerabilities in dependencies

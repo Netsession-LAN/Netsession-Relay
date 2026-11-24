@@ -3,6 +3,7 @@
  "%d Netze": "%d networks",
  "%d PCs": "%d PCs",
  "%d Ziele mit bekanntem Lärm (Steam, mDNS, SSDP …) ausgeblendet.": "%d destinations with known noise (Steam, mDNS, SSDP …) hidden.",
+ "1 Ziel mit bekanntem Lärm (Steam, mDNS, SSDP …) ausgeblendet.": "1 destination with known noise (Steam, mDNS, SSDP …) hidden.",
  "%d weitere Spiele auf demselben Port": "%d more games on the same port",
  "%s (Lärm)": "%s (noise)",
  "%s Pakete": "%s packets",

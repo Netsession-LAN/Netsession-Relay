@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"cmp"
 	"context"
+	"errors"
 	"flag"
 	"fmt"
 	"io"
@@ -11,6 +12,7 @@ import (
 	"os/user"
 	"strconv"
 	"strings"
+	"syscall"
 	"text/tabwriter"
 	"time"
 
@@ -49,7 +51,8 @@ func defaultUser() string {
 
 const adminUsage = `usage: nsrelay admin <command> [flags] [arguments]
 
-  init [-preset lan|netsession|lab] [-parent trunk0] [-force]  create configuration (seed games + preset)
+  init [-preset lan|netsession|lab] [-parent trunk0] [-force]  create configuration (seed games + preset, mode observe);
+                                                           refuses an existing configuration without -force
   status                                                   engine status (via socket)
   games [-enabled]                                         list games
   enable <game-id>...  /  disable <game-id>...             switch games in the active event
@@ -59,18 +62,24 @@ const adminUsage = `usage: nsrelay admin <command> [flags] [arguments]
   revisions                                                list revisions
   rollback <revision-id>                                   restore and apply an earlier revision
   audit                                                    audit log
-  export [file]                                            configuration of the active event as YAML (stdout or file)
-  import <file>                                            replace VLANs, profiles and event games from a YAML export; then apply
+  export [file|-]                                          configuration of the active event as YAML (stdout or file)
+  import <file|->                                          replace VLANs, profiles and event games from a YAML export
+                                                           (- = standard input); then apply
   set-password [-role admin|operator|viewer] <name>        local account (emergency login); prints a new password once
   logout <name>                                            end all sessions of an account (local or single sign-on)
   seed                                                     sync games.yaml into the database
-  finder-start [-vlans 1101,1102] [-src IP] [-seconds 300] port finder session (via socket)
+  finder-start [-vlans 101,102] [-src IP] [-seconds 300]   port finder session (via socket)
   finder                                                   port finder results
   finder-stop                                              end the session early
-  finder-pcap <file>                                       capture of the last session (Wireshark)
+  finder-pcap <file|->                                     capture of the last session (Wireshark; - = standard output)
   probe                                                    server probe now, then list the servers that answered
 
-common flags: -db (env NSRELAY_DB), -socket (env NSRELAY_SOCKET), -user; flags go before the arguments`
+common flags: -db (env NSRELAY_DB), -socket (env NSRELAY_SOCKET), -user; flags go before the arguments
+
+In the container only /backups is writable; write files there or use "-" with a redirect on the host:
+  docker compose exec -T web nsrelay admin export - > relay.yaml
+  docker compose exec -T web nsrelay admin import - < relay.yaml
+  docker compose exec -T web nsrelay admin finder-pcap - > capture.pcap`
 
 // adminCall is one invocation of an admin subcommand: its own flag set (with the common flags registered), the
 // output streams and a context that ends after a minute.
@@ -81,6 +90,7 @@ type adminCall struct {
 	fs             *flag.FlagSet
 	common         adminFlags
 	stdout, stderr io.Writer
+	stdin          io.Reader
 }
 
 // parse parses the flags of the subcommand; false means the flag package already printed the error.
@@ -136,6 +146,9 @@ var adminCommands = map[string]func(c *adminCall) int{
 	"probe":        adminProbe,
 }
 
+// adminStdin is what `admin import -` reads; the tests replace it.
+var adminStdin io.Reader = os.Stdin
+
 func runAdmin(args []string, stdout, stderr io.Writer) int {
 	if len(args) == 0 {
 		fmt.Fprintln(stderr, adminUsage)
@@ -148,7 +161,7 @@ func runAdmin(args []string, stdout, stderr io.Writer) int {
 	}
 	ctx, cancel := context.WithTimeout(context.Background(), time.Minute)
 	defer cancel()
-	c := &adminCall{ctx: ctx, name: args[0], args: args[1:], fs: newFlags("admin "+args[0], stderr), stdout: stdout, stderr: stderr}
+	c := &adminCall{ctx: ctx, name: args[0], args: args[1:], fs: newFlags("admin "+args[0], stderr), stdout: stdout, stderr: stderr, stdin: adminStdin}
 	c.common.register(c.fs)
 	return run(c)
 }
@@ -169,7 +182,8 @@ func adminInit(c *adminCall) int {
 	if err != nil {
 		return c.fail(err)
 	}
-	fmt.Fprintf(c.stdout, "initialised with preset %s: %d games added; run `nsrelay admin apply`\n", *preset, res.Added)
+	fmt.Fprintf(c.stdout, "initialised with preset %s in mode observe (counts, sends nothing): %d games added; run `nsrelay admin apply`, "+
+		"then `nsrelay admin mode active` and another apply to start relaying\n", *preset, res.Added)
 	return 0
 }
 
@@ -466,17 +480,26 @@ func adminExport(c *adminCall) int {
 	if err != nil {
 		return c.fail(err)
 	}
-	if c.fs.NArg() == 0 {
+	// no file or "-": standard output, and nothing but the YAML on it
+	if c.fs.NArg() == 0 || c.fs.Arg(0) == "-" {
 		if _, err := c.stdout.Write(b); err != nil {
 			return c.fail(err)
 		}
 		return 0
 	}
 	if err := os.WriteFile(c.fs.Arg(0), b, 0o600); err != nil {
-		return c.fail(err)
+		return c.fail(writeHint(err))
 	}
 	fmt.Fprintln(c.stdout, "written:", c.fs.Arg(0))
 	return 0
+}
+
+// writeHint adds where a file can be written when the target is on the read-only file system of the container.
+func writeHint(err error) error {
+	if errors.Is(err, syscall.EROFS) {
+		return fmt.Errorf("%w (in the container only /backups is writable; \"-\" writes to standard output)", err)
+	}
+	return err
 }
 
 func adminImport(c *adminCall) int {
@@ -484,10 +507,17 @@ func adminImport(c *adminCall) int {
 		return 2
 	}
 	if c.fs.NArg() != 1 {
-		return c.fail(fmt.Errorf("admin import: file missing"))
+		return c.fail(fmt.Errorf("admin import: file missing (- = standard input)"))
 	}
 	file := c.fs.Arg(0)
-	b, err := os.ReadFile(file)
+	var b []byte
+	var err error
+	if file == "-" {
+		file = "standard input"
+		b, err = io.ReadAll(io.LimitReader(c.stdin, 16<<20))
+	} else {
+		b, err = os.ReadFile(file)
+	}
 	if err != nil {
 		return c.fail(err)
 	}
@@ -495,7 +525,10 @@ func adminImport(c *adminCall) int {
 	dec := yaml.NewDecoder(bytes.NewReader(b))
 	dec.KnownFields(true)
 	if err := dec.Decode(&cfg); err != nil {
-		return c.fail(fmt.Errorf("admin import: %w", err))
+		if errors.Is(err, io.EOF) {
+			err = errors.New("empty")
+		}
+		return c.fail(fmt.Errorf("admin import: %s: %w", file, err))
 	}
 	if cfg.Event == "" || len(cfg.VLANs) == 0 {
 		return c.fail(fmt.Errorf("admin import: no event or no VLANs in %s", file))

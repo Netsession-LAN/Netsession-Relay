@@ -4,6 +4,8 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"fmt"
+	"html/template"
 	"io"
 	"io/fs"
 	"log/slog"
@@ -12,6 +14,7 @@ import (
 	"net/http/httptest"
 	"net/netip"
 	"net/url"
+	"os"
 	"path/filepath"
 	"reflect"
 	"regexp"
@@ -212,7 +215,48 @@ func get(t *testing.T, c *http.Client, u string) (int, string) {
 	}
 	defer resp.Body.Close()
 	b, _ := io.ReadAll(resp.Body)
+	noFormatResidue(t, u, string(b))
 	return resp.StatusCode, string(b)
+}
+
+// noFormatResidue fails the test when a page shows what fmt prints for a verb that does not fit its argument
+// ("%!d(string=34567)") or for a missing or surplus one ("%!s(MISSING)", "%!(EXTRA ...)").
+func noFormatResidue(t *testing.T, u, body string) {
+	t.Helper()
+	if i := strings.Index(body, "%!"); i >= 0 {
+		t.Errorf("GET %s shows a broken format verb: %q", u, body[max(0, i-60):min(len(body), i+40)])
+	}
+}
+
+// The port finder with results, in both languages: the row per destination, the first bytes and no leftovers of
+// a format verb (the label of the first bytes once read "von Port %!d(string=41234)").
+func TestFinderResultsRender(t *testing.T) {
+	e := setup(t)
+	c, _ := e.client("admin")
+	e.eng.finder = &engineapi.FinderStart{VIDs: []int{1101}, Seconds: 60}
+	for lang, want := range map[string]string{
+		langDE: `Erste Bytes<span class="sr"> von Port 41234</span>`,
+		langEN: `First bytes<span class="sr"> of port 41234</span>`,
+	} {
+		setLangCookie(t, c, e.srv.URL, lang)
+		for _, p := range []string{"/finder", "/finder?teil=ergebnis", "/finder?laerm=1"} {
+			code, body := get(t, c, e.srv.URL+p)
+			if code != 200 || !strings.Contains(body, want) {
+				t.Errorf("GET %s (%s) = %d, label of the first bytes %q missing", p, lang, code, want)
+			}
+			if !strings.Contains(body, "ZOOM-LAN") || !strings.Contains(body, "5a4f4f4d 2d4c414e") {
+				t.Errorf("GET %s (%s): sample of port 41234 not shown", p, lang)
+			}
+		}
+	}
+}
+
+// Arguments of a text with markup are escaped, numbers stay numbers.
+func TestEscapeArgs(t *testing.T) {
+	got := fmt.Sprintf("%d %s %s %v %s %05d %d", escapeArgs([]any{uint16(41234), "<b>", template.HTML("<i>"), 7, 8, 9, "<u>"})...)
+	if want := "41234 &lt;b&gt; &lt;i&gt; 7 8 00009 &lt;u&gt;"; got != want {
+		t.Errorf("escapeArgs: %q, want %q", got, want)
+	}
 }
 
 // The design reference page exists for working on the UI: only the demo serves it.
@@ -280,15 +324,17 @@ func TestLoginAndThrottle(t *testing.T) {
 	if b := post("admin", "pw-admin", "falsch"); !strings.Contains(b, "Anmeldeseite war veraltet") {
 		t.Error("login without the form token was not refused")
 	}
-	// wrong passwords: the same answer for a known and an unknown name, then a pause for this address and name
-	for i := 0; i < throttleFree; i++ {
+	// wrong passwords: the same answer for a known and an unknown name. Exactly three attempts are checked
+	// (the documentation says: three attempts are free), the fourth one has to wait, even with the right password.
+	if throttleFree != 3 {
+		t.Fatalf("throttleFree = %d, the documentation says three attempts are free", throttleFree)
+	}
+	for i := 1; i <= 3; i++ {
 		if a, b := post("admin", "falsch", tok), post("gibtsnicht", "falsch", tok); !strings.Contains(a, "Name oder Passwort falsch") ||
 			!strings.Contains(b, "Name oder Passwort falsch") {
-			t.Fatalf("attempt %d: wrong password not answered with the generic text", i)
+			t.Fatalf("attempt %d: wrong password not checked and answered with the generic text", i)
 		}
 	}
-	post("admin", "falsch", tok)
-	post("gibtsnicht", "falsch", tok)
 	for _, name := range []string{"admin", "gibtsnicht"} {
 		if b := post(name, "pw-admin", tok); !strings.Contains(b, "Zu viele Anmeldeversuche") || strings.Contains(b, "gesperrt") {
 			t.Errorf("%s: no pause after repeated failures (or the answer tells whether the name exists)", name)
@@ -386,6 +432,37 @@ func TestAdminActions(t *testing.T) {
 	resp.Body.Close()
 	if resp.StatusCode != 200 || !strings.HasPrefix(string(b), "SQLite format 3") {
 		t.Errorf("backup download = %d, %d bytes", resp.StatusCode, len(b))
+	}
+}
+
+// In the container the root file system is read-only and /tmp is not writable: the backup download writes its
+// copy into the backup directory (or next to the database) and removes it again.
+func TestBackupDownloadWithoutTmp(t *testing.T) {
+	e := setup(t)
+	admin, _ := e.client("admin")
+	backups := t.TempDir()
+	for _, k := range []string{"TMPDIR", "TMP", "TEMP"} {
+		t.Setenv(k, filepath.Join(backups, "not", "there"))
+	}
+	get := func() (int, string) {
+		resp, err := admin.Get(e.srv.URL + "/system/backup")
+		if err != nil {
+			t.Fatal(err)
+		}
+		defer resp.Body.Close()
+		b, _ := io.ReadAll(resp.Body)
+		return resp.StatusCode, string(b)
+	}
+	if code, _ := get(); code != http.StatusInternalServerError {
+		t.Fatalf("download without any writable directory = %d, want 500 (the test would prove nothing)", code)
+	}
+	e.ui.ScratchDirs = []string{backups}
+	code, body := get()
+	if code != 200 || !strings.HasPrefix(body, "SQLite format 3") {
+		t.Fatalf("download with an unwritable TMPDIR = %d, %d bytes", code, len(body))
+	}
+	if left, _ := os.ReadDir(backups); len(left) != 0 {
+		t.Errorf("the download left files in the backup directory: %v", left)
 	}
 }
 
@@ -919,7 +996,7 @@ func TestPortFinder(t *testing.T) {
 	}
 	_, frag := get(t, op, e.srv.URL+"/finder?teil=ergebnis")
 	if strings.Contains(frag, "<html") || !strings.Contains(frag, "41234") || !strings.Contains(frag, "Spiel anlegen") ||
-		strings.Contains(frag, "27036") || !strings.Contains(frag, "1 Ziele mit bekanntem Lärm") || !strings.Contains(frag, "ZOOM-LAN.") {
+		strings.Contains(frag, "27036") || !strings.Contains(frag, "1 Ziel mit bekanntem Lärm") || !strings.Contains(frag, "ZOOM-LAN.") {
 		t.Errorf("fragment: %.900s", frag)
 	}
 	if _, frag = get(t, op, e.srv.URL+"/finder?teil=ergebnis&laerm=1"); !strings.Contains(frag, "Steam (Lärm)") {

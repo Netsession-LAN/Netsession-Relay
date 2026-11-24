@@ -40,7 +40,7 @@ func adminProbe(c *adminCall) int {
 }
 
 func adminFinderStart(c *adminCall) int {
-	vlans := c.fs.String("vlans", "", "VLAN IDs, comma separated (empty: all)")
+	vlans := c.fs.String("vlans", "", "VLAN IDs of networks of the relay, comma separated (empty: all)")
 	src := c.fs.String("src", "", "only this sender")
 	secs := c.fs.Int("seconds", 300, "session length (max 600)")
 	if !c.parse() {
@@ -118,11 +118,17 @@ func adminFinderPcap(c *adminCall) int {
 	}
 	file := c.fs.Arg(0)
 	if file == "" {
-		return c.fail(fmt.Errorf("usage: nsrelay admin finder-pcap <file>"))
+		return c.usage("finder-pcap <file|->   (- = standard output)")
+	}
+	if file == "-" { // the capture and nothing else on standard output, so a redirect gives a valid pcap
+		if err := c.engine().FinderPcap(c.ctx, c.stdout); err != nil {
+			return c.fail(err)
+		}
+		return 0
 	}
 	f, err := os.Create(file)
 	if err != nil {
-		return c.fail(err)
+		return c.fail(writeHint(err))
 	}
 	if err := c.engine().FinderPcap(c.ctx, f); err != nil {
 		f.Close()

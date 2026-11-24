@@ -365,7 +365,31 @@ YAML
   check "mDNS instance after a restart: group joined again" mdns_joined
   mdns_cases " nach Neustart" 2
   check "mDNS instance: host preparation complete, also with a read-only /proc/sys" sh -c "NSRELAY_SOCKET=$MD/engine.sock \"$NS\" admin status | grep -q 'host prepared'"
+
+  # ---- removing the relay: `nsrelay cleanup` takes away what the engine left on the host ----
+  mcleanup() { NSRELAY_SOCKET="$MD/engine.sock" ip netns exec mrelay "$NS" cleanup; }
+  # what the engine created: VLAN interfaces (alias nsrelay), its firewall table, the management rules and routes
+  # (grep without -q: with pipefail a grep that stops reading early would fail the pipeline)
+  mleft() {
+    ip -n mrelay link show | grep 'alias nsrelay' >/dev/null && ip netns exec mrelay nft list table inet nsrelay_engine >/dev/null &&
+      ip -n mrelay rule show | grep '^7355:' >/dev/null && [ -n "$(ip -n mrelay route show table 7355)" ] ||
+      { ip -n mrelay link show; ip -n mrelay rule show; ip -n mrelay route show table 7355; return 1; }
+  }
+  mgone() {
+    if ip -n mrelay link show | grep 'alias nsrelay' >/dev/null; then ip -n mrelay link show; return 1; fi
+    if ip netns exec mrelay nft list table inet nsrelay_engine 2>/dev/null; then return 1; fi
+    if ip -n mrelay rule show | grep '^7355:'; then return 1; fi
+    if [ -n "$(ip -n mrelay route show table 7355 2>/dev/null)" ]; then ip -n mrelay route show table 7355; return 1; fi
+  }
+  mrefused() { ! mcleanup >"$MD/refused.txt" 2>&1 && grep -q 'an engine is running' "$MD/refused.txt" || { cat "$MD/refused.txt"; return 1; }; }
+  check "cleanup refuses while the engine runs" mrefused
+  check "cleanup refused: everything is still there" mleft
   kill -TERM "$(cat /tmp/nsrelay/engine-mdns.pid)"; rm -f /tmp/nsrelay/engine-mdns.pid; sleep 0.5
+  check "a stopped engine leaves its interfaces, firewall table and management rules on the host" mleft
+  check "cleanup removes them and says what it removed" sh -c "NSRELAY_SOCKET=$MD/engine.sock ip netns exec mrelay \"$NS\" cleanup > $MD/cleanup.txt 2>&1; cat $MD/cleanup.txt; grep -q 'removed: interface trunk0.1101' $MD/cleanup.txt && grep -q 'removed: interface trunk0.1102' $MD/cleanup.txt && grep -q 'removed: nftables table inet nsrelay_engine' $MD/cleanup.txt && grep -q 'policy rule(s) with priority 7355' $MD/cleanup.txt && grep -q 'route(s) in table 7355' $MD/cleanup.txt"
+  check "after cleanup: no interface, firewall table, rule or route of the relay" mgone
+  check "after cleanup: the trunk, the management address and the default route are untouched" sh -c "ip -n mrelay link show trunk0 >/dev/null && ip -n mrelay addr show mgmt0 | grep -q 198.18.0.56 && ip -n mrelay route show default | grep -q mgmt0"
+  check "cleanup a second time finds nothing" sh -c "NSRELAY_SOCKET=$MD/engine.sock ip netns exec mrelay \"$NS\" cleanup | grep -q 'nothing to remove'"
 
   # ---- control plane (store, engine API, revisions, rollback, backup) ----
   export NSRELAY_DB=/tmp/nsrelay/relay.db NSRELAY_SOCKET=/tmp/nsrelay/engine.sock
@@ -373,6 +397,9 @@ YAML
     run_case "$1" t1 "-src 10.10.1.10 -dst 255.255.255.255 -sport $2 -dport 23757 -payload p4"       "t2 -dport 23757 -src 10.10.1.10 $3 -timeout 1000"
   }
   check "admin init -preset lab" "$NS" admin init -preset lab -parent trunk0
+  check "a preset starts in observe; a second init needs -force" sh -c "\"$NS\" admin export | grep -qx 'mode: observe' && ! \"$NS\" admin init -preset lab -parent trunk0"
+  check "admin export - | admin import - (standard output and input)" sh -c "\"$NS\" admin export - | sed 's/^mode: observe$/mode: active/' | \"$NS\" admin import - && \"$NS\" admin export - | grep -qx 'mode: active'"
+  check "admin mode observe, then active" sh -c "\"$NS\" admin mode observe && \"$NS\" admin mode active"
   check "admin apply (Revision 1)" "$NS" admin apply -note "lab start"
   check "admin status through the socket" sh -c "\"$NS\" admin status | grep -q 'mode active'"
   # 17. web UI: reachable on the host, never through a relay address - first the firewall stops it, without the
@@ -397,6 +424,7 @@ YAML
   check "admin rollback 3 (Revision 5)" "$NS" admin rollback 3
   check "admin revisions lists 5 revisions" sh -c "\"$NS\" admin revisions | grep -c '^[0-9]' | grep -qx 5"
   # port finder: session on table 1 only, unknown port 41234 shows up, table 2 is filtered out
+  check "finder-start refuses a VLAN the relay has no network for and names the ones it has" sh -c "! \"$NS\" admin finder-start -vlans 101 2>/tmp/nsrelay/finder-err.txt && grep -q 'VLAN 101 is not a network of this relay (configured: 1100, 1101, 1102, 1103)' /tmp/nsrelay/finder-err.txt || { cat /tmp/nsrelay/finder-err.txt; false; }"
   check "finder-start on table 1" "$NS" admin finder-start -vlans 1101 -seconds 30
   ip netns exec t1 "$NS" lab send -iface eth0 -src 10.10.1.10 -dst 255.255.255.255 -sport 50030 -dport 41234 -size 20 -count 3
   ip netns exec t2 "$NS" lab send -iface eth0 -src 10.10.2.10 -dst 255.255.255.255 -sport 50030 -dport 41235 -size 20 -count 3
@@ -404,6 +432,7 @@ YAML
   check "finder shows port 41234 as unknown" sh -c "\"$NS\" admin finder | grep -q '41234  UNKNOWN'"
   check "finder ignores table 2" sh -c "! \"$NS\" admin finder | grep -q 41235"
   check "finder-pcap writes the capture" sh -c "\"$NS\" admin finder-pcap /tmp/nsrelay/finder.pcap && [ \$(stat -c %s /tmp/nsrelay/finder.pcap) -gt 150 ]"
+  check "finder-pcap - writes the same capture to standard output and nothing else" sh -c "\"$NS\" admin finder-pcap - > /tmp/nsrelay/finder-stdout.pcap && cmp /tmp/nsrelay/finder-stdout.pcap /tmp/nsrelay/finder.pcap && [ \"\$(od -An -tx1 -N4 /tmp/nsrelay/finder-stdout.pcap | tr -d ' ')\" = d4c3b2a1 ]"
   check "finder-stop" "$NS" admin finder-stop
   # server probe: a Source server in gs only answers; the relay asks from 10.10.0.x and lists it with name
   ip netns exec gs "$NS" lab a2s-server -iface eth0 -ip 10.10.0.10 -name "Lab CS2" -timeout 4000 >/tmp/nsrelay/a2s.log 2>&1 &
@@ -413,6 +442,7 @@ YAML
   check "the probe does not show up as a player (the relay address does not count)" sh -c "! \"$NS\" admin probe | grep -q '\.1:'"
   wait "$A2S_PID" || true
   check "backup writes .db and .yaml" sh -c "\"$NS\" backup -dir /tmp/nsrelay/backups -keep 3 && ls /tmp/nsrelay/backups/*.db /tmp/nsrelay/backups/*.yaml"
+  check "two more backups right away (same second) both succeed" sh -c "\"$NS\" backup -dir /tmp/nsrelay/backups -keep 3 && \"$NS\" backup -dir /tmp/nsrelay/backups -keep 3 && [ \$(ls /tmp/nsrelay/backups/*.db | wc -l) = 3 ]"
 
   # engine restarts without web and database from active.json (written by the last apply)
   kill -TERM "$ENGINE_PID"; rm -f /tmp/nsrelay/engine.pid; sleep 0.5
@@ -438,6 +468,18 @@ YAML
   for p in $SENDERS; do wait "$p"; done
   check "the engine is alive and active afterwards" sh -c "\"$NS\" admin status | grep -q 'mode active'"
   check "no panic in the engine log" sh -c "! grep -q panic /tmp/nsrelay/engine-first.log"
+
+  # removing the relay by hand (the commands of the documentation, for a host without the image)
+  kill -TERM "$(cat /tmp/nsrelay/engine-first.pid)"; rm -f /tmp/nsrelay/engine-first.pid; sleep 0.5
+  manual_cleanup() {
+    ip netns exec relay sh -c '
+      for l in $(ip -o link show | grep "alias nsrelay" | cut -d: -f2 | cut -d@ -f1); do ip link del "$l"; done
+      nft delete table inet nsrelay_engine
+      while ip rule del priority 7355 2>/dev/null; do :; done
+      ip route flush table 7355 2>/dev/null
+      ! ip link show | grep -q "alias nsrelay" && ! nft list table inet nsrelay_engine 2>/dev/null && ip link show trunk0 >/dev/null && ! ip link show trunk0.1101 2>/dev/null'
+  }
+  check "the manual clean-up of the documentation removes the VLAN interfaces and the firewall table" manual_cleanup
 fi
 
 echo

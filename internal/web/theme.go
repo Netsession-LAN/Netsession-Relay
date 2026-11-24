@@ -47,9 +47,8 @@ func (s *Server) setTheme(w http.ResponseWriter, r *http.Request) {
 		http.NotFound(w, r)
 		return
 	}
-	http.SetCookie(w, &http.Cookie{Name: themeCookie, Value: th, Path: "/", MaxAge: int((365 * 24 * time.Hour).Seconds()),
-		HttpOnly: true, SameSite: http.SameSiteLaxMode, Secure: s.secure(r)})
-	http.Redirect(w, r, safeBack(r.URL.Query().Get("zurueck")), http.StatusSeeOther)
+	s.setCookie(w, r, &http.Cookie{Name: themeCookie, Value: th, Path: "/", MaxAge: int((365 * 24 * time.Hour).Seconds())}) //nolint:gosec // G124: setCookie sets HttpOnly, SameSite and, per request, Secure
+	http.Redirect(w, r, safeBack(r.URL.Query().Get("zurueck")), http.StatusSeeOther)                                        //nolint:gosec // G710: the target is checked by localPath or is a fixed path
 }
 
 // safeBack keeps a local path for a redirect and falls back to "/" for anything that could leave the site.

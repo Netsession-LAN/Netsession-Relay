@@ -1,17 +1,18 @@
 # Operating during an event
 
-The web UI is in German and English (account menu), written for crew members under stress. Pages:
+The web UI is in German and English (account menu), written for crew members under stress. German is the
+default, so these pages name every page and button in both languages: **German** (English). Pages:
 
-| Page | What you do there |
-|---|---|
-| **Übersicht** | Is the relay working? Mode, packets per second, alarms, every VLAN as a key cap with its rate, games with traffic, broadcasts on unknown ports. Updates live. |
-| **Spiele** | Search by name or port (`/` focuses the search), switch games on and off. Takes effect immediately; running matches are not affected. |
-| **Spiel** | Per game: "Wird es gefunden?" walks through the chain (game on → packets arrive → targets → copied) and names the first link that fails. Ports, notes, sources. |
-| **Netz** | Switch table VLANs on/off for this event, add, edit or delete networks, see traffic per VLAN, the matrix (which groups see each other). |
-| **Spieler** | Who searched for or hosted which game in the last 15 minutes, with network and address. |
-| **Port-Finder** | Operators: capture discovery traffic of an unknown game and create the game from it ([Game database](game-database.md)). |
-| **Verlauf** | Every applied configuration with who/when; roll back. Audit log in plain words. |
-| **System** | Operating mode, engine facts, drop reasons, backup download, link to **Monitoring** (token, SNMP agent, push targets), the logo of your event. |
+| Page (German) | English | What you do there |
+|---|---|---|
+| **Übersicht** | Overview | Is the relay working? Mode, packets per second, alarms, every VLAN as a key cap with its rate, games with traffic, broadcasts on unknown ports ("Unbekannte Ports" / "Unknown ports"). Updates live. |
+| **Spiele** | Games | Search by name or port (`/` focuses the search), switch games on and off. Takes effect immediately; running matches are not affected. |
+| a game's page | | Per game: "Wird es gefunden?" ("Can it be found?") walks through the chain (game on → packets arrive → targets → copied) and names the first link that fails. Ports, notes, sources. |
+| **Netz** | Network | Switch table VLANs on/off for this event, add, edit or delete networks, see traffic per VLAN, the matrix (which groups see each other). |
+| **Spieler** | Players | Who searched for or hosted which game in the last 15 minutes, with network and address. |
+| **Port-Finder** | Port finder | Operators: capture discovery traffic of an unknown game and create the game from it ([Game database](game-database.md)). |
+| **Verlauf** | History | Every applied configuration with who/when; roll back. Audit log in plain words. |
+| **System** | System | Operating mode, engine facts, drop reasons, backup download, link to **Monitoring** (token, SNMP agent, push targets), the logo of your event. |
 
 Roles: **viewer** (see everything), **operator** (switch games, emergency stop, acknowledge alarms, port finder),
 **admin** (networks, mode, rollback, accounts, monitoring token).
@@ -25,7 +26,11 @@ Roles: **viewer** (see everything), **operator** (switch games, emergency stop, 
 | `paused` | emergency stop, nothing is relayed |
 | `standby` | set automatically when another active Netsession Relay that started earlier is seen |
 
-**Emergency stop** is in the header (operator and up) and asks before it acts.
+**Emergency stop** ("Not-Aus") is in the header (operator and up) and asks before it acts.
+
+A rollback under **Verlauf** (History) restores the whole configuration of that revision: games, networks, the
+matrix **and the operating mode**. Rolling back to a revision that was applied in `observe` therefore stops the
+relaying again; check the mode on **System** afterwards.
 
 ## Command line
 
@@ -40,10 +45,33 @@ docker compose exec web nsrelay admin rollback 7
 docker compose exec engine nsrelay admin status
 ```
 
+In the container only `/backups` is writable (the root file system is read-only). Commands that write or read a
+file therefore take `-` for standard output or input; `-T` keeps Docker from adding a terminal to the stream:
+
+```sh
+docker compose exec -T web nsrelay admin export - > relay.yaml        # configuration as YAML
+docker compose exec -T web nsrelay admin import - < relay.yaml        # replace it, then: admin apply
+docker compose exec -T web nsrelay admin finder-pcap - > capture.pcap # capture of the last port finder session
+```
+
 `nsrelay admin init -preset <name> -parent <trunk>` creates a first configuration without the browser. The
 presets are examples: `lan` (the default: game servers in VLAN 100, four tables in VLANs 101–104, networks
-`10.10.<n>.0/24`), `netsession` (the layout of the Netsession LAN party: game servers, 14 tables, WiFi and orga)
-and `lab` (the network lab). The usual way is the setup in the browser.
+`10.10.<n>.0/24`, relay address `.250` in each, the one the setup in the browser suggests), `netsession` (the
+layout of the Netsession LAN party: game servers, 14 tables, WiFi and orga, relay address `.55`) and `lab` (the
+network lab). The usual way is the setup in the browser.
+
+- `init` refuses when a configuration exists already (after the setup in the browser, for example);
+  `-force` replaces it.
+- A preset starts in the mode `observe`, like the setup: after `admin apply` the relay counts and warns but sends
+  nothing. To start relaying: `nsrelay admin mode active`, then `nsrelay admin apply` again.
+
+```sh
+docker compose exec web nsrelay admin init -preset lan -parent eth1
+docker compose exec web nsrelay admin apply -note "first configuration, observe"
+docker compose exec engine nsrelay admin status      # packets arrive? alarms?
+docker compose exec web nsrelay admin mode active
+docker compose exec web nsrelay admin apply -note "active"
+```
 
 ## Monitoring
 
@@ -55,7 +83,7 @@ Everything is on the page **System → Monitoring** (admin).
   once, only its SHA-256 is stored). Zabbix template:
   [`deploy/zabbix/template_nsrelay.yaml`](https://github.com/Netsession-LAN/Netsession-Relay/blob/main/deploy/zabbix/template_nsrelay.yaml),
   macros `{$NSRELAY.URL}` (e.g. `http://192.0.2.10:8080`) and `{$NSRELAY.TOKEN}` (secret text).
-- **SNMP agent** (read-only): v3 authPriv (SHA-256/512, AES-128/256), v2c optional, bound to the management address
+- **SNMP agent** (read-only): v3 authPriv (SHA-256 or SHA-512, plain SHA-1 for older managers; AES-128/256), v2c optional, bound to the management address
   only (the address the web part is bound to, else the one on the interface with the default route). Port 161
   needs `net.ipv4.ip_unprivileged_port_start=161` on the host (`deploy/host/setup.sh` sets it); otherwise use a
   port above 1023, e.g. 1161.
@@ -70,10 +98,10 @@ Everything is on the page **System → Monitoring** (admin).
 - **OpenTelemetry (OTLP)**: gRPC or HTTP/protobuf; metrics every 30 s (cumulative counters from the engine start,
   names `nsrelay.*`) and events as log records (`SeverityNumber` WARN only for opened alarms). Resource
   `service.name=nsrelay`, `host.name` = the name set on the page.
-- **SNMP traps/informs**: v2c or v3, notifications `nsRelayAlarmOpened`, `nsRelayAlarmCleared`, `nsRelayAudit`, `nsRelayTest`.
+- **SNMP traps/informs**: v2c or v3 (the same algorithms as the agent), notifications `nsRelayAlarmOpened`, `nsRelayAlarmCleared`, `nsRelayAudit`, `nsRelayTest`.
 
 Events: alarms opened and cleared (including `engine_down` after 30 s without engine) and audit entries (every
-change). "Testen" sends a test message to one target. Secrets (community, passwords, headers) are stored in the
+change). "Testen" ("Test") sends a test message to one target. Secrets (community, passwords, headers) are stored in the
 database (so they are part of backups) and never shown in the UI, logs or exports.
 
 The Zabbix template triggers on: web part not answering, engine unreachable, standby, `foreign_relay`, `loop`,
@@ -87,7 +115,7 @@ that differ from the default. Set them as stack or `.env` variables; `compose.ya
 | Variable | Service | Without a value | Set it when |
 |---|---|---|---|
 | `NSRELAY_BEACON_KEY` | engine | a random key, created on first start in the engine's state volume (`beacon.key`) | two separately installed relays must recognise each other: give both the same secret (16 characters or more) |
-| `NSRELAY_ALLOWED_IFACES` | engine | every interface the configuration names, except the loopback and the interface that carries the host's default route | you want a fixed list (names or patterns such as `ens19`, `ens2*`, comma-separated), or the relay really has to work on the default-route interface |
+| `NSRELAY_ALLOWED_IFACES` | engine | every interface the configuration names, except the loopback and the interface that carries the host's default route | you want a fixed list (names or patterns such as `ens19`, `ens2*`, comma-separated), or the relay really has to work on the default-route interface. The list is exclusive: name every interface the relay uses, the trunk too |
 | `NSRELAY_TRUSTED_PROXIES` | web | forwarding headers are ignored, the client is the TCP peer | the UI runs behind a reverse proxy: its address or network (comma-separated) |
 | `NSRELAY_PUBLIC_URL` | web | host of `NSRELAY_OIDC_REDIRECT_URL`, if set | users open the UI under an `https://` name and OIDC is not used |
 | `NSRELAY_COOKIE_SECURE` | web | decided per request | `1` forces Secure cookies, `0` switches them off |
@@ -95,14 +123,15 @@ that differ from the default. Set them as stack or `.env` variables; `compose.ya
 **Relay beacons.** Every engine announces itself once a second on each VLAN so that a second relay for the same
 ports (a cloned VM, for example) stays quiet instead of doubling every packet. The beacons are signed. A beacon
 without a valid signature is ignored, so a participant cannot silence the relay with a forged frame. If such a
-beacon concerns ports this relay serves, the alarm `unknown_beacon` ("Unbekanntes Relay-Signal") names the VLAN it
+beacon concerns ports this relay serves, the alarm `unknown_beacon` ("Unbekanntes Relay-Signal" / "Unknown relay beacon") names the VLAN it
 came from: either a second relay with another key (give both the same `NSRELAY_BEACON_KEY`), a relay of an older
 version, or a forged frame. Relays that guard each other need clocks within 30 seconds (NTP). A clone of the VM
 carries the same key file and is recognised without configuration.
 
 **Interfaces.** The engine, not the web part, decides which interfaces it uses. By default it refuses the
 interface with the default route (your management network), both as a trunk and as a single device, and answers
-`interface not allowed`. List the interface in `NSRELAY_ALLOWED_IFACES` if you want that.
+`interface not allowed`. List the interface in `NSRELAY_ALLOWED_IFACES` if you want that — together with every
+other interface the relay uses: once the variable is set, only the listed interfaces are allowed.
 
 **Limits.** Rate limits, loop detection and the storm brake cannot be switched off by the configuration: the
 engine keeps every limit inside fixed bounds and logs when it corrects a value. The storm brake pauses a rule only
@@ -127,8 +156,9 @@ Group names are compared without regard to case; with several groups the highest
 (client address in the audit log, login throttling per client) and `X-Forwarded-Proto` (Secure cookies, HSTS)
 count. Without it all users behind the proxy share one address for the login throttle.
 
-**Login.** Failed logins are slowed down per client address and account name: three attempts are free, then
-every further one has to wait for a pause that doubles up to 5 minutes. An attempt counts from the moment it
+**Login.** Failed logins are slowed down per client address and account name: three attempts are free, from the
+fourth on each one has to wait for a pause that starts at 2 seconds and doubles up to 5 minutes (the sign-in page
+then says "Zu viele Anmeldeversuche" / "Too many sign-in attempts"). An attempt counts from the moment it
 arrives, so opening many connections at once does not get around the pause. An IPv6 client is counted by its /64
 network. Accounts are not locked. A new password ends all sessions of the account. Sessions last 12 hours.
 `docker compose exec web nsrelay admin logout <name>` ends all sessions of an account at once, also for accounts
@@ -172,7 +202,8 @@ The web part writes a backup every day into the volume `backups`: `nsrelay-<time
 plus a readable YAML export; the last 14 are kept (`NSRELAY_BACKUP_KEEP` changes the number,
 `NSRELAY_BACKUP_AUTO=0` switches the automatic backup off). The files are readable by their owner only (mode
 0600): the database holds the password hashes and the secrets of the monitoring targets. **System** shows the
-time of the last one and offers a download. One more right now: `docker compose exec web nsrelay backup`. To keep
+time of the last one and offers a download (a fresh copy, made at that moment). One more right now:
+`docker compose exec web nsrelay backup`; a second one within the same second gets `-2` appended to its name. To keep
 the backups in a directory of the host instead, set `NSRELAY_BACKUP_VOLUME=/path/on/host` (owner uid 10001).
 Restore:
 
@@ -191,9 +222,9 @@ the binary without it (`deploy/systemd/`).
 
 | Variable | Service | Without a value | Meaning |
 |---|---|---|---|
-| `NSRELAY_HTTP_ADDR` | web | `:8080` | listen address of the web UI; `:8080` is every address of the host except the relay addresses, `192.0.2.10:8080` binds one address |
+| `NSRELAY_HTTP_ADDR` | web | `:8080` with `compose.yaml`; the binary on its own (`deploy/systemd/`) listens on `127.0.0.1:8080` | listen address of the web UI; `:8080` is every address of the host except the relay addresses, `192.0.2.10:8080` binds one address |
 | `NSRELAY_LANG` | web | German | `en`: English until a user chooses a language |
-| `NSRELAY_INSTANCE` | web | – | name of a second relay instance (e.g. `mDNS`), shown in the UI |
+| `NSRELAY_INSTANCE` | web | – | name of a second relay instance (e.g. `mDNS`); shown after signing in: in the header, the page title and the footer |
 | `NSRELAY_TRUSTED_PROXIES` | web | none | reverse proxies whose forwarding headers count (see above) |
 | `NSRELAY_PUBLIC_URL` | web | host of the OIDC redirect URL | the `https://` address users open (see above) |
 | `NSRELAY_COOKIE_SECURE` | web | per request | `1` forces Secure cookies and HSTS, `0` switches them off |
@@ -204,7 +235,7 @@ the binary without it (`deploy/systemd/`).
 | `NSRELAY_BACKUP_VOLUME` | compose | volume `backups` | a directory of the host for the backups instead of the volume (owner uid 10001) |
 | `NSRELAY_SNMP_ADDR` | web | the address of `NSRELAY_HTTP_ADDR` if it names one, else the address on the interface with the default route | address the SNMP agent binds; it never listens on every address |
 | `NSRELAY_BEACON_KEY` | engine | a random key in the state volume | shared secret of relays that must recognise each other (see above) |
-| `NSRELAY_ALLOWED_IFACES` | engine | all but the default-route interface | the interfaces the engine may use (see above) |
+| `NSRELAY_ALLOWED_IFACES` | engine | all but the default-route interface | the only interfaces the engine may use; name all of them, the trunk too (see above) |
 | `NSRELAY_IMAGE` | compose | `ghcr.io/netsession-lan/netsession-relay:latest` | another image or a fixed version |
 
 | Variable | Service | Value in `compose.yaml` | Meaning |
@@ -216,3 +247,42 @@ the binary without it (`deploy/systemd/`).
 | `NSRELAY_BACKUP_DIR` | web | `/backups` | where backups are written; empty: no automatic backup |
 
 `deploy/host/setup.sh` (optional) reads `NSRELAY_OPEN_IFACES`, see "Shielding the host".
+
+## Removing the relay
+
+The engine configures the network of the host, and it leaves that in place when it stops (a restart must not
+interrupt anything). After `docker compose down` these are still there:
+
+- one VLAN interface per network on the trunk (`<trunk>.<VLAN ID>`) with the relay address,
+- the nftables table `inet nsrelay_engine`,
+- policy routing rules with priority 7355 and the routing table 7355 (only if the relay had a management
+  address to protect).
+
+`nsrelay cleanup` removes all of it. It runs with the rights of the engine and refuses while an engine is still
+running:
+
+```sh
+docker compose stop
+docker compose run --rm engine cleanup    # prints what it removed
+docker compose down                       # add -v to delete configuration, state and backups as well
+```
+
+It only deletes interfaces the engine created itself (they carry the alias `nsrelay`). The trunk, the management
+interface and an interface you attached as a single device are not touched; on such a device the relay address
+stays until you remove it (`ip addr del <relay address>/<prefix> dev <interface>`) or reboot, and so do the kernel
+settings of the trunk (no routing, no IPv6 on it), which a reboot resets.
+
+Without the image, the same by hand as root:
+
+```sh
+ip -o link show | grep 'alias nsrelay'            # the interfaces the engine created
+for l in $(ip -o link show | grep 'alias nsrelay' | cut -d: -f2 | cut -d@ -f1); do ip link del "$l"; done
+nft delete table inet nsrelay_engine
+while ip rule del priority 7355 2>/dev/null; do :; done
+ip route flush table 7355
+```
+
+If you ran the optional `deploy/host/setup.sh`, undo it separately. It wrote `/etc/sysctl.d/90-nsrelay.conf`,
+`/etc/nftables.d-nsrelay.nft` (table `inet nsrelay`, with an include line in `/etc/nftables.conf`) and
+`/etc/network/interfaces.d/nsrelay-trunk`, and it changed `/etc/docker/daemon.json` (the file from before is kept
+next to it as `daemon.json.before-nsrelay`).

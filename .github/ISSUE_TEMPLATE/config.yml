@@ -4,5 +4,5 @@ contact_links:
     url: https://github.com/Netsession-LAN/Netsession-Relay/security/advisories/new
     about: Please report vulnerabilities privately.
   - name: Documentation and tutorial
-    url: https://github.com/Netsession-LAN/Netsession-Relay/wiki
+    url: https://netsession-relay.readthedocs.io/
     about: Getting started, troubleshooting, game database format.

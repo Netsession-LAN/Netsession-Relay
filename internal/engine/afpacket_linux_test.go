@@ -85,7 +85,7 @@ func TestPacketSockCloseWhileWriting(t *testing.T) {
 		go func() {
 			defer wg.Done()
 			for range 2000 {
-				if err := s.write([]byte("frame")); err != nil && !errors.Is(err, errSockClosed) && err != unix.EAGAIN {
+				if err := s.write([]byte("frame")); err != nil && !errors.Is(err, errSockClosed) && !errors.Is(err, unix.EAGAIN) {
 					t.Errorf("write: %v", err)
 					return
 				}

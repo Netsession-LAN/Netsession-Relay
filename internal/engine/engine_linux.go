@@ -224,10 +224,7 @@ func (e *Engine) Apply(s *compile.Snapshot) error {
 // Players lists recent discovery senders (engine API).
 func (e *Engine) Players() []engineapi.Player {
 	list := e.guard.Players.List()
-	out := make([]engineapi.Player, len(list), len(list)+16)
-	for i, p := range list {
-		out[i] = engineapi.Player(p)
-	}
+	out := append(make([]engineapi.Player, 0, len(list)+16), list...)
 	for _, s := range e.guard.Probe.Servers() {
 		out = append(out, engineapi.Player{Rule: s.Rule, Src: s.Src, VID: s.VID, First: s.First, Last: s.Last, Count: s.Count,
 			Server: true, Port: s.Port, Name: s.Name, Map: s.Map, Game: s.Game, Num: s.Num, Max: s.Max})
@@ -258,6 +255,15 @@ func (e *Engine) FinderStart(req engineapi.FinderStart) error {
 			return fmt.Errorf("bad sender address %q", req.Src)
 		}
 		fr.Src = a
+	}
+	var have []int
+	if st := e.st.Load(); st != nil {
+		for _, v := range st.table.Snapshot.VLANs {
+			have = append(have, v.VID)
+		}
+	}
+	if err := CheckFinderVIDs(req.VIDs, have); err != nil {
+		return err
 	}
 	if err := e.guard.Finder.Start(fr, time.Now()); err != nil {
 		return err

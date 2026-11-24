@@ -5,25 +5,13 @@ import (
 	"sort"
 	"sync"
 	"time"
+
+	"github.com/Netsession-LAN/Netsession-Relay/internal/engineapi"
 )
 
-// Player is one sender of discovery packets for a rule ("who searches / hosts what").
-type Player struct {
-	Rule  string     `json:"rule"`
-	Src   netip.Addr `json:"src"`
-	VID   int        `json:"vid"`
-	First time.Time  `json:"first"`
-	Last  time.Time  `json:"last"`
-	Count uint64     `json:"count"`
-	// Server: answered the server probe (engine/probe.go); Port/Name/Map/Num/Max describe it
-	Server bool   `json:"server,omitempty"`
-	Port   uint16 `json:"port,omitempty"`
-	Name   string `json:"name,omitempty"`
-	Map    string `json:"map,omitempty"`
-	Game   string `json:"game,omitempty"`
-	Num    int    `json:"num,omitempty"`
-	Max    int    `json:"max,omitempty"`
-}
+// Player is one sender of discovery packets for a rule ("who searches / hosts what"); the engine API hands it
+// out as it is.
+type Player = engineapi.Player
 
 type playerKey struct {
 	rule string

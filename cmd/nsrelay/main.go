@@ -32,7 +32,9 @@ import (
 	"github.com/Netsession-LAN/Netsession-Relay/internal/compile"
 	"github.com/Netsession-LAN/Netsession-Relay/internal/engine"
 	"github.com/Netsession-LAN/Netsession-Relay/internal/engineapi"
+	"github.com/Netsession-LAN/Netsession-Relay/internal/hostprep"
 	"github.com/Netsession-LAN/Netsession-Relay/internal/lab"
+	"github.com/Netsession-LAN/Netsession-Relay/internal/netif"
 	"github.com/Netsession-LAN/Netsession-Relay/internal/pkt"
 	"github.com/Netsession-LAN/Netsession-Relay/internal/snmp"
 )
@@ -56,7 +58,55 @@ var commands = []command{
 	{"lab", "helpers for the network lab: " + labNames, runLab},
 	{"health", "check a health URL (container health checks; no curl in the image)", runHealth},
 	{"backup", "backup [-dir] | backup restore <file>", runBackup},
+	{"cleanup", "remove what the engine created on the host (VLAN interfaces, firewall table, routing rules); stop the engine first", runCleanup},
 	{"snmp-mib", "print NETSESSION-RELAY-MIB; -zabbix: the Zabbix SNMP template (deploy/zabbix/template_nsrelay_snmp.yaml)", runSNMPMIB},
+}
+
+// runCleanup removes what the engine left on the host, for taking the relay out of service: the VLAN interfaces
+// it created (alias "nsrelay"), its nftables table and the policy routing for the management side. It needs the
+// same rights as the engine (CAP_NET_ADMIN in the network namespace of the host) and refuses while an engine
+// answers on the socket: that one would put everything back.
+func runCleanup(args []string, stdout, stderr io.Writer) int {
+	fs := newFlags("cleanup", stderr)
+	socket := fs.String("socket", envOr("NSRELAY_SOCKET", engineapi.DefaultSocket), "engine API socket, to check that no engine runs")
+	force := fs.Bool("force", false, "clean up although an engine answers on the socket")
+	if err := fs.Parse(args); err != nil {
+		return 2
+	}
+	if fs.NArg() != 0 {
+		fmt.Fprintln(stderr, "usage: nsrelay cleanup [-socket path] [-force]")
+		return 2
+	}
+	if !*force && *socket != "" {
+		ctx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
+		_, err := engineapi.NewClient(*socket).Status(ctx)
+		cancel()
+		if err == nil {
+			fmt.Fprintln(stderr, "cleanup: an engine is running and would put everything back; stop it first (docker compose stop), then run cleanup again")
+			return 1
+		}
+	}
+	code := 0
+	links, err := netif.Cleanup(nil)
+	if err != nil {
+		fmt.Fprintln(stderr, "cleanup: interfaces:", err)
+		code = 1
+	}
+	for _, l := range links {
+		fmt.Fprintln(stdout, "removed: interface", l)
+	}
+	rest, err := hostprep.Remove()
+	if err != nil {
+		fmt.Fprintln(stderr, "cleanup: firewall and routing:", err)
+		code = 1
+	}
+	for _, r := range rest {
+		fmt.Fprintln(stdout, "removed:", r)
+	}
+	if code == 0 && len(links)+len(rest) == 0 {
+		fmt.Fprintln(stdout, "nothing to remove: no interface, firewall table or routing rule of the relay on this host")
+	}
+	return code
 }
 
 func runSNMPMIB(args []string, stdout, _ io.Writer) int {

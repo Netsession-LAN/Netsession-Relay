@@ -117,6 +117,7 @@ func getDest(t *testing.T, c *http.Client, u, dest string) (int, string) {
 	}
 	defer resp.Body.Close()
 	b, _ := io.ReadAll(resp.Body)
+	noFormatResidue(t, u, string(b))
 	return resp.StatusCode, string(b)
 }
 

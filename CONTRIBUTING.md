@@ -23,18 +23,23 @@ Thanks for helping LAN parties find their games. Contributions are welcome, most
 
 ## Development
 
-Go 1.26 or newer (CI and the image use 1.27), no CGO for the build. Everything CI runs can be run locally:
+Go 1.26 or newer (`go.mod` names toolchain go1.27.4, which the go command fetches when needed), no CGO for the build. Everything CI runs can be run locally:
 
 ```sh
 gofmt -l cmd internal games      # must print nothing
 go mod tidy -diff                # must print nothing
 go vet ./... && GOOS=windows go vet ./...
-go run honnef.co/go/tools/cmd/staticcheck@v0.8.2 -checks all,-ST1000,-ST1003 ./...
+go run github.com/golangci/golangci-lint/v2/cmd/golangci-lint@v2.15.0 run ./...
 go run golang.org/x/vuln/cmd/govulncheck@v1.9.0 ./...
 go test ./...
 CGO_ENABLED=1 go test -race ./...    # the race detector needs a C compiler
 bash lab/run-docker.sh               # network lab: the real engine between network namespaces
+sh tools/coverage.sh                 # coverage of unit tests and lab together (writes coverage.out)
+qlty check --all                     # optional: the checks qlty.sh runs (.qlty/qlty.toml)
 ```
+
+The lab script needs Docker (privileged containers) and builds the binary with the Go of your machine: Go 1.26 or
+newer.
 
 [docs/development.md](docs/development.md) explains the packages, the lab and the demo mode.
 
@@ -65,7 +70,7 @@ What a change should bring along:
 ## Pull requests
 
 - One topic per pull request, with tests.
-- CI must be green: formatting, a tidy `go.mod`, `go vet` for Linux and Windows, staticcheck, govulncheck, the
+- CI must be green: formatting, a tidy `go.mod`, `go vet` for Linux and Windows, golangci-lint (`.golangci.yml`), govulncheck, the
   tests with and without the race detector, and the network lab.
 - This repository is a published copy of Netsession's internal repository. Accepted pull requests are applied there
   and come back with the next publication, so your commit may appear with a different hash. You stay credited in

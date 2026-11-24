@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"encoding/binary"
 	"net/netip"
+	"strings"
 	"testing"
 	"time"
 )
@@ -92,5 +93,22 @@ func TestFinder(t *testing.T) {
 	g.Finder.Stop(c.now())
 	if st := g.Finder.Status(c.now()); st.Active || len(st.Groups) != 0 {
 		t.Errorf("after restart+stop: %+v", st)
+	}
+}
+
+func TestCheckFinderVIDs(t *testing.T) {
+	have := []int{102, 100, 101}
+	if err := CheckFinderVIDs(nil, have); err != nil {
+		t.Errorf("all VLANs: %v", err)
+	}
+	if err := CheckFinderVIDs([]int{101, 100}, have); err != nil {
+		t.Errorf("known VLANs: %v", err)
+	}
+	err := CheckFinderVIDs([]int{101, 1101}, have)
+	if err == nil || err.Error() != "VLAN 1101 is not a network of this relay (configured: 100, 101, 102)" {
+		t.Errorf("unknown VLAN: %v", err)
+	}
+	if err := CheckFinderVIDs([]int{1101}, nil); err == nil || !strings.Contains(err.Error(), "no network yet") {
+		t.Errorf("no configuration: %v", err)
 	}
 }

@@ -9,4 +9,4 @@
 | [Troubleshooting](troubleshooting.md) | "Players don't see my game" and other questions |
 | [Development and lab](development.md) | Building, tests, the network-namespace lab, demo mode |
 
-These pages are also published to the [project wiki](https://github.com/Netsession-LAN/Netsession-Relay/wiki).
+These pages live in `docs/` of the [repository](https://github.com/Netsession-LAN/Netsession-Relay); a fix to them is a pull request like any other.

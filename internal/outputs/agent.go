@@ -19,7 +19,7 @@ import (
 
 const (
 	settingSNMPAgent       = "snmp_agent"
-	settingSNMPAgentSecret = "snmp_agent_secret"
+	settingSNMPAgentSecret = "snmp_agent_secret" //nolint:gosec // G101: a setting or message name, not a credential
 )
 
 // AgentSettings are the options of the SNMP agent.

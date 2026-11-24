@@ -3,6 +3,7 @@
 [![ci](https://github.com/Netsession-LAN/Netsession-Relay/actions/workflows/ci.yml/badge.svg)](https://github.com/Netsession-LAN/Netsession-Relay/actions/workflows/ci.yml)
 [![release](https://img.shields.io/github/v/release/Netsession-LAN/Netsession-Relay)](https://github.com/Netsession-LAN/Netsession-Relay/releases)
 [![license](https://img.shields.io/github/license/Netsession-LAN/Netsession-Relay)](LICENSE)
+[![go](https://img.shields.io/github/go-mod/go-version/Netsession-LAN/Netsession-Relay)](go.mod)
 
 **Every table sees every LAN game again.**
 
@@ -13,6 +14,10 @@ broadcast, and broadcasts stop at the router.
 Netsession Relay fixes exactly that. It sits in all your player networks and copies the "anyone hosting?" packets
 between them, so the server browser at table 1 shows the game hosted at table 12. One container, a web UI your crew
 can use at 3 a.m., and protection against the loops and broadcast storms that make relays scary.
+
+In network terms: a **UDP broadcast and multicast relay** (forwarder) between VLANs and subnets, for LAN game
+discovery, mDNS/Bonjour, SSDP and IGMP-based multicast – a modern alternative to `udpbroadcastrelay`, with a web UI,
+written in Go and running as a Docker container.
 
 ![Relay overview: live traffic per table network, alarms and the games currently being played](docs/images/overview.png)
 
@@ -89,8 +94,8 @@ minimise and close. Fully working, just for fun.
 
 **[Getting started](docs/getting-started.md)** · [How it works](docs/architecture.md) ·
 [Game database](docs/game-database.md) · [Running it at your LAN](docs/operations.md) ·
-[Troubleshooting](docs/troubleshooting.md) · [Development and lab](docs/development.md) – also in the
-[wiki](https://github.com/Netsession-LAN/Netsession-Relay/wiki).
+[Troubleshooting](docs/troubleshooting.md) · [Development and lab](docs/development.md) – also as a website with
+search: **[netsession-relay.readthedocs.io](https://netsession-relay.readthedocs.io/)**.
 
 Try the UI with invented data, without touching any network:
 `docker run --rm -p 8080:8080 ghcr.io/netsession-lan/netsession-relay web -demo -addr :8080`, then open
@@ -111,7 +116,7 @@ relay and restarts; CI runs it on every change, next to the unit tests with the 
 
 ```sh
 go test ./...
-bash lab/run-docker.sh      # network lab in a privileged container
+bash lab/run-docker.sh      # network lab in a privileged container (needs Docker and Go 1.26 or newer)
 ```
 
 ## Add your game

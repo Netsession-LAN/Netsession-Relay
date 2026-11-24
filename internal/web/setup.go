@@ -270,7 +270,7 @@ func (s *Server) setupAccount(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	s.setSessionCookie(w, r, token, int(store.SessionTTL.Seconds()))
-	http.SetCookie(w, &http.Cookie{Name: loginCookie, Value: "", Path: "/", MaxAge: -1, HttpOnly: true})
+	s.clearCookie(w, r, loginCookie, "/", false)
 	s.Log.Info("setup: first admin account created, the setup page for accounts is closed now", "name", f.Name, "ip", ip)
 	http.Redirect(w, r, "/einrichten", http.StatusSeeOther)
 }

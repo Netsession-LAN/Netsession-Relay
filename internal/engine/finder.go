@@ -3,10 +3,13 @@ package engine
 import (
 	"encoding/binary"
 	"errors"
+	"fmt"
 	"io"
 	"net/netip"
 	"slices"
 	"sort"
+	"strconv"
+	"strings"
 	"sync"
 	"sync/atomic"
 	"time"
@@ -93,6 +96,28 @@ type Finder struct {
 
 // ErrFinderDuration is returned for a session length outside 1 s .. FinderMaxDuration.
 var ErrFinderDuration = errors.New("duration must be between 1 s and 10 min")
+
+// CheckFinderVIDs refuses a session for VLAN IDs the relay has no network for (have = the VLAN IDs of the active
+// configuration): such a session would run its time and find nothing, which reads like "the game sends nothing".
+func CheckFinderVIDs(want, have []int) error {
+	var unknown []string
+	for _, v := range want {
+		if !slices.Contains(have, v) {
+			unknown = append(unknown, strconv.Itoa(v))
+		}
+	}
+	if len(unknown) == 0 {
+		return nil
+	}
+	if len(have) == 0 {
+		return fmt.Errorf("VLAN %s: the relay has no network yet (set up the networks and apply first)", strings.Join(unknown, ", "))
+	}
+	known := make([]string, len(have))
+	for i, v := range slices.Sorted(slices.Values(have)) {
+		known[i] = strconv.Itoa(v)
+	}
+	return fmt.Errorf("VLAN %s is not a network of this relay (configured: %s)", strings.Join(unknown, ", "), strings.Join(known, ", "))
+}
 
 // Start begins a new session and drops the results of the previous one.
 func (f *Finder) Start(req FinderRequest, now time.Time) error {

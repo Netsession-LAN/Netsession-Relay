@@ -140,7 +140,7 @@ func TestValidateErrorIdentity(t *testing.T) {
 			t.Errorf("%s: %v, want %v", name, err, tt.want)
 		}
 		for _, other := range []error{ErrInvalidID, ErrNameMissing, ErrBlockedPort} {
-			if other != tt.want && errors.Is(err, other) {
+			if !errors.Is(other, tt.want) && errors.Is(err, other) {
 				t.Errorf("%s: %v is also %v", name, err, other)
 			}
 		}

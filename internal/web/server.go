@@ -82,6 +82,9 @@ type Server struct {
 	// BackupKeep is how many it keeps. Only shown on the system page, cmd/nsrelay runs it.
 	BackupDir  string
 	BackupKeep int
+	// ScratchDirs are writable directories for short-lived files (the copy of a backup download), tried in this
+	// order before the temporary directory of the system: the backup directory and the one of the database.
+	ScratchDirs []string
 
 	guard      relayGuard                      // addresses the UI is not served on (guard.go)
 	logo       atomic.Pointer[store.EventLogo] // the event logo, nil without one (logo.go)
@@ -509,6 +512,30 @@ func (s *Server) renderLive(w http.ResponseWriter, r *http.Request, name, title,
 
 // localFuncs adds the language-bound functions to the template functions: t translates, the name helpers that
 // return German texts are translated too.
+// escapeArgs prepares the arguments of a text with markup: each one prints as an HTML-escaped string.
+func escapeArgs(args []any) []any {
+	out := make([]any, len(args))
+	for i, a := range args {
+		out[i] = htmlArg{a}
+	}
+	return out
+}
+
+// htmlArg is one argument of a text with markup. It prints HTML-escaped whatever the verb is; a plain number
+// keeps the verbs for numbers (%d, %03d), it cannot carry markup.
+type htmlArg struct{ v any }
+
+func (a htmlArg) Format(f fmt.State, verb rune) {
+	switch a.v.(type) {
+	case int, int8, int16, int32, int64, uint, uint8, uint16, uint32, uint64, float32, float64:
+		if verb != 's' && verb != 'v' {
+			fmt.Fprintf(f, fmt.FormatString(f, verb), a.v)
+			return
+		}
+	}
+	_, _ = io.WriteString(f, template.HTMLEscapeString(fmt.Sprint(a.v)))
+}
+
 func localFuncs(base template.FuncMap, lang string) template.FuncMap {
 	T := trFor(lang)
 	f := template.FuncMap{}
@@ -517,16 +544,11 @@ func localFuncs(base template.FuncMap, lang string) template.FuncMap {
 	}
 	f["t"] = func(s string, args ...any) string { return T(s, args...) }
 	// th: the text contains markup (trusted, from the templates and the catalog); arguments are escaped
-	f["th"] = func(s string, args ...any) template.HTML {
-		for i, a := range args {
-			args[i] = template.HTMLEscapeString(fmt.Sprint(a))
-		}
-		return template.HTML(T(s, args...))
-	}
-	f["tq"] = func(s string) string { return lookupQuiet(lang, s) } // may be a name or a message from a library
+	f["th"] = func(s string, args ...any) template.HTML { return template.HTML(T(s, escapeArgs(args)...)) } //nolint:gosec // G203: every variable part is escaped (HTMLEscapeString / escapeArgs)
+	f["tq"] = func(s string) string { return lookupQuiet(lang, s) }                                         // may be a name or a message from a library
 	f["lang"] = func() string { return lang }
 	// raw JSON inside <script type="application/json">; json.Marshal escapes <, > and &
-	f["jsCatalog"] = func() template.JS { return template.JS(jsCatalog(lang)) }
+	f["jsCatalog"] = func() template.JS { return template.JS(jsCatalog(lang)) } //nolint:gosec // G203: every variable part is escaped (HTMLEscapeString / escapeArgs)
 	for _, k := range []string{"modeName", "roleName", "roleLabel", "group", "resultName", "kindName", "dirName", "confName", "resultBadge", "hostIssue"} {
 		fn := base[k].(func(string) string)
 		f[k] = func(s string) string { return T(fn(s)) }
@@ -664,7 +686,7 @@ func (s *Server) loginLocal(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	s.setSessionCookie(w, r, token, int(store.SessionTTL.Seconds()))
-	http.SetCookie(w, &http.Cookie{Name: loginCookie, Value: "", Path: "/", MaxAge: -1, HttpOnly: true})
+	s.clearCookie(w, r, loginCookie, "/", false)
 	s.Log.Info("login", "name", name, "ip", ip)
 	http.Redirect(w, r, "/", http.StatusSeeOther)
 }
@@ -697,7 +719,7 @@ func (s *Server) logout(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 	// both names: the plain one may be left from before HTTPS was detected
-	http.SetCookie(w, &http.Cookie{Name: cookieName, Value: "", Path: "/", MaxAge: -1, HttpOnly: true})
-	http.SetCookie(w, &http.Cookie{Name: cookieNameSecure, Value: "", Path: "/", MaxAge: -1, HttpOnly: true, Secure: true})
+	s.clearCookie(w, r, cookieName, "/", false)
+	s.clearCookie(w, r, cookieNameSecure, "/", true) // a __Host- cookie can only be set, and so deleted, with Secure
 	http.Redirect(w, r, "/login", http.StatusSeeOther)
 }

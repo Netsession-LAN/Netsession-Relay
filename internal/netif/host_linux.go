@@ -66,7 +66,7 @@ func HardenLink(name string) error {
 		if b, err := os.ReadFile(p); err == nil && strings.TrimSpace(string(b)) == fmt.Sprint(c.value) {
 			continue
 		}
-		if err := os.WriteFile(p, []byte(fmt.Sprint(c.value)), 0o644); err != nil {
+		if err := os.WriteFile(p, []byte(fmt.Sprint(c.value)), 0o644); err != nil { //nolint:gosec // G306: writes an existing /proc/sys setting; the mode is not used
 			errs = append(errs, err)
 		}
 	}
@@ -84,11 +84,11 @@ func DisableIPv6(name string) error {
 	b, err := os.ReadFile(p)
 	if err != nil {
 		if _, e := os.Stat("/proc/sys/net/ipv6"); e != nil {
-			return nil // the host has no IPv6 at all
+			return nil //nolint:nilerr // the host has no IPv6 at all: nothing to switch off
 		}
 		return err
 	}
-	if strings.TrimSpace(string(b)) == "1" || os.WriteFile(p, []byte("1"), 0o644) == nil {
+	if strings.TrimSpace(string(b)) == "1" || os.WriteFile(p, []byte("1"), 0o644) == nil { //nolint:gosec // G306: writes an existing /proc/sys setting; the mode is not used
 		return nil
 	}
 	link, err := netlink.LinkByName(name)
