@@ -36,15 +36,23 @@ func startTestAgent(t *testing.T, c AgentConfig) string {
 	return c.Listen
 }
 
+// client connects a gosnmp client to the test agent. The timeout is generous because v3 derives its keys on both
+// sides, which takes a while on a slow, busy CI machine; silent() shortens it where no answer is expected.
 func client(t *testing.T, addr string, g *gosnmp.GoSNMP) *gosnmp.GoSNMP {
 	t.Helper()
 	host, port, _ := net.SplitHostPort(addr)
 	p, _ := strconv.Atoi(port)
-	g.Target, g.Port, g.Timeout, g.Retries = host, uint16(p), 700*time.Millisecond, 0
+	g.Target, g.Port, g.Timeout, g.Retries = host, uint16(p), 10*time.Second, 0
 	if err := g.Connect(); err != nil {
 		t.Fatal(err)
 	}
 	t.Cleanup(func() { g.Conn.Close() })
+	return g
+}
+
+// silent shortens the timeout of a client that must not get an answer.
+func silent(g *gosnmp.GoSNMP) *gosnmp.GoSNMP {
+	g.Timeout = 700 * time.Millisecond
 	return g
 }
 
@@ -81,7 +89,7 @@ func TestAgentV2c(t *testing.T) {
 		t.Errorf("set: %v %v", r, err)
 	}
 	// wrong community: no answer at all
-	bad := client(t, addr, &gosnmp.GoSNMP{Version: gosnmp.Version2c, Community: "public"})
+	bad := silent(client(t, addr, &gosnmp.GoSNMP{Version: gosnmp.Version2c, Community: "public"}))
 	if _, err := bad.Get([]string{".1.3.6.1.2.1.1.5.0"}); err == nil {
 		t.Error("wrong community answered")
 	}
@@ -101,14 +109,14 @@ func TestAgentV3(t *testing.T) {
 	if string(r.Variables[0].Value.([]byte)) != "relay01" || gosnmp.ToBigInt(r.Variables[1].Value).Int64() != 1000 {
 		t.Errorf("v3 values %+v", r.Variables)
 	}
-	wrong := client(t, addr, &gosnmp.GoSNMP{Version: gosnmp.Version3, SecurityModel: gosnmp.UserSecurityModel, MsgFlags: gosnmp.AuthPriv,
+	wrong := silent(client(t, addr, &gosnmp.GoSNMP{Version: gosnmp.Version3, SecurityModel: gosnmp.UserSecurityModel, MsgFlags: gosnmp.AuthPriv,
 		SecurityParameters: &gosnmp.UsmSecurityParameters{UserName: "monitor", AuthenticationProtocol: gosnmp.SHA256,
-			AuthenticationPassphrase: "falsch12345", PrivacyProtocol: gosnmp.AES, PrivacyPassphrase: "privpass123"}})
+			AuthenticationPassphrase: "falsch12345", PrivacyProtocol: gosnmp.AES, PrivacyPassphrase: "privpass123"}}))
 	if _, err := wrong.Get([]string{".1.3.6.1.2.1.1.5.0"}); err == nil {
 		t.Error("wrong v3 password answered")
 	}
 	// v2c is off in this config
-	v2 := client(t, addr, &gosnmp.GoSNMP{Version: gosnmp.Version2c, Community: "public"})
+	v2 := silent(client(t, addr, &gosnmp.GoSNMP{Version: gosnmp.Version2c, Community: "public"}))
 	if _, err := v2.Get([]string{".1.3.6.1.2.1.1.5.0"}); err == nil {
 		t.Error("v2c answered although off")
 	}
