@@ -54,3 +54,4 @@ jobs:
           oidc: true
           format: coverprofile
           files: coverage.out
+          strip-prefix: github.com/Netsession-LAN/Netsession-Relay
