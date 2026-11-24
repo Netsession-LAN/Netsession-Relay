@@ -6,6 +6,7 @@
 [![go](https://img.shields.io/github/go-mod/go-version/Netsession-LAN/Netsession-Relay)](go.mod)
 [![docs](https://readthedocs.org/projects/netsession-relay/badge/?version=latest)](https://netsession-relay.readthedocs.io/)
 [![coverage](https://qlty.sh/gh/Netsession-LAN/projects/Netsession-Relay/coverage.svg)](https://qlty.sh/gh/Netsession-LAN/projects/Netsession-Relay)
+[![maintainability](https://qlty.sh/gh/Netsession-LAN/projects/Netsession-Relay/maintainability.svg)](https://qlty.sh/gh/Netsession-LAN/projects/Netsession-Relay)
 
 **Every table sees every LAN game again.**
 
