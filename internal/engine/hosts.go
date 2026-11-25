@@ -45,16 +45,21 @@ func (p *Players) Seen(rule string, src netip.Addr, vid int, now time.Time) {
 		return
 	}
 	if len(p.m) >= maxPlayers {
-		var oldest playerKey
-		var at time.Time
-		for kk, e := range p.m {
-			if at.IsZero() || e.Last.Before(at) {
-				oldest, at = kk, e.Last
-			}
-		}
-		delete(p.m, oldest)
+		p.dropOldest()
 	}
 	p.m[k] = &Player{Rule: rule, Src: src, VID: vid, First: now, Last: now, Count: 1}
+}
+
+// dropOldest removes the entry that was active longest ago. p.mu is held.
+func (p *Players) dropOldest() {
+	var oldest playerKey
+	var at time.Time
+	for k, e := range p.m {
+		if at.IsZero() || e.Last.Before(at) {
+			oldest, at = k, e.Last
+		}
+	}
+	delete(p.m, oldest)
 }
 
 // GC removes entries silent for longer than the TTL.

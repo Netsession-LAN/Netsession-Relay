@@ -11,6 +11,7 @@ import (
 	"net"
 	"net/netip"
 	"os"
+	"slices"
 	"strings"
 	"sync"
 	"time"
@@ -54,23 +55,28 @@ func Validate(endpoint string, c Config) error {
 	if err != nil || host == "" || port == "" {
 		return fmt.Errorf("syslog target %q: %w", endpoint, ErrEndpoint)
 	}
-	switch c.Transport {
-	case "udp", "tcp", "tls":
-	default:
+	return c.validate()
+}
+
+// validate checks transport, format, facility and the TLS CA.
+func (c Config) validate() error {
+	_, knownFacility := facilities[c.Facility]
+	switch {
+	case !slices.Contains([]string{"udp", "tcp", "tls"}, c.Transport):
 		return fmt.Errorf("transport %q", c.Transport)
-	}
-	switch c.Format {
-	case "rfc5424", "rfc3164":
-	default:
+	case !slices.Contains([]string{"rfc5424", "rfc3164"}, c.Format):
 		return fmt.Errorf("format %q", c.Format)
-	}
-	if _, ok := facilities[c.Facility]; !ok {
+	case !knownFacility:
 		return fmt.Errorf("facility %q", c.Facility)
-	}
-	if c.TLSCA != "" && !x509.NewCertPool().AppendCertsFromPEM([]byte(c.TLSCA)) {
+	case !validCA(c.TLSCA):
 		return ErrTLSCA
 	}
 	return nil
+}
+
+// validCA reports whether pem is empty (system roots) or holds at least one certificate.
+func validCA(pem string) bool {
+	return pem == "" || x509.NewCertPool().AppendCertsFromPEM([]byte(pem))
 }
 
 func severity(s notify.Severity) int {
@@ -196,12 +202,7 @@ func (s *Sender) connect(ctx context.Context) (net.Conn, error) {
 }
 
 func (s *Sender) frame(e notify.Event) []byte {
-	msg := Format5424(e, s.host, s.c.Facility)
-	if s.c.Format == "rfc3164" {
-		msg = Format3164(e, s.host, s.c.Facility)
-	} else if s.c.Transport == "udp" && len(msg) > 2048 {
-		msg = msg[:2048]
-	}
+	msg := s.message(e)
 	switch s.c.Transport {
 	case "tls":
 		return []byte(fmt.Sprintf("%d %s", len(msg), msg)) // octet counting, RFC 5425
@@ -209,6 +210,18 @@ func (s *Sender) frame(e notify.Event) []byte {
 		return []byte(msg + "\n") // non-transparent framing, RFC 6587
 	}
 	return []byte(msg)
+}
+
+// message renders e in the configured format; an RFC 5424 message over UDP is cut to 2048 bytes.
+func (s *Sender) message(e notify.Event) string {
+	if s.c.Format == "rfc3164" {
+		return Format3164(e, s.host, s.c.Facility)
+	}
+	msg := Format5424(e, s.host, s.c.Facility)
+	if s.c.Transport == "udp" && len(msg) > 2048 {
+		msg = msg[:2048]
+	}
+	return msg
 }
 
 // Send writes the batch; on a write error the connection is dropped and rebuilt with the next batch.

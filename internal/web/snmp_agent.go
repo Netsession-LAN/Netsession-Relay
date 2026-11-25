@@ -19,21 +19,11 @@ import (
 func (s *Server) agentSave(w http.ResponseWriter, r *http.Request) {
 	ctx := r.Context()
 	T := s.T(r)
-	v := func(k string) string { return strings.TrimSpace(r.PostFormValue(k)) }
 	cur, curSec := s.Outputs.AgentSettings(ctx)
-	a := outputs.AgentSettings{Enabled: v("enabled") == "1", V2c: v("v2c") == "1", User: v("user"), AuthProto: v("auth_proto"),
-		PrivProto: v("priv_proto"), Contact: v("contact"), Location: v("location")}
-	a.Port, _ = strconv.Atoi(v("port")) // not a number: 0, refused below
-	if a.Port < 1 || a.Port > 65535 {
-		back(w, r, "/system/monitoring#snmp", "", errors.New(T("Port bitte zwischen 1 und 65535 (Standard 161).")))
+	a, ok := s.readAgentForm(w, r)
+	if !ok {
 		return
 	}
-	allow, bad := parseAgentAllow(v("allow"))
-	if bad != "" {
-		back(w, r, "/system/monitoring", "", errors.New(T("Erlaubte Absender: %q ist keine Adresse oder kein Netz.", bad)))
-		return
-	}
-	a.Allow = allow
 	sec := curSec // a secret left empty in the form stays as it is
 	sec.Community = cmp.Or(r.PostFormValue("community"), sec.Community)
 	sec.AuthPass = cmp.Or(r.PostFormValue("auth_pass"), sec.AuthPass)
@@ -51,7 +41,34 @@ func (s *Server) agentSave(w http.ResponseWriter, r *http.Request) {
 	after, _ := json.Marshal(a)
 	s.audit(ctx, s.actor(r), "snmp.agent.set", "snmp", string(before), string(after))
 	s.Outputs.RestartAgent(ctx)
-	running, listen, err := s.Outputs.AgentStatus(ctx)
+	s.answerAgentStatus(w, r)
+}
+
+// readAgentForm reads the options of the agent form. On a wrong field it sends the browser back with what is
+// wrong and ok is false.
+func (s *Server) readAgentForm(w http.ResponseWriter, r *http.Request) (a outputs.AgentSettings, ok bool) {
+	T := s.T(r)
+	v := func(k string) string { return strings.TrimSpace(r.PostFormValue(k)) }
+	a = outputs.AgentSettings{Enabled: v("enabled") == "1", V2c: v("v2c") == "1", User: v("user"), AuthProto: v("auth_proto"),
+		PrivProto: v("priv_proto"), Contact: v("contact"), Location: v("location")}
+	a.Port, _ = strconv.Atoi(v("port")) // not a number: 0, refused below
+	if a.Port < 1 || a.Port > 65535 {
+		back(w, r, "/system/monitoring#snmp", "", errors.New(T("Port bitte zwischen 1 und 65535 (Standard 161).")))
+		return a, false
+	}
+	allow, bad := parseAgentAllow(v("allow"))
+	if bad != "" {
+		back(w, r, "/system/monitoring", "", errors.New(T("Erlaubte Absender: %q ist keine Adresse oder kein Netz.", bad)))
+		return a, false
+	}
+	a.Allow = allow
+	return a, true
+}
+
+// answerAgentStatus goes back to the monitoring page with the state of the restarted agent.
+func (s *Server) answerAgentStatus(w http.ResponseWriter, r *http.Request) {
+	T := s.T(r)
+	running, listen, err := s.Outputs.AgentStatus(r.Context())
 	switch {
 	case err != nil:
 		back(w, r, "/system/monitoring", "", errors.New(T("SNMP-Agent: %s", agentError(T, err))))
@@ -66,17 +83,25 @@ func (s *Server) agentSave(w http.ResponseWriter, r *http.Request) {
 // networks. bad is the first entry that is neither, "" when all are fine.
 func parseAgentAllow(text string) (allow []string, bad string) {
 	for _, p := range strings.FieldsFunc(text, func(c rune) bool { return c == ',' || c == ' ' || c == '\n' }) {
-		pfx, err := netip.ParsePrefix(p)
-		if err != nil {
-			ad, err := netip.ParseAddr(p)
-			if err != nil {
-				return nil, p
-			}
-			pfx = netip.PrefixFrom(ad, ad.BitLen())
+		pfx, ok := agentAllowPrefix(p)
+		if !ok {
+			return nil, p
 		}
 		allow = append(allow, pfx.String())
 	}
 	return allow, ""
+}
+
+// agentAllowPrefix reads one allowed sender: a network, or an address as a network of its own.
+func agentAllowPrefix(p string) (netip.Prefix, bool) {
+	if pfx, err := netip.ParsePrefix(p); err == nil {
+		return pfx, true
+	}
+	ad, err := netip.ParseAddr(p)
+	if err != nil {
+		return netip.Prefix{}, false
+	}
+	return netip.PrefixFrom(ad, ad.BitLen()), true
 }
 
 // validateAgentSettings checks the options of a switched-on agent with the secrets that will be in effect (a

@@ -43,11 +43,8 @@ func beaconTag(key, signed []byte) []byte {
 // clocks of the two relays differ).
 func BeaconAuth(f, key []byte, now time.Time) string {
 	p := f[pkt.EthHeaderLen:]
-	if len(p) < beaconOffRanges || p[beaconOffVersion] != beaconVersion || p[beaconOffFlags]&beaconFlagSigned == 0 {
-		return "unsigned"
-	}
-	end := beaconOffRanges + int(binary.BigEndian.Uint16(p[beaconOffCount:beaconOffRanges]))*beaconRangeBytes
-	if len(p) < end+beaconSigLen {
+	end, ok := beaconTrailer(p)
+	if !ok {
 		return "unsigned"
 	}
 	if !hmac.Equal(beaconTag(key, p[:end+beaconTimeLen]), p[end+beaconTimeLen:end+beaconSigLen]) {
@@ -58,6 +55,16 @@ func BeaconAuth(f, key []byte, now time.Time) string {
 		return "clock"
 	}
 	return ""
+}
+
+// beaconTrailer returns where the signature trailer of beacon payload p starts (after the port ranges); false if
+// p carries no complete trailer.
+func beaconTrailer(p []byte) (int, bool) {
+	if len(p) < beaconOffRanges || p[beaconOffVersion] != beaconVersion || p[beaconOffFlags]&beaconFlagSigned == 0 {
+		return 0, false
+	}
+	end := beaconOffRanges + int(binary.BigEndian.Uint16(p[beaconOffCount:beaconOffRanges]))*beaconRangeBytes
+	return end, len(p) >= end+beaconSigLen
 }
 
 // LoadBeaconKey returns the shared secret for beacons and where it came from: the environment value
@@ -75,10 +82,15 @@ func LoadBeaconKey(env, file string) (key []byte, source string, err error) {
 	if file == "" {
 		return nil, "", errors.New("no state directory for the beacon key")
 	}
+	return keyFromFile(readOrCreateBeaconKey(file))
+}
+
+// readOrCreateBeaconKey reads the key from file, which is created with a random key first if it does not exist.
+func readOrCreateBeaconKey(file string) ([]byte, error) {
 	for range 2 {
 		k, err := readBeaconKey(file, " (delete it to get a new one)")
 		if !errors.Is(err, os.ErrNotExist) {
-			return keyFromFile(k, err)
+			return k, err
 		}
 		err = createBeaconKey(file)
 		if errors.Is(err, os.ErrExist) {
@@ -87,10 +99,10 @@ func LoadBeaconKey(env, file string) (key []byte, source string, err error) {
 			continue
 		}
 		if err != nil {
-			return nil, "", err
+			return nil, err
 		}
 	}
-	return keyFromFile(readBeaconKey(file, ""))
+	return readBeaconKey(file, "")
 }
 
 // minBeaconKey is the shortest accepted beacon key (characters).

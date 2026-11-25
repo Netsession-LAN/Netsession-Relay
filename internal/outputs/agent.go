@@ -124,15 +124,31 @@ func (s *Service) RestartAgent(ctx context.Context) {
 		s.agentErr = ErrNoAgentAddr
 		return
 	}
+	s.agent, s.agentErr = s.startAgent(s.agentConfig(ctx, a, sec, host))
+}
+
+// agentConfig is the configuration of the agent listening on host.
+func (s *Service) agentConfig(ctx context.Context, a AgentSettings, sec AgentSecret, host netip.Addr) snmp.AgentConfig {
 	eid, boots := s.snmpEngine(ctx)
-	c := snmp.AgentConfig{Listen: net.JoinHostPort(host.String(), strconv.Itoa(a.Port)), V2c: a.V2c, Community: sec.Community,
+	return snmp.AgentConfig{Listen: net.JoinHostPort(host.String(), strconv.Itoa(a.Port)), V2c: a.V2c, Community: sec.Community,
 		V3User: a.User, AuthProto: a.AuthProto, AuthPass: sec.AuthPass, PrivProto: a.PrivProto, PrivPass: sec.PrivPass,
-		EngineID: eid, Boots: boots, SysDescr: "Netsession Relay " + s.version, SysName: s.HostName(ctx), Contact: a.Contact, Location: a.Location}
-	for _, p := range a.Allow {
-		if pfx, err := netip.ParsePrefix(p); err == nil { // validated when saved
-			c.Allow = append(c.Allow, pfx)
+		EngineID: eid, Boots: boots, SysDescr: "Netsession Relay " + s.version, SysName: s.HostName(ctx), Contact: a.Contact, Location: a.Location,
+		Allow: allowPrefixes(a.Allow)}
+}
+
+// allowPrefixes parses the allowed source networks; they were validated when saved, a broken one is skipped.
+func allowPrefixes(list []string) []netip.Prefix {
+	var out []netip.Prefix
+	for _, p := range list {
+		if pfx, err := netip.ParsePrefix(p); err == nil {
+			out = append(out, pfx)
 		}
 	}
+	return out
+}
+
+// startAgent starts the agent with c; a port it may not bind is reported as ErrAgentPortDenied.
+func (s *Service) startAgent(c snmp.AgentConfig) (*snmp.Agent, error) {
 	ag, err := snmp.StartAgent(c, func() *snmp.View {
 		rep, _ := s.report(context.Background())
 		return &snmp.View{Report: rep, OutputsFailing: rep.OutputsFailing}
@@ -142,10 +158,9 @@ func (s *Service) RestartAgent(ctx context.Context) {
 		if errors.Is(err, fs.ErrPermission) {
 			err = fmt.Errorf("%w: %w", ErrAgentPortDenied, err)
 		}
-		s.agentErr = err
-		return
+		return nil, err
 	}
-	s.agent = ag
+	return ag, nil
 }
 
 // AgentStatus reports whether the agent runs and where it listens, or why it does not (nil when it is merely

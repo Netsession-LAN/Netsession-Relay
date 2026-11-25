@@ -20,19 +20,16 @@ func defaultRoute() *netlink.Route {
 	var best *netlink.Route
 	for i := range rs {
 		r := &rs[i]
-		if r.Dst != nil {
-			if ones, _ := r.Dst.Mask.Size(); ones != 0 {
-				continue
-			}
-		}
-		if r.Gw == nil || r.LinkIndex <= 0 {
-			continue
-		}
-		if best == nil || r.Priority < best.Priority {
+		if isGatewayDefault(r) && (best == nil || r.Priority < best.Priority) {
 			best = r
 		}
 	}
 	return best
+}
+
+// isGatewayDefault reports a default route through a gateway on a device.
+func isGatewayDefault(r *netlink.Route) bool {
+	return isDefault(r.Dst) && r.Gw != nil && r.LinkIndex > 0
 }
 
 // prefixOf converts an IPv4 network; false for anything else.
@@ -57,12 +54,14 @@ func isDefault(n *net.IPNet) bool {
 // hasRoute reports whether list has a route to the same destination over the same link and gateway.
 func hasRoute(list []netlink.Route, r netlink.Route) bool {
 	for _, w := range list {
-		if w.LinkIndex != r.LinkIndex || !w.Gw.Equal(r.Gw) || isDefault(w.Dst) != isDefault(r.Dst) {
-			continue
-		}
-		if isDefault(w.Dst) || w.Dst.String() == r.Dst.String() {
+		if sameNextHop(w, r) && (isDefault(w.Dst) || w.Dst.String() == r.Dst.String()) {
 			return true
 		}
 	}
 	return false
+}
+
+// sameNextHop reports routes over the same link and gateway that are both default routes or both not.
+func sameNextHop(a, b netlink.Route) bool {
+	return a.LinkIndex == b.LinkIndex && a.Gw.Equal(b.Gw) && isDefault(a.Dst) == isDefault(b.Dst)
 }

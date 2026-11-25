@@ -105,37 +105,51 @@ var auditTexts = map[string]string{ //nolint:gosec // G101: a setting or message
 	"event.logo.remove":     "Logo der LAN entfernt",
 }
 
+// auditMono marks the actions whose object is technical (user name, game ID, VLAN ID) and shown as such.
+var auditMono = map[string]bool{
+	"login": true, "login.failed": true, "login.locked": true, "game.enable": true, "game.disable": true,
+	"backup.download": true, "game.sources": true,
+	"vlan.enable": true, "vlan.disable": true, "vlan.create": true, "vlan.update": true, "vlan.delete": true,
+}
+
+// auditTones colours the actions an operator should notice.
+var auditTones = map[string]string{
+	"emergency_stop": "danger", "apply.rejected": "danger", "login.locked": "danger",
+	"login.failed": "warn", "rollback": "warn",
+}
+
+// auditObjects words the object of the actions that store more than a plain name; any other action shows its
+// object as stored.
+var auditObjects = map[string]func(a store.AuditEntry, T translator) string{
+	"game.sources": func(a store.AuditEntry, T translator) string { return a.Object + ": " + cmp.Or(a.After, T("alle")) },
+	"vlan.enable":  auditVLAN,
+	"vlan.disable": auditVLAN,
+	"vlan.create":  auditVLAN,
+	"vlan.update":  auditVLAN,
+	"vlan.delete":  auditVLAN,
+	"mode.set": func(a store.AuditEntry, T translator) string {
+		return T(modeName(a.Before)) + " → " + T(modeName(a.After))
+	},
+	"emergency_stop":    func(_ store.AuditEntry, T translator) string { return T("Relay pausiert") },
+	"emergency_release": func(a store.AuditEntry, T translator) string { return T("zurück auf %s", T(modeName(a.After))) },
+	"apply":             auditRevision,
+	"apply.rejected":    auditRevision,
+	"rollback":          auditRevision,
+	"user.set_password": func(a store.AuditEntry, T translator) string { return T("Konto %s", a.Object) },
+}
+
+func auditVLAN(a store.AuditEntry, _ translator) string { return "VLAN " + a.Object }
+
+func auditRevision(a store.AuditEntry, _ translator) string {
+	return strings.Replace(a.Object, "revision", "Revision", 1)
+}
+
 // auditOf puts a stored audit entry into words. The stored data stays as it is, T translates the words.
 func auditOf(a store.AuditEntry, T translator) auditView {
-	v := auditView{TS: a.TS, User: a.User, Text: T(auditTexts[a.Action]), Object: a.Object}
-	if v.Text == "" {
-		v.Text = a.Action
-	}
-	switch a.Action {
-	case "login", "login.failed", "login.locked", "game.enable", "game.disable", "backup.download":
-		v.Mono = true
-	case "game.sources":
-		v.Object = a.Object + ": " + cmp.Or(a.After, T("alle"))
-		v.Mono = true
-	case "vlan.enable", "vlan.disable", "vlan.create", "vlan.update", "vlan.delete":
-		v.Object = "VLAN " + a.Object
-		v.Mono = true
-	case "mode.set":
-		v.Object = T(modeName(a.Before)) + " → " + T(modeName(a.After))
-	case "emergency_stop":
-		v.Object = T("Relay pausiert")
-	case "emergency_release":
-		v.Object = T("zurück auf %s", T(modeName(a.After)))
-	case "apply", "apply.rejected", "rollback":
-		v.Object = strings.Replace(a.Object, "revision", "Revision", 1)
-	case "user.set_password":
-		v.Object = T("Konto %s", a.Object)
-	}
-	switch a.Action {
-	case "emergency_stop", "apply.rejected", "login.locked":
-		v.Tone = "danger"
-	case "login.failed", "rollback":
-		v.Tone = "warn"
+	v := auditView{TS: a.TS, User: a.User, Text: cmp.Or(T(auditTexts[a.Action]), a.Action), Object: a.Object,
+		Mono: auditMono[a.Action], Tone: auditTones[a.Action]}
+	if object := auditObjects[a.Action]; object != nil {
+		v.Object = object(a, T)
 	}
 	return v
 }
@@ -252,16 +266,24 @@ func (s *Server) forgetModeBeforeStop(ctx context.Context) {
 	}
 }
 
-func (s *Server) emergencyStop(w http.ResponseWriter, r *http.Request) {
-	// Remember the mode for the release. Nothing here may keep the stop itself from happening: a mode that cannot
-	// be read or stored only means that an admin has to switch the relay back on.
-	if prev, err := s.Store.Setting(r.Context(), store.SettingMode, compile.ModeActive); err != nil {
+// rememberModeBeforeStop stores the current mode for the release. Nothing here may keep the stop itself from
+// happening: a mode that cannot be read or stored only means that an admin has to switch the relay back on.
+func (s *Server) rememberModeBeforeStop(ctx context.Context) {
+	prev, err := s.Store.Setting(ctx, store.SettingMode, compile.ModeActive)
+	if err != nil {
 		s.Log.Error("emergency stop: current mode not readable, only an admin can switch back on", "err", err)
-	} else if prev != compile.ModePaused {
-		if err := s.Store.SetSetting(r.Context(), settingModeBeforeStop, prev); err != nil {
-			s.Log.Error("emergency stop: previous mode not stored, only an admin can switch back on", "err", err)
-		}
+		return
 	}
+	if prev == compile.ModePaused {
+		return
+	}
+	if err := s.Store.SetSetting(ctx, settingModeBeforeStop, prev); err != nil {
+		s.Log.Error("emergency stop: previous mode not stored, only an admin can switch back on", "err", err)
+	}
+}
+
+func (s *Server) emergencyStop(w http.ResponseWriter, r *http.Request) {
+	s.rememberModeBeforeStop(r.Context())
 	if err := s.Store.SetMode(r.Context(), s.actor(r), compile.ModePaused); err != nil {
 		back(w, r, "/", "", s.userError(r, "emergency stop: mode", err))
 		return

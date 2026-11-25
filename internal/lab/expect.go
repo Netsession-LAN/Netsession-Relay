@@ -29,20 +29,24 @@ func (o ExpectOptions) enough(got []pkt.Frame) bool {
 
 // result judges the frames that arrived by the end of the wait.
 func (o ExpectOptions) result(got []pkt.Frame) ([]pkt.Frame, error) {
-	want := o.want()
 	switch {
 	case o.Max > 0:
-		if len(got) < want || len(got) > o.Max {
-			return got, fmt.Errorf("%s port %d: got %d frame(s), want %d..%d", o.Iface, o.DstPort, len(got), want, o.Max)
-		}
-		return got, nil
+		return got, o.rangeError(len(got))
 	case o.None:
 		if len(got) > 0 {
 			return got, fmt.Errorf("expected nothing on %s port %d, got %d frame(s)", o.Iface, o.DstPort, len(got))
 		}
 		return nil, nil
-	case len(got) >= want:
+	case len(got) >= o.want():
 		return got, nil
 	}
-	return got, fmt.Errorf("timeout on %s: got %d of %d frame(s) for port %d", o.Iface, len(got), want, o.DstPort)
+	return got, fmt.Errorf("timeout on %s: got %d of %d frame(s) for port %d", o.Iface, len(got), o.want(), o.DstPort)
+}
+
+// rangeError reports n frames outside the expected range want..Max.
+func (o ExpectOptions) rangeError(n int) error {
+	if want := o.want(); n < want || n > o.Max {
+		return fmt.Errorf("%s port %d: got %d frame(s), want %d..%d", o.Iface, o.DstPort, n, want, o.Max)
+	}
+	return nil
 }

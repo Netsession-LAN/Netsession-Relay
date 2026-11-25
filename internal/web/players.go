@@ -68,22 +68,27 @@ func (s *Server) playerNames(ctx context.Context) playerNames {
 	}
 	st, _ := s.Engine.Status(ctx) // the engine answered Players just now; without a status the rules have no names
 	n.idx = s.rules(ctx, st.SnapshotHash)
-	var err error
-	n.games, err = s.Store.Games(ctx)
+	games, err := s.Store.Games(ctx)
 	s.degraded("players: games", err)
-	for _, g := range n.games {
-		n.byID[g.ID] = g
-		n.dirs[g.ID] = map[string]bool{}
-		for _, d := range g.Discovery {
-			n.dirs[g.ID][d.Direction] = true
-		}
-	}
+	n.addGames(games)
 	if c, err := s.Store.ExportConfig(ctx); err == nil {
 		for _, v := range c.VLANs {
 			n.vlanName[v.VID], n.vlanGroup[v.VID] = v.Name, v.Group
 		}
 	}
 	return n
+}
+
+// addGames notes the games by ID with the directions of their discovery specs.
+func (n *playerNames) addGames(games []store.GameRow) {
+	n.games = games
+	for _, g := range games {
+		n.byID[g.ID] = g
+		n.dirs[g.ID] = map[string]bool{}
+		for _, d := range g.Discovery {
+			n.dirs[g.ID][d.Direction] = true
+		}
+	}
 }
 
 // playerGroupsT builds the groups of /spieler; T words the ages ("vor 4 s") in the page language.
@@ -148,12 +153,17 @@ func (pc *playerCollector) add(p engineapi.Player, age string) {
 		row.Role = roleOf(pg.rule.Specs, pc.names.dirs)
 	}
 	if p.Server {
-		row.Role, row.Server, row.Port, row.SrvName, row.SrvMap = roleHost, true, p.Port, p.Name, p.Map
-		if p.Max > 0 {
-			row.Slots = fmt.Sprintf("%d/%d", p.Num, p.Max)
-		}
+		row.setServer(p)
 	}
 	g.addPlayer(row)
+}
+
+// setServer marks the line as a server found by the probe: it hosts, with the port, name, map and slots it told.
+func (p *playerRow) setServer(srv engineapi.Player) {
+	p.Role, p.Server, p.Port, p.SrvName, p.SrvMap = roleHost, true, srv.Port, srv.Name, srv.Map
+	if srv.Max > 0 {
+		p.Slots = fmt.Sprintf("%d/%d", srv.Num, srv.Max)
+	}
 }
 
 // service gives the entry of a known service host, created on its first sighting (in the network vid).

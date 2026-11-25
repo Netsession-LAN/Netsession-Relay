@@ -92,14 +92,7 @@ type VLAN struct {
 
 // Build turns an engine status into a report. engineErr != nil means the engine did not answer.
 func Build(st engineapi.Status, engineErr error, webVersion string, eventActive bool, now time.Time) Report {
-	r := Report{Time: now.Unix(), WebVersion: webVersion, Drops: map[string]uint64{}, Alarms: map[string]AlarmSummary{},
-		VLANList: []VLAN{}}
-	for _, k := range Kinds {
-		r.Alarms[k] = AlarmSummary{Keys: []string{}}
-	}
-	if eventActive {
-		r.EventActive = 1
-	}
+	r := newReport(webVersion, eventActive, now)
 	if engineErr != nil {
 		r.EngineError = engineErr.Error()
 		return r
@@ -109,11 +102,26 @@ func Build(st engineapi.Status, engineErr error, webVersion string, eventActive 
 		r.Alarms[a.Kind] = addAlarm(r.Alarms[a.Kind], a, now)
 	}
 	r.addVLANs(st, eventActive && st.Mode == "active" && !st.Standby, now)
+	r.sumAlarms()
+	return r
+}
+
+// newReport is the report before the engine's part: every alarm kind is listed, also without alarms.
+func newReport(webVersion string, eventActive bool, now time.Time) Report {
+	r := Report{Time: now.Unix(), WebVersion: webVersion, Drops: map[string]uint64{}, Alarms: map[string]AlarmSummary{},
+		VLANList: []VLAN{}, EventActive: b2i(eventActive)}
+	for _, k := range Kinds {
+		r.Alarms[k] = AlarmSummary{Keys: []string{}}
+	}
+	return r
+}
+
+// sumAlarms sorts the keys of every alarm kind and counts the active alarms.
+func (r *Report) sumAlarms() {
 	for _, s := range r.Alarms {
 		sort.Strings(s.Keys)
 		r.AlarmsActive += s.Active
 	}
-	return r
 }
 
 // setEngine copies the facts and counters of an engine that answered; every known drop reason is reported,
@@ -201,6 +209,17 @@ func b2i(b bool) int {
 // WritePrometheus writes the report (plus per-rule counters) in the Prometheus text format 0.0.4.
 func WritePrometheus(w io.Writer, r Report, rules []engineapi.RuleStat) error {
 	p := &promWriter{w: w}
+	p.engine(r)
+	p.drops(r.Drops)
+	p.alarms(r.Alarms)
+	p.vlans(r.VLANList)
+	p.outputs(r.Outputs)
+	p.rules(rules)
+	return p.err
+}
+
+// engine writes the facts and totals of the engine.
+func (p *promWriter) engine(r Report) {
 	p.metric("nsrelay_engine_up", "gauge", "1 if the engine answered the web part.", nil, float64(r.EngineUp))
 	p.metric("nsrelay_info", "gauge", "Versions, mode and active snapshot.",
 		[]string{"web_version", r.WebVersion, "engine_version", r.EngineVersion, "mode", r.Mode, "snapshot", r.Snapshot}, 1)
@@ -213,24 +232,35 @@ func WritePrometheus(w io.Writer, r Report, rules []engineapi.RuleStat) error {
 	p.metric("nsrelay_received_frames_total", "counter", "Frames received after the kernel filter.", nil, float64(r.RXTotal))
 	p.metric("nsrelay_sent_frames_total", "counter", "Frames sent (all copies).", nil, float64(r.SentTotal))
 	p.metric("nsrelay_self_test_findings", "gauge", "Host self-test findings at engine start.", nil, float64(r.SelfTest))
+}
 
-	reasons := make([]string, 0, len(r.Drops))
-	for k := range r.Drops {
+// drops writes the dropped frames by reason, sorted by reason.
+func (p *promWriter) drops(drops map[string]uint64) {
+	reasons := make([]string, 0, len(drops))
+	for k := range drops {
 		reasons = append(reasons, k)
 	}
 	sort.Strings(reasons)
 	p.head("nsrelay_dropped_frames_total", "counter", "Frames not relayed, by reason.")
 	for _, k := range reasons {
-		p.sample("nsrelay_dropped_frames_total", []string{"reason", k}, float64(r.Drops[k]))
+		p.sample("nsrelay_dropped_frames_total", []string{"reason", k}, float64(drops[k]))
 	}
+}
+
+// alarms writes the active alarms and the occurrences of every alarm kind.
+func (p *promWriter) alarms(alarms map[string]AlarmSummary) {
 	p.head("nsrelay_alarms_active", "gauge", "Unacknowledged alarms seen in the last 5 minutes, by kind.")
 	for _, k := range Kinds {
-		p.sample("nsrelay_alarms_active", []string{"kind", k}, float64(r.Alarms[k].Active))
+		p.sample("nsrelay_alarms_active", []string{"kind", k}, float64(alarms[k].Active))
 	}
 	p.head("nsrelay_alarm_occurrences_total", "counter", "Alarm occurrences since engine start, by kind.")
 	for _, k := range Kinds {
-		p.sample("nsrelay_alarm_occurrences_total", []string{"kind", k}, float64(r.Alarms[k].Count))
+		p.sample("nsrelay_alarm_occurrences_total", []string{"kind", k}, float64(alarms[k].Count))
 	}
+}
+
+// vlans writes the counters per VLAN.
+func (p *promWriter) vlans(list []VLAN) {
 	type vm struct {
 		name, typ, help string
 		val             func(VLAN) float64
@@ -241,10 +271,14 @@ func WritePrometheus(w io.Writer, r Report, rules []engineapi.RuleStat) error {
 		{"nsrelay_vlan_last_received_timestamp_seconds", "gauge", "Unix time of the last received frame (0 = none).", func(v VLAN) float64 { return float64(v.LastIn) }},
 	} {
 		p.head(m.name, m.typ, m.help)
-		for _, v := range r.VLANList {
+		for _, v := range list {
 			p.sample(m.name, []string{"vid", fmt.Sprint(v.VID), "name", v.Name, "group", v.Group}, m.val(v))
 		}
 	}
+}
+
+// outputs writes the state and counters of every monitoring target.
+func (p *promWriter) outputs(outs []Output) {
 	type om struct {
 		name, typ, help string
 		val             func(Output) float64
@@ -256,10 +290,14 @@ func WritePrometheus(w io.Writer, r Report, rules []engineapi.RuleStat) error {
 		{"nsrelay_output_last_success_timestamp_seconds", "gauge", "Unix time of the last successful send (0 = never).", func(o Output) float64 { return float64(o.LastSuccess) }},
 	} {
 		p.head(m.name, m.typ, m.help)
-		for _, o := range r.Outputs {
+		for _, o := range outs {
 			p.sample(m.name, []string{"target", o.Name, "kind", o.Kind}, m.val(o))
 		}
 	}
+}
+
+// rules writes the counters per rule.
+func (p *promWriter) rules(rules []engineapi.RuleStat) {
 	p.head("nsrelay_rule_received_frames_total", "counter", "Frames matched per rule.")
 	for _, x := range rules {
 		p.sample("nsrelay_rule_received_frames_total", []string{"rule", x.ID}, float64(x.RX))
@@ -268,7 +306,6 @@ func WritePrometheus(w io.Writer, r Report, rules []engineapi.RuleStat) error {
 	for _, x := range rules {
 		p.sample("nsrelay_rule_relayed_frames_total", []string{"rule", x.ID}, float64(x.Relayed))
 	}
-	return p.err
 }
 
 type promWriter struct {

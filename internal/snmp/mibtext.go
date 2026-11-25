@@ -119,16 +119,7 @@ func (m *mibText) table(t Table) []string {
 	m.w("    ::= { %s 1 }", t.Name)
 	m.w("")
 	cols := append([]Column{t.Index}, t.Columns...)
-	m.w("%s ::= SEQUENCE {", entryType)
-	for i, c := range cols {
-		sep := ","
-		if i == len(cols)-1 {
-			sep = ""
-		}
-		m.w("    %s %s%s", c.Name, sequenceType(c.Syntax.MIB), sep)
-	}
-	m.w("}")
-	m.w("")
+	m.sequence(entryType, cols)
 	var names []string
 	for _, c := range cols {
 		access := "read-only"
@@ -141,6 +132,20 @@ func (m *mibText) table(t Table) []string {
 		}
 	}
 	return names
+}
+
+// sequence writes the SEQUENCE type of a table entry.
+func (m *mibText) sequence(entryType string, cols []Column) {
+	m.w("%s ::= SEQUENCE {", entryType)
+	for i, c := range cols {
+		sep := ","
+		if i == len(cols)-1 {
+			sep = ""
+		}
+		m.w("    %s %s%s", c.Name, sequenceType(c.Syntax.MIB), sep)
+	}
+	m.w("}")
+	m.w("")
 }
 
 // sequenceType is the bare type of a SYNTAX clause as a SEQUENCE lists it: without a range or size, and every

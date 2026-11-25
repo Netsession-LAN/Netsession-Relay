@@ -176,28 +176,42 @@ func (s *Store) UpsertOIDCUser(ctx context.Context, subject, name, email, role s
 	name = oidcName(subject, name, email)
 	var u User
 	err := s.tx(ctx, func(tx *sql.Tx) error {
-		var id int64
-		err := tx.QueryRowContext(ctx, `SELECT id FROM user WHERE kind = 'oidc' AND subject = ?`, subject).Scan(&id)
-		if err != nil && !errors.Is(err, sql.ErrNoRows) {
-			return err
-		}
-		// a different account (local, or another subject) holds the name: use name@sso
-		var other int64
-		if e := tx.QueryRowContext(ctx, `SELECT id FROM user WHERE name = ? AND id != ?`, name, id).Scan(&other); e == nil {
-			name += "@sso"
-		}
-		if id == 0 {
-			id, err = insertOIDCUser(ctx, tx, subject, name, email, role)
-		} else {
-			err = updateOIDCUser(ctx, tx, id, name, email, role)
-		}
-		if err != nil {
-			return err
-		}
-		u = User{ID: id, Kind: "oidc", Name: name, Role: role}
-		return nil
+		var err error
+		u, err = upsertOIDCUser(ctx, tx, subject, name, email, role)
+		return err
 	})
 	return u, err
+}
+
+func upsertOIDCUser(ctx context.Context, tx *sql.Tx, subject, name, email, role string) (User, error) {
+	id, err := oidcAccountID(ctx, tx, subject)
+	if err != nil {
+		return User{}, err
+	}
+	// a different account (local, or another subject) holds the name: use name@sso
+	var other int64
+	if e := tx.QueryRowContext(ctx, `SELECT id FROM user WHERE name = ? AND id != ?`, name, id).Scan(&other); e == nil {
+		name += "@sso"
+	}
+	if id == 0 {
+		id, err = insertOIDCUser(ctx, tx, subject, name, email, role)
+	} else {
+		err = updateOIDCUser(ctx, tx, id, name, email, role)
+	}
+	if err != nil {
+		return User{}, err
+	}
+	return User{ID: id, Kind: "oidc", Name: name, Role: role}, nil
+}
+
+// oidcAccountID returns the ID of the account of an OIDC subject, 0 when it has none yet.
+func oidcAccountID(ctx context.Context, tx *sql.Tx, subject string) (int64, error) {
+	var id int64
+	err := tx.QueryRowContext(ctx, `SELECT id FROM user WHERE kind = 'oidc' AND subject = ?`, subject).Scan(&id)
+	if err != nil && !errors.Is(err, sql.ErrNoRows) {
+		return 0, err
+	}
+	return id, nil
 }
 
 // oidcName is the account name of an OIDC subject: the name claim, else the e-mail address, else "sso-" and the
@@ -244,18 +258,8 @@ func (s *Store) CreateFirstAdmin(ctx context.Context, name, hash string) (User, 
 	var u User
 	err := s.audited(ctx, func(tx *sql.Tx) (AuditEntry, error) {
 		e := AuditEntry{User: name, Action: "user.setup", Object: name, After: RoleAdmin}
-		var n int
-		if err := tx.QueryRowContext(ctx, `SELECT count(*) FROM user WHERE kind = 'local' AND password_hash != ''`).Scan(&n); err != nil {
+		if err := firstAdminAllowed(ctx, tx, name); err != nil {
 			return e, err
-		}
-		if n > 0 {
-			return e, ErrExists
-		}
-		if err := tx.QueryRowContext(ctx, `SELECT count(*) FROM user WHERE name = ?`, name).Scan(&n); err != nil {
-			return e, err
-		}
-		if n > 0 {
-			return e, fmt.Errorf("%w: name", ErrInvalid)
 		}
 		res, err := tx.ExecContext(ctx, `INSERT INTO user(kind, name, role, password_hash) VALUES ('local', ?, ?, ?)`, name, RoleAdmin, hash)
 		if err != nil {
@@ -269,4 +273,23 @@ func (s *Store) CreateFirstAdmin(ctx context.Context, name, hash string) (User, 
 		return User{}, err
 	}
 	return u, nil
+}
+
+// firstAdminAllowed refuses the first-run admin when a local account exists already (ErrExists) or another
+// account has the name.
+func firstAdminAllowed(ctx context.Context, tx *sql.Tx, name string) error {
+	var n int
+	if err := tx.QueryRowContext(ctx, `SELECT count(*) FROM user WHERE kind = 'local' AND password_hash != ''`).Scan(&n); err != nil {
+		return err
+	}
+	if n > 0 {
+		return ErrExists
+	}
+	if err := tx.QueryRowContext(ctx, `SELECT count(*) FROM user WHERE name = ?`, name).Scan(&n); err != nil {
+		return err
+	}
+	if n > 0 {
+		return fmt.Errorf("%w: name", ErrInvalid)
+	}
+	return nil
 }

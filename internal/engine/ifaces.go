@@ -38,20 +38,33 @@ func matchIface(patterns []string, name string) bool {
 //     that really shall work on that interface names it in the list.
 func CheckIfaces(s *compile.Snapshot, allowed []string, protected map[string]bool) error {
 	for _, v := range s.VLANs {
-		base := v.Device
-		if v.Attach == compile.AttachTrunk {
-			base = v.Parent
-		}
-		if len(allowed) > 0 {
-			if !matchIface(allowed, base) && !matchIface(allowed, netif.LinkName(v)) {
-				return fmt.Errorf("VLAN %d: %w: %s is not in NSRELAY_ALLOWED_IFACES", v.VID, ErrIfaceNotAllowed, base)
-			}
-			continue
-		}
-		if base == "lo" || protected[base] {
-			return fmt.Errorf("VLAN %d: %w: %s carries the default route of the host (management); to relay on it anyway, list it in NSRELAY_ALLOWED_IFACES of the engine",
-				v.VID, ErrIfaceNotAllowed, base)
+		if err := checkIface(v, allowed, protected); err != nil {
+			return err
 		}
 	}
 	return nil
+}
+
+// checkIface applies the interface policy of CheckIfaces to one VLAN.
+func checkIface(v compile.VLAN, allowed []string, protected map[string]bool) error {
+	base := v.Device
+	if v.Attach == compile.AttachTrunk {
+		base = v.Parent
+	}
+	if len(allowed) > 0 {
+		return checkListedIface(v, base, allowed)
+	}
+	if base == "lo" || protected[base] {
+		return fmt.Errorf("VLAN %d: %w: %s carries the default route of the host (management); to relay on it anyway, list it in NSRELAY_ALLOWED_IFACES of the engine",
+			v.VID, ErrIfaceNotAllowed, base)
+	}
+	return nil
+}
+
+// checkListedIface accepts a VLAN whose interface (base: the device or the trunk) or own name is in the list.
+func checkListedIface(v compile.VLAN, base string, allowed []string) error {
+	if matchIface(allowed, base) || matchIface(allowed, netif.LinkName(v)) {
+		return nil
+	}
+	return fmt.Errorf("VLAN %d: %w: %s is not in NSRELAY_ALLOWED_IFACES", v.VID, ErrIfaceNotAllowed, base)
 }

@@ -7,6 +7,7 @@ import (
 	"fmt"
 	"html/template"
 	"io"
+	"maps"
 	"net/http"
 	"strings"
 
@@ -59,17 +60,7 @@ func (s *Server) renderLive(w http.ResponseWriter, r *http.Request, name, title,
 	}
 	p.Title, p.Flash, p.Error = lookupQuiet(p.Lang, title), lookupQuiet(p.Lang, p.Flash), lookupQuiet(p.Lang, p.Error)
 	if se.ID != "" {
-		p.W98 = w98Mode(r, p.Theme)
-		if p.Theme == theme98 {
-			w.Header().Add("Vary", "Sec-Fetch-Dest")
-		}
-		if live == nil {
-			live = s.liveNow(r.Context())
-		}
-		p.Live, p.Engine = live, live.Engine
-		if !live.EngineOK {
-			p.EngErr = T("Engine nicht erreichbar.")
-		}
+		s.addSessionParts(w, r, &p, live, T)
 	}
 	t := s.tpl[p.Lang][name]
 	if t == nil {
@@ -79,6 +70,22 @@ func (s *Server) renderLive(w http.ResponseWriter, r *http.Request, name, title,
 	w.Header().Set("Content-Type", "text/html; charset=utf-8")
 	if err := t.ExecuteTemplate(w, "layout.html", p); err != nil {
 		s.Log.Error("render", "page", name, "err", err)
+	}
+}
+
+// addSessionParts fills in what only pages behind the login show: the frame of the theme "98" and the live view
+// of the header (live: already fetched by the handler, nil: fetched here).
+func (s *Server) addSessionParts(w http.ResponseWriter, r *http.Request, p *page, live *liveView, T translator) {
+	p.W98 = w98Mode(r, p.Theme)
+	if p.Theme == theme98 {
+		w.Header().Add("Vary", "Sec-Fetch-Dest")
+	}
+	if live == nil {
+		live = s.liveNow(r.Context())
+	}
+	p.Live, p.Engine = live, live.Engine
+	if !live.EngineOK {
+		p.EngErr = T("Engine nicht erreichbar.")
 	}
 }
 
@@ -110,10 +117,7 @@ func (a htmlArg) Format(f fmt.State, verb rune) {
 // return German texts are translated too.
 func localFuncs(base template.FuncMap, lang string) template.FuncMap {
 	T := trFor(lang)
-	f := template.FuncMap{}
-	for k, v := range base {
-		f[k] = v
-	}
+	f := maps.Clone(base)
 	f["t"] = func(s string, args ...any) string { return T(s, args...) }
 	// th: the text contains markup (trusted, from the templates and the catalog); arguments are escaped
 	f["th"] = func(s string, args ...any) template.HTML { return template.HTML(T(s, escapeArgs(args)...)) } //nolint:gosec // G203: every variable part is escaped (HTMLEscapeString / escapeArgs)
@@ -121,11 +125,19 @@ func localFuncs(base template.FuncMap, lang string) template.FuncMap {
 	f["lang"] = func() string { return lang }
 	// raw JSON inside <script type="application/json">; json.Marshal escapes <, > and &
 	f["jsCatalog"] = func() template.JS { return template.JS(jsCatalog(lang)) } //nolint:gosec // G203: every variable part is escaped (HTMLEscapeString / escapeArgs)
-	for _, k := range []string{"modeName", "roleName", "roleLabel", "group", "resultName", "kindName", "dirName", "confName", "resultBadge", "hostIssue"} {
-		fn := base[k].(func(string) string)
+	translateNameFuncs(f, T)
+	return f
+}
+
+// translatedNameFuncs are the template functions that return a German name; localFuncs translates their result.
+var translatedNameFuncs = []string{"modeName", "roleName", "roleLabel", "group", "resultName", "kindName", "dirName", "confName", "resultBadge", "hostIssue"}
+
+// translateNameFuncs wraps the name functions of f (translatedNameFuncs) so their result is translated by T.
+func translateNameFuncs(f template.FuncMap, T translator) {
+	for _, k := range translatedNameFuncs {
+		fn := f[k].(func(string) string)
 		f[k] = func(s string) string { return T(fn(s)) }
 	}
-	return f
 }
 
 // page returns the template of a page in the language of r (for fragments rendered without the layout).
@@ -170,7 +182,7 @@ func back(w http.ResponseWriter, r *http.Request, path, okMsg string, err error)
 	if i := strings.IndexByte(path, '#'); i >= 0 { // the message goes before the fragment ("/system#abfrage")
 		path, frag = path[:i], path[i:]
 	}
-	http.Redirect(w, r, path+q+frag, http.StatusSeeOther)
+	http.Redirect(w, r, path+q+frag, http.StatusSeeOther) //nolint:gosec // G710: callers pass fixed paths, fixed paths with an escaped ID, or backPath (checked by localPath)
 }
 
 // ---- errors for the user ----

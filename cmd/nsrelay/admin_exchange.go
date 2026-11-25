@@ -2,6 +2,7 @@ package main
 
 import (
 	"bytes"
+	"context"
 	"errors"
 	"fmt"
 	"io"
@@ -23,15 +24,16 @@ func adminExport(c *adminCall) int {
 		return 1
 	}
 	defer st.Close()
-	cfg, err := st.ExportConfig(c.ctx)
+	b, err := exportYAML(c.ctx, st)
 	if err != nil {
 		return c.fail(err)
 	}
-	b, err := yaml.Marshal(cfg)
-	if err != nil {
-		return c.fail(err)
-	}
-	// no file or "-": standard output, and nothing but the YAML on it
+	return writeExport(c, b)
+}
+
+// writeExport writes the export to the file argument; no file or "-": standard output, and nothing but the YAML
+// on it.
+func writeExport(c *adminCall, b []byte) int {
 	if c.fs.NArg() == 0 || c.fs.Arg(0) == "-" {
 		if _, err := c.stdout.Write(b); err != nil {
 			return c.fail(err)
@@ -43,6 +45,15 @@ func adminExport(c *adminCall) int {
 	}
 	fmt.Fprintln(c.stdout, "written:", c.fs.Arg(0))
 	return 0
+}
+
+// exportYAML is the configuration of the active event as YAML.
+func exportYAML(ctx context.Context, st *store.Store) ([]byte, error) {
+	cfg, err := st.ExportConfig(ctx)
+	if err != nil {
+		return nil, err
+	}
+	return yaml.Marshal(cfg)
 }
 
 // writeHint adds where a file can be written when the target is on the read-only file system of the container.
@@ -57,14 +68,7 @@ func adminImport(c *adminCall) int {
 	if !c.parse() {
 		return 2
 	}
-	if c.fs.NArg() != 1 {
-		return c.fail(fmt.Errorf("admin import: file missing (- = standard input)"))
-	}
-	b, file, err := readImport(c.fs.Arg(0), c.stdin)
-	if err != nil {
-		return c.fail(err)
-	}
-	cfg, err := decodeImport(b, file)
+	cfg, err := loadImport(c)
 	if err != nil {
 		return c.fail(err)
 	}
@@ -79,6 +83,18 @@ func adminImport(c *adminCall) int {
 	fmt.Fprintf(c.stdout, "imported event %q (%d VLANs, %d profiles, %d games); run `nsrelay admin apply`\n",
 		cfg.Event, len(cfg.VLANs), len(cfg.Profiles), len(cfg.Games))
 	return 0
+}
+
+// loadImport reads and decodes the export named by the argument (- = standard input).
+func loadImport(c *adminCall) (store.Config, error) {
+	if c.fs.NArg() != 1 {
+		return store.Config{}, fmt.Errorf("admin import: file missing (- = standard input)")
+	}
+	b, file, err := readImport(c.fs.Arg(0), c.stdin)
+	if err != nil {
+		return store.Config{}, err
+	}
+	return decodeImport(b, file)
 }
 
 // readImport reads the export to import from file, or from stdin (at most 16 MiB) for "-". name is how the

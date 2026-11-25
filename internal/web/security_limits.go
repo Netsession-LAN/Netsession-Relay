@@ -125,27 +125,32 @@ func limitKey(ip string) string {
 func (t *loginThrottle) begin(key string, now time.Time) time.Duration {
 	t.mu.Lock()
 	defer t.mu.Unlock()
-	if t.m == nil {
-		t.m = map[string]*throttleEntry{}
-	}
-	e := t.m[key]
-	if e != nil && now.Sub(e.last) > throttleForget {
-		delete(t.m, key)
-		e = nil
-	}
-	if e == nil {
-		if len(t.m) >= throttleKeys {
-			t.evict(now)
-		}
-		e = &throttleEntry{}
-		t.m[key] = e
-	} else if d := e.until.Sub(now); d > 0 {
+	e := t.entry(key, now)
+	if d := e.until.Sub(now); d > 0 {
 		return d
 	}
 	e.fails++
 	e.last = now
 	e.until = now.Add(throttlePause(e.fails))
 	return 0
+}
+
+// entry gives the entry of key. A key that was quiet for throttleForget starts anew; a new entry makes room
+// first when the table is full. t.mu is held.
+func (t *loginThrottle) entry(key string, now time.Time) *throttleEntry {
+	if t.m == nil {
+		t.m = map[string]*throttleEntry{}
+	}
+	if e := t.m[key]; e != nil && now.Sub(e.last) <= throttleForget {
+		return e
+	}
+	delete(t.m, key)
+	if len(t.m) >= throttleKeys {
+		t.evict(now)
+	}
+	e := &throttleEntry{}
+	t.m[key] = e
+	return e
 }
 
 // throttlePause is the pause after the given number of failures in a row. throttleFree attempts are free: the

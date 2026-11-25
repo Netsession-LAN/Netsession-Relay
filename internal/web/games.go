@@ -2,6 +2,7 @@ package web
 
 import (
 	"cmp"
+	"context"
 	"errors"
 	"fmt"
 	"net/http"
@@ -216,14 +217,19 @@ func (s *Server) game(w http.ResponseWriter, r *http.Request) {
 		d.addEventConfig(c, id)
 	}
 	if r.URL.Query().Get("teil") == "diagnose" { // fragment for the live refresh
-		w.Header().Set("Content-Type", "text/html; charset=utf-8")
-		w.Header().Set("Cache-Control", "no-store")
-		if err := s.page(r, "game").ExecuteTemplate(w, "diagnose", d); err != nil {
-			s.Log.Error("render", "page", "game/diagnose", "err", err)
-		}
+		s.renderGameDiagnosis(w, r, d)
 		return
 	}
 	s.renderLive(w, r, "game", d.Game.Name, "games", d, live)
+}
+
+// renderGameDiagnosis writes only the diagnosis part of the game page.
+func (s *Server) renderGameDiagnosis(w http.ResponseWriter, r *http.Request, d *gameDetail) {
+	w.Header().Set("Content-Type", "text/html; charset=utf-8")
+	w.Header().Set("Cache-Control", "no-store")
+	if err := s.page(r, "game").ExecuteTemplate(w, "diagnose", d); err != nil {
+		s.Log.Error("render", "page", "game/diagnose", "err", err)
+	}
 }
 
 // addEventConfig fills in what the active event sets for the game: its flow profile (with the names to choose
@@ -272,12 +278,7 @@ func (s *Server) toggleGame(w http.ResponseWriter, r *http.Request) {
 	id := r.PathValue("id")
 	on := r.PostFormValue("on") == "1"
 	path := backPath(r, "/spiele")
-	name := id
-	if games, err := s.Store.Games(r.Context()); err == nil {
-		if i := slices.IndexFunc(games, func(g store.GameRow) bool { return g.ID == id }); i >= 0 {
-			name = games[i].Name
-		}
-	}
+	name := s.gameName(r.Context(), id)
 	T := s.T(r)
 	if err := s.Store.SetGameEnabled(r.Context(), s.actor(r), id, on); err != nil {
 		if errors.Is(err, store.ErrNotFound) {
@@ -293,6 +294,18 @@ func (s *Server) toggleGame(w http.ResponseWriter, r *http.Request) {
 	}
 	s.Log.Info("game toggled", "user", s.actor(r), "game", id, "on", on, "ok", a.OK)
 	s.answer(w, r, path, a)
+}
+
+// gameName is the display name of a game; its ID when the game is unknown or the database cannot be read.
+func (s *Server) gameName(ctx context.Context, id string) string {
+	games, err := s.Store.Games(ctx)
+	if err != nil {
+		return id
+	}
+	if i := slices.IndexFunc(games, func(g store.GameRow) bool { return g.ID == id }); i >= 0 {
+		return games[i].Name
+	}
+	return id
 }
 
 // backPath is where a form wants to return to (hidden field "back"); only local paths are accepted.

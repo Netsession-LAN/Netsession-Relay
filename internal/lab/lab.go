@@ -47,25 +47,34 @@ func SnapshotLimited(parent, mode string, relayHost int, sources []netip.Prefix,
 	if err != nil {
 		return nil, nil, err
 	}
+	prof := compile.DefaultFlowProfile()
+	// the lab has no orga VLAN: drop edges to groups without VLANs
+	prof.Edges = withoutOrga(prof.Edges)
+	return compile.Compile(compile.Input{
+		Mode: mode, DB: db, VLANs: VLANs(parent, relayHost), Limits: limits,
+		Profiles: []compile.FlowProfile{prof}, DefaultProfile: prof.Name, Games: selectGames(db, games, sources),
+	})
+}
+
+// selectGames switches on the listed games of db (none listed: the defaults), each with the source filter.
+func selectGames(db *gamedb.DB, games []string, sources []netip.Prefix) []compile.Selection {
 	var sel []compile.Selection
 	for _, g := range db.Games {
 		if (len(games) == 0 && g.DefaultEnabled) || slices.Contains(games, g.ID) {
 			sel = append(sel, compile.Selection{GameID: g.ID, Sources: sources})
 		}
 	}
-	prof := compile.DefaultFlowProfile()
-	// the lab has no orga VLAN: drop edges to groups without VLANs
-	var edges []compile.Edge
-	for _, e := range prof.Edges {
+	return sel
+}
+
+func withoutOrga(edges []compile.Edge) []compile.Edge {
+	var out []compile.Edge
+	for _, e := range edges {
 		if e.Src != compile.GroupOrga && e.Dst != compile.GroupOrga {
-			edges = append(edges, e)
+			out = append(out, e)
 		}
 	}
-	prof.Edges = edges
-	return compile.Compile(compile.Input{
-		Mode: mode, DB: db, VLANs: VLANs(parent, relayHost), Limits: limits,
-		Profiles: []compile.FlowProfile{prof}, DefaultProfile: prof.Name, Games: sel,
-	})
+	return out
 }
 
 // SendOptions describe one test datagram.

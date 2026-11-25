@@ -76,23 +76,18 @@ func (s *Server) vlanCreate(w http.ResponseWriter, r *http.Request) { s.vlanSave
 func (s *Server) vlanUpdate(w http.ResponseWriter, r *http.Request) { s.vlanSave(w, r, false) }
 
 func (s *Server) vlanSave(w http.ResponseWriter, r *http.Request, isNew bool) {
-	ctx := r.Context()
 	T := s.T(r)
 	f := readVLANForm(r, isNew)
-	c, err := s.Store.ExportConfig(ctx)
+	c, err := s.Store.ExportConfig(r.Context())
 	if err != nil {
 		s.failInternal(w, r, "network: configuration", err)
 		return
 	}
 	f.Groups = s.vlanGroups(c)
-	title := "Netz anlegen"
-	if !isNew {
-		title = T("%s bearbeiten", f.Name)
-	}
 	reject := func(msg string) {
 		f.Err = msg
 		w.WriteHeader(http.StatusUnprocessableEntity)
-		s.render(w, r, "network-edit", title, "network", f)
+		s.render(w, r, "network-edit", vlanEditTitle(f.Name, isNew, T), "network", f)
 	}
 
 	v, msg := f.parse(T)
@@ -100,16 +95,11 @@ func (s *Server) vlanSave(w http.ResponseWriter, r *http.Request, isNew bool) {
 		reject(msg)
 		return
 	}
-	exists := slices.ContainsFunc(c.VLANs, func(x store.VLANConfig) bool { return x.VID == v.VID })
-	switch {
-	case isNew && exists:
-		reject(T("VLAN %d gibt es schon.", v.VID))
-		return
-	case !isNew && !exists:
+	if !isNew && !vlanIDTaken(c.VLANs, v.VID) {
 		s.fail(w, r, http.StatusNotFound, "Dieses Netz gibt es nicht.")
 		return
 	}
-	if msg := s.vlanProblem(r, f.Groups, v); msg != "" {
+	if msg := s.vlanProblem(r, c.VLANs, f.Groups, v, isNew); msg != "" {
 		reject(msg)
 		return
 	}
@@ -117,19 +107,30 @@ func (s *Server) vlanSave(w http.ResponseWriter, r *http.Request, isNew bool) {
 		reject(string(s.userError(r, "network: store", err)))
 		return
 	}
-	verb := "geändert"
-	if isNew {
-		verb = "angelegt"
-	}
-	a := s.applyNow(r, fmt.Sprintf("VLAN %d %s", v.VID, verb))
-	vlanSavedAnswer(&a, v, verb, T)
-	s.answer(w, r, "/netz", a)
+	s.answerVLANSaved(w, r, v, isNew)
 }
 
-// vlanProblem checks a parsed network before it is stored: its group must be one of groups, and it must fit
-// the whole configuration (overlapping networks, a relay IP outside the network and the like are rejected here,
-// not by a failing apply afterwards). It returns "" or the error text in the language of r.
-func (s *Server) vlanProblem(r *http.Request, groups []string, v store.VLANConfig) string {
+// vlanEditTitle is the title of the network form.
+func vlanEditTitle(name string, isNew bool, T translator) string {
+	if isNew {
+		return "Netz anlegen"
+	}
+	return T("%s bearbeiten", name)
+}
+
+// vlanIDTaken reports whether one of the networks has the VLAN ID vid.
+func vlanIDTaken(vlans []store.VLANConfig, vid int) bool {
+	return slices.ContainsFunc(vlans, func(x store.VLANConfig) bool { return x.VID == vid })
+}
+
+// vlanProblem checks a parsed network before it is stored: a new network must not take a VLAN ID of the stored
+// networks (vlans), its group must be one of groups, and it must fit the whole configuration (overlapping networks, a
+// relay IP outside the network and the like are rejected here, not by a failing apply afterwards). It returns ""
+// or the error text in the language of r.
+func (s *Server) vlanProblem(r *http.Request, vlans []store.VLANConfig, groups []string, v store.VLANConfig, isNew bool) string {
+	if isNew && vlanIDTaken(vlans, v.VID) {
+		return s.T(r)("VLAN %d gibt es schon.", v.VID)
+	}
 	if !slices.Contains(groups, v.Group) {
 		return s.T(r)("Bitte eine der Gruppen wählen.")
 	}
@@ -144,14 +145,21 @@ func (s *Server) storeVLAN(r *http.Request, v store.VLANConfig, isNew bool) erro
 	return s.Store.UpdateVLAN(r.Context(), s.actor(r), v)
 }
 
-// vlanSavedAnswer words the answer after a network was stored (verb "angelegt" or "geändert") and applied.
-func vlanSavedAnswer(a *applyAnswer, v store.VLANConfig, verb string, T translator) {
+// answerVLANSaved applies the configuration after a network was stored and words the answer.
+func (s *Server) answerVLANSaved(w http.ResponseWriter, r *http.Request, v store.VLANConfig, isNew bool) {
+	T := s.T(r)
+	verb := "geändert"
+	if isNew {
+		verb = "angelegt"
+	}
+	a := s.applyNow(r, fmt.Sprintf("VLAN %d %s", v.VID, verb))
 	switch {
 	case a.OK:
 		a.Message = T("%s (VLAN %d) %s.", v.Name, v.VID, T(verb))
 	case a.Error != "":
 		a.Error = T("%s (VLAN %d) %s, Anwenden fehlgeschlagen: %s", v.Name, v.VID, T(verb), a.Error)
 	}
+	s.answer(w, r, "/netz", a)
 }
 
 // vlanCheck compiles the configuration with v added or replaced (and switched on, so all address
@@ -162,19 +170,7 @@ func (s *Server) vlanCheck(r *http.Request, v store.VLANConfig) string {
 	if err != nil {
 		return string(s.internal(r, "network: read the configuration", err))
 	}
-	cv := compile.VLAN{VID: v.VID, Name: v.Name, Group: v.Group, CIDR: netip.MustParsePrefix(v.CIDR),
-		RelayIP: netip.MustParseAddr(v.RelayIP), Attach: v.Attach, Parent: v.Parent, Device: v.Device,
-		Enabled: true, RatePPS: v.RatePPS, Burst: v.Burst}
-	if i := slices.IndexFunc(in.VLANs, func(x compile.VLAN) bool { return x.VID == v.VID }); i >= 0 {
-		in.VLANs[i] = cv
-	} else {
-		in.VLANs = append(in.VLANs, cv)
-	}
-	// Other VLANs keep their state; overlaps with switched-off networks matter too, because they can be
-	// switched on later.
-	for i := range in.VLANs {
-		in.VLANs[i].Enabled = true
-	}
+	in.VLANs = vlansWithCandidate(in.VLANs, v)
 	if _, _, err := compile.Compile(in); err != nil {
 		if errors.Is(err, compile.ErrOverlap) {
 			return T("Das Netz überschneidet sich mit einem anderen Netz: %s", err.Error())
@@ -182,6 +178,23 @@ func (s *Server) vlanCheck(r *http.Request, v store.VLANConfig) string {
 		return T("Das Netz passt nicht zur Konfiguration: %s", err.Error())
 	}
 	return ""
+}
+
+// vlansWithCandidate is vlans with v added or replaced, all switched on: the other networks keep their state
+// elsewhere, but overlaps with switched-off networks matter too, because they can be switched on later.
+func vlansWithCandidate(vlans []compile.VLAN, v store.VLANConfig) []compile.VLAN {
+	cv := compile.VLAN{VID: v.VID, Name: v.Name, Group: v.Group, CIDR: netip.MustParsePrefix(v.CIDR),
+		RelayIP: netip.MustParseAddr(v.RelayIP), Attach: v.Attach, Parent: v.Parent, Device: v.Device,
+		Enabled: true, RatePPS: v.RatePPS, Burst: v.Burst}
+	if i := slices.IndexFunc(vlans, func(x compile.VLAN) bool { return x.VID == v.VID }); i >= 0 {
+		vlans[i] = cv
+	} else {
+		vlans = append(vlans, cv)
+	}
+	for i := range vlans {
+		vlans[i].Enabled = true
+	}
+	return vlans
 }
 
 func (s *Server) vlanDelete(w http.ResponseWriter, r *http.Request) {

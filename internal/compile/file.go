@@ -38,16 +38,24 @@ func WriteSnapshotFile(path string, s *Snapshot) error {
 		return err
 	}
 	defer os.Remove(tmp.Name())
-	if _, err := tmp.Write(append(b, '\n')); err != nil {
-		tmp.Close()
-		return err
-	}
-	if err := tmp.Sync(); err != nil {
-		tmp.Close()
+	if err := writeSynced(tmp, append(b, '\n')); err != nil {
 		return err
 	}
 	if err := tmp.Close(); err != nil {
 		return err
 	}
 	return os.Rename(tmp.Name(), path)
+}
+
+// writeSynced writes b to f and flushes it to the disk; f is closed when that fails.
+func writeSynced(f *os.File, b []byte) error {
+	if _, err := f.Write(b); err != nil {
+		f.Close()
+		return err
+	}
+	if err := f.Sync(); err != nil {
+		f.Close()
+		return err
+	}
+	return nil
 }

@@ -35,23 +35,33 @@ func (h *liveHub) rates() map[string]uint64 {
 	return h.rate
 }
 
-// sample stores the per-rule rates derived from two consecutive polls.
+// sample stores the per-rule rates derived from two consecutive polls. A poll without the engine is skipped.
 func (h *liveHub) sample(v *liveView) {
+	if !v.EngineOK {
+		return
+	}
 	h.mu.Lock()
 	defer h.mu.Unlock()
 	now := v.TS
-	if dt := now.Sub(h.prevAt).Seconds(); h.prevRX != nil && dt > 0.01 && dt < 30 && v.EngineOK {
-		rate := map[string]uint64{}
-		for id, rx := range v.ruleRX {
-			if p, ok := h.prevRX[id]; ok && rx > p {
-				rate[id] = uint64(float64(rx-p)/dt + 0.5)
-			}
+	if dt := now.Sub(h.prevAt).Seconds(); h.prevRX != nil && rateInterval(dt) {
+		h.rate, h.rateAt = ruleRates(h.prevRX, v.ruleRX, dt), now
+	}
+	h.prevRX, h.prevAt = v.ruleRX, now
+}
+
+// rateInterval reports whether two polls dt seconds apart give a meaningful rate: not the same instant, and not
+// so far apart (a stalled hub) that the rate would be an average over minutes.
+func rateInterval(dt float64) bool { return dt > 0.01 && dt < 30 }
+
+// ruleRates is the frames per second of every rule whose counter grew between two polls dt seconds apart.
+func ruleRates(prev, cur map[string]uint64, dt float64) map[string]uint64 {
+	rate := map[string]uint64{}
+	for id, rx := range cur {
+		if p, ok := prev[id]; ok && rx > p {
+			rate[id] = uint64(float64(rx-p)/dt + 0.5)
 		}
-		h.rate, h.rateAt = rate, now
 	}
-	if v.EngineOK {
-		h.prevRX, h.prevAt = v.ruleRX, now
-	}
+	return rate
 }
 
 // subscribe adds an open page to the hub; lang is the language its samples are sent in.
@@ -84,9 +94,26 @@ func (s *Server) runHub() {
 	h := s.hub
 	t := time.NewTicker(s.interval())
 	defer t.Stop()
-	// the polls end with the server (Close), not with the request that happened to start the hub
-	ctx, cancel := context.WithCancel(context.Background())
+	ctx, cancel := s.hubContext()
 	defer cancel()
+	for {
+		select {
+		case <-s.done:
+			h.stop()
+			return
+		case <-t.C:
+		}
+		if !h.keepRunning() {
+			return
+		}
+		s.publishSample(ctx)
+	}
+}
+
+// hubContext is the context of the hub's polls: they end with the server (Close), not with the request that
+// happened to start the hub.
+func (s *Server) hubContext() (context.Context, context.CancelFunc) {
+	ctx, cancel := context.WithCancel(context.Background())
 	go func() {
 		select {
 		case <-s.done:
@@ -94,29 +121,37 @@ func (s *Server) runHub() {
 		case <-ctx.Done():
 		}
 	}()
-	for {
-		select {
-		case <-s.done:
-			h.mu.Lock()
-			h.running = false
-			h.mu.Unlock()
-			return
-		case <-t.C:
-		}
-		h.mu.Lock()
-		if len(h.subs) == 0 {
-			h.running = false
-			h.mu.Unlock()
-			return
-		}
-		h.mu.Unlock()
-		v := s.liveNow(ctx)
-		h.sample(v)
-		for i := range v.Busy {
-			v.Busy[i].Rate = h.rate[v.Busy[i].Rule]
-		}
-		h.send(v)
+	return ctx, cancel
+}
+
+// stop marks the hub as stopped; the next subscriber starts it again.
+func (h *liveHub) stop() {
+	h.mu.Lock()
+	h.running = false
+	h.mu.Unlock()
+}
+
+// keepRunning reports whether a page is still open. When none is, the hub stops under the same lock, so a page
+// that subscribes right after starts a new one.
+func (h *liveHub) keepRunning() bool {
+	h.mu.Lock()
+	defer h.mu.Unlock()
+	if len(h.subs) > 0 {
+		return true
 	}
+	h.running = false
+	return false
+}
+
+// publishSample polls the engine once and sends the sample, with the rates of the busy games, to every open page.
+func (s *Server) publishSample(ctx context.Context) {
+	h := s.hub
+	v := s.liveNow(ctx)
+	h.sample(v)
+	for i := range v.Busy {
+		v.Busy[i].Rate = h.rate[v.Busy[i].Rule]
+	}
+	h.send(v)
 }
 
 // send hands one sample to every open page, as one JSON text per language that is open right now.
@@ -187,8 +222,7 @@ func (s *Server) apiEvents(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	defer s.streams.release(se.ID, se.User.ID)
-	rc := http.NewResponseController(w)
-	deadline := func() { _ = rc.SetWriteDeadline(time.Now().Add(30 * time.Second)) } // a reader that is gone
+	ev := &eventWriter{w: w, fl: fl, rc: http.NewResponseController(w)}
 	h := w.Header()
 	h.Set("Content-Type", "text/event-stream")
 	h.Set("Cache-Control", "no-store")
@@ -197,31 +231,54 @@ func (s *Server) apiEvents(w http.ResponseWriter, r *http.Request) {
 	ch := s.subscribe(lang)
 	defer s.unsubscribe(ch)
 	first, _ := json.Marshal(s.liveNow(r.Context()).localized(lang))
-	deadline()
-	fmt.Fprintf(w, "retry: 3000\nevent: status\ndata: %s\n\n", first)
-	fl.Flush()
+	_ = ev.event("retry: 3000\nevent: status\ndata: %s\n\n", first)
+	s.streamEvents(r, ev, ch)
+}
+
+// streamEvents sends every sample of the hub until the page goes away, the server shuts down or the session
+// ends (which the page is told with "bye").
+func (s *Server) streamEvents(r *http.Request, ev *eventWriter, ch chan []byte) {
 	// the session can end while the stream is open
 	check := time.NewTicker(time.Minute)
 	defer check.Stop()
-	for {
+	for open := true; open; {
 		select {
 		case <-r.Context().Done():
 			return
 		case <-s.done: // the server shuts down; the page reconnects by itself
 			return
 		case <-check.C:
-			if _, err := s.Store.SessionByToken(r.Context(), s.sessionToken(r)); err != nil {
-				deadline()
-				fmt.Fprint(w, "event: bye\ndata: {}\n\n")
-				fl.Flush()
-				return
-			}
+			open = s.streamSessionValid(r, ev)
 		case b := <-ch:
-			deadline()
-			if _, err := fmt.Fprintf(w, "event: status\ndata: %s\n\n", b); err != nil {
-				return
-			}
-			fl.Flush()
+			open = ev.event("event: status\ndata: %s\n\n", b) == nil
 		}
 	}
+}
+
+// streamSessionValid reports whether the session of a live stream still exists; if not, it says "bye" to the page.
+func (s *Server) streamSessionValid(r *http.Request, ev *eventWriter) bool {
+	if _, err := s.Store.SessionByToken(r.Context(), s.sessionToken(r)); err != nil {
+		_ = ev.event("event: bye\ndata: {}\n\n")
+		return false
+	}
+	return true
+}
+
+// eventWriter writes server-sent events. Every event gets a fresh write deadline, so a reader that is gone does
+// not hold the stream open.
+type eventWriter struct {
+	w  http.ResponseWriter
+	fl http.Flusher
+	rc *http.ResponseController
+}
+
+// event writes one event and flushes it to the browser.
+func (e *eventWriter) event(format string, args ...any) error {
+	_ = e.rc.SetWriteDeadline(time.Now().Add(30 * time.Second))
+	_, err := fmt.Fprintf(e.w, format, args...)
+	if err != nil {
+		return err
+	}
+	e.fl.Flush()
+	return nil
 }

@@ -302,18 +302,7 @@ func (v *liveView) tile(vid int, name, group string, enabled, running bool, x en
 	t := vlanView{VID: vid, Name: name, Group: group, Key: tableKey(name, group), Enabled: enabled, Running: running,
 		InRate: x.InRate, In: x.In, Out: x.Out, Interface: x.Interface, AlarmKind: alarmKind}
 	t.Alarm = t.AlarmKind != ""
-	switch {
-	case !enabled:
-		t.Status = tileOff
-	case t.Alarm:
-		t.Status = tileAlarm
-	case !running && v.EngineOK:
-		t.Status = tileUnmanaged
-	case t.InRate > 0:
-		t.Status = tileTraffic
-	default:
-		t.Status = tileQuiet
-	}
+	t.Status = v.tileStatus(&t)
 	t.Label = tileLabels[t.Status]
 	if t.Status == tileAlarm {
 		t.Label = cmp.Or(alarmShort[t.AlarmKind], alarmTitles[t.AlarmKind], t.AlarmKind)
@@ -321,6 +310,22 @@ func (v *liveView) tile(vid int, name, group string, enabled, running bool, x en
 		t.AlarmKind = ""
 	}
 	return t
+}
+
+// tileStatus is the state a network tile shows, the first that applies: off, alarm, not run by the engine,
+// traffic, quiet.
+func (v *liveView) tileStatus(t *vlanView) string {
+	switch {
+	case !t.Enabled:
+		return tileOff
+	case t.Alarm:
+		return tileAlarm
+	case !t.Running && v.EngineOK:
+		return tileUnmanaged
+	case t.InRate > 0:
+		return tileTraffic
+	}
+	return tileQuiet
 }
 
 // busyRows is the number of games with traffic the overview lists.

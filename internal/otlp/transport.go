@@ -83,18 +83,9 @@ func (s *Sender) withHeaders(ctx context.Context) context.Context {
 }
 
 func (s *Sender) postHTTP(ctx context.Context, path string, msg proto.Message) error {
-	body, err := proto.Marshal(msg)
+	req, err := s.newHTTPRequest(ctx, path, msg)
 	if err != nil {
 		return err
-	}
-	u := strings.TrimRight(s.endpoint, "/") + path
-	req, err := http.NewRequestWithContext(ctx, http.MethodPost, u, bytes.NewReader(body))
-	if err != nil {
-		return err
-	}
-	req.Header.Set("Content-Type", "application/x-protobuf")
-	for k, v := range s.c.Headers {
-		req.Header.Set(k, v)
 	}
 	resp, err := s.httpC.Do(req)
 	if err != nil {
@@ -106,4 +97,22 @@ func (s *Sender) postHTTP(ctx context.Context, path string, msg proto.Message) e
 		return fmt.Errorf("collector answered %s", resp.Status)
 	}
 	return nil
+}
+
+// newHTTPRequest is the POST of msg (protobuf) to path below the endpoint, with the configured headers.
+func (s *Sender) newHTTPRequest(ctx context.Context, path string, msg proto.Message) (*http.Request, error) {
+	body, err := proto.Marshal(msg)
+	if err != nil {
+		return nil, err
+	}
+	u := strings.TrimRight(s.endpoint, "/") + path
+	req, err := http.NewRequestWithContext(ctx, http.MethodPost, u, bytes.NewReader(body))
+	if err != nil {
+		return nil, err
+	}
+	req.Header.Set("Content-Type", "application/x-protobuf")
+	for k, v := range s.c.Headers {
+		req.Header.Set(k, v)
+	}
+	return req, nil
 }

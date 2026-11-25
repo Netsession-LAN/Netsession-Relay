@@ -45,32 +45,46 @@ func parseItem(item string) (Range, error) {
 	if item == "" {
 		return Range{}, errors.New("empty item")
 	}
-	step := uint16(1)
-	if body, st, ok := strings.Cut(item, "/"); ok {
-		v, err := parsePort(st)
-		if err != nil {
-			return Range{}, fmt.Errorf("step: %w", err)
-		}
-		if !strings.Contains(body, "-") {
-			return Range{}, fmt.Errorf("step without range in %q", item)
-		}
-		step, item = v, body
-	}
-	loS, hiS, isRange := strings.Cut(item, "-")
-	lo, err := parsePort(loS)
+	body, step, err := cutStep(item)
 	if err != nil {
 		return Range{}, err
 	}
-	hi := lo
-	if isRange {
-		if hi, err = parsePort(hiS); err != nil {
-			return Range{}, err
-		}
-		if hi < lo {
-			return Range{}, fmt.Errorf("range %d-%d is reversed", lo, hi)
-		}
+	lo, hi, err := parseRange(body)
+	if err != nil {
+		return Range{}, err
 	}
 	return Range{Lo: lo, Hi: hi, Step: step}, nil
+}
+
+// cutStep splits "lo-hi/step" into the range and its step; without "/step" the step is 1.
+func cutStep(item string) (string, uint16, error) {
+	body, st, ok := strings.Cut(item, "/")
+	if !ok {
+		return item, 1, nil
+	}
+	step, err := parsePort(st)
+	if err != nil {
+		return "", 0, fmt.Errorf("step: %w", err)
+	}
+	if !strings.Contains(body, "-") {
+		return "", 0, fmt.Errorf("step without range in %q", item)
+	}
+	return body, step, nil
+}
+
+// parseRange parses "lo-hi" or a single port (lo = hi).
+func parseRange(s string) (lo, hi uint16, err error) {
+	loS, hiS, isRange := strings.Cut(s, "-")
+	if lo, err = parsePort(loS); err != nil || !isRange {
+		return lo, lo, err
+	}
+	if hi, err = parsePort(hiS); err != nil {
+		return 0, 0, err
+	}
+	if hi < lo {
+		return 0, 0, fmt.Errorf("range %d-%d is reversed", lo, hi)
+	}
+	return lo, hi, nil
 }
 
 func parsePort(s string) (uint16, error) {
@@ -130,29 +144,44 @@ func FromPorts(ports []uint16) Spec {
 	ps = slices.Compact(ps)
 	var out Spec
 	for i := 0; i < len(ps); {
-		j := i
-		for j+1 < len(ps) && ps[j+1] == ps[j]+1 {
-			j++
-		}
-		if j > i {
-			out = append(out, Range{ps[i], ps[j], 1})
-			i = j + 1
-			continue
-		}
-		if i+2 < len(ps) {
-			step := ps[i+1] - ps[i]
-			j = i + 1
-			for j+1 < len(ps) && ps[j+1]-ps[j] == step {
-				j++
-			}
-			if j-i >= 2 {
-				out = append(out, Range{ps[i], ps[j], step})
-				i = j + 1
-				continue
-			}
-		}
-		out = append(out, Range{ps[i], ps[i], 1})
-		i++
+		var r Range
+		r, i = nextRange(ps, i)
+		out = append(out, r)
 	}
 	return out
+}
+
+// nextRange returns the range of the sorted ports ps that starts at index i, and the index after it: a run of
+// consecutive ports, else a progression of at least three, else the single port.
+func nextRange(ps []uint16, i int) (Range, int) {
+	if j := runEnd(ps, i); j > i {
+		return Range{ps[i], ps[j], 1}, j + 1
+	}
+	if j := progressionEnd(ps, i); j-i >= 2 {
+		return Range{ps[i], ps[j], ps[i+1] - ps[i]}, j + 1
+	}
+	return Range{ps[i], ps[i], 1}, i + 1
+}
+
+// runEnd returns the index of the last port of the run of consecutive ports starting at i.
+func runEnd(ps []uint16, i int) int {
+	j := i
+	for j+1 < len(ps) && ps[j+1] == ps[j]+1 {
+		j++
+	}
+	return j
+}
+
+// progressionEnd returns the index of the last port of the arithmetic progression starting at i with the step
+// ps[i+1]-ps[i]; i when fewer than three ports are left.
+func progressionEnd(ps []uint16, i int) int {
+	if i+2 >= len(ps) {
+		return i
+	}
+	step := ps[i+1] - ps[i]
+	j := i + 1
+	for j+1 < len(ps) && ps[j+1]-ps[j] == step {
+		j++
+	}
+	return j
 }

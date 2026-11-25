@@ -24,35 +24,60 @@ func (s *Store) SyncSeed(ctx context.Context, seed *gamedb.DB) (SeedResult, erro
 	var res SeedResult
 	err := s.tx(ctx, func(tx *sql.Tx) error {
 		for _, g := range seed.Games {
-			h := gamedb.GameHash(g)
-			data, _ := json.Marshal(g)
-			var origin, cur string
-			var modified bool
-			err := tx.QueryRowContext(ctx, `SELECT origin, seed_hash, locally_modified FROM game WHERE id = ?`, g.ID).Scan(&origin, &cur, &modified)
-			switch {
-			case errors.Is(err, sql.ErrNoRows):
-				_, err = tx.ExecContext(ctx, `INSERT INTO game(id, name, category, relay_needed, default_enabled, confidence, origin, seed_hash, data)
-					VALUES (?,?,?,?,?,?,'seed',?,?)`, g.ID, g.Name, g.Category, g.RelayNeeded, g.DefaultEnabled, g.Confidence, h, string(data))
-				res.Added++
-			case err != nil:
-				return err
-			case origin != "seed" || cur == h:
-				continue
-			case modified:
-				_, err = tx.ExecContext(ctx, `UPDATE game SET seed_pending = ? WHERE id = ?`, h, g.ID)
-				res.Pending++
-			default:
-				_, err = tx.ExecContext(ctx, `UPDATE game SET name=?, category=?, relay_needed=?, default_enabled=?, confidence=?, seed_hash=?, seed_pending='', data=? WHERE id=?`,
-					g.Name, g.Category, g.RelayNeeded, g.DefaultEnabled, g.Confidence, h, string(data), g.ID)
-				res.Updated++
-			}
-			if err != nil {
+			if err := syncSeedGame(ctx, tx, g, &res); err != nil {
 				return err
 			}
 		}
 		return nil
 	})
 	return res, err
+}
+
+// storedGame is what SyncSeed needs to know of a game in the store.
+type storedGame struct {
+	found    bool
+	origin   string
+	seedHash string
+	modified bool
+}
+
+// followsSeed reports whether the stored game should move to the seed version with hash h: it comes from the
+// seed and has another version.
+func (st storedGame) followsSeed(h string) bool { return st.origin == "seed" && st.seedHash != h }
+
+func readStoredGame(ctx context.Context, tx *sql.Tx, id string) (storedGame, error) {
+	var st storedGame
+	err := tx.QueryRowContext(ctx, `SELECT origin, seed_hash, locally_modified FROM game WHERE id = ?`, id).Scan(&st.origin, &st.seedHash, &st.modified)
+	if errors.Is(err, sql.ErrNoRows) {
+		return st, nil
+	}
+	st.found = err == nil
+	return st, err
+}
+
+// syncSeedGame adds the seed game g, updates its unmodified copy, or marks a locally modified one as pending.
+func syncSeedGame(ctx context.Context, tx *sql.Tx, g gamedb.Game, res *SeedResult) error {
+	h := gamedb.GameHash(g)
+	data, _ := json.Marshal(g)
+	st, err := readStoredGame(ctx, tx, g.ID)
+	switch {
+	case err != nil:
+		return err
+	case !st.found:
+		_, err = tx.ExecContext(ctx, `INSERT INTO game(id, name, category, relay_needed, default_enabled, confidence, origin, seed_hash, data)
+			VALUES (?,?,?,?,?,?,'seed',?,?)`, g.ID, g.Name, g.Category, g.RelayNeeded, g.DefaultEnabled, g.Confidence, h, string(data))
+		res.Added++
+	case !st.followsSeed(h):
+		return nil
+	case st.modified:
+		_, err = tx.ExecContext(ctx, `UPDATE game SET seed_pending = ? WHERE id = ?`, h, g.ID)
+		res.Pending++
+	default:
+		_, err = tx.ExecContext(ctx, `UPDATE game SET name=?, category=?, relay_needed=?, default_enabled=?, confidence=?, seed_hash=?, seed_pending='', data=? WHERE id=?`,
+			g.Name, g.Category, g.RelayNeeded, g.DefaultEnabled, g.Confidence, h, string(data), g.ID)
+		res.Updated++
+	}
+	return err
 }
 
 // GameRow is a game with its store metadata and its state in the active event.

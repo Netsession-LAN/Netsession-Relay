@@ -34,43 +34,63 @@ var ErrUnknownPreset = errors.New("unknown preset")
 // Preset returns an initial configuration: the networks of the preset on the trunk parent, the default matrix
 // between the groups that have a network, and the games the database switches on by default.
 func Preset(name, parent string, db *gamedb.DB) (store.Config, error) {
-	vlan := func(vid int, name, group string, third, host int) store.VLANConfig {
-		return store.VLANConfig{VID: vid, Name: name, Group: group, CIDR: fmt.Sprintf("10.10.%d.0/24", third),
-			RelayIP: fmt.Sprintf("10.10.%d.%d", third, host), Attach: compile.AttachTrunk, Parent: parent, Enabled: true}
-	}
-	var event string
-	var vlans []store.VLANConfig
-	switch name {
-	case PresetLAN:
-		event = "LAN"
-		vlans = append(vlans, vlan(100, "Gameserver", compile.GroupGameserver, 0, 250))
-		for n := 1; n <= 4; n++ {
-			vlans = append(vlans, vlan(100+n, fmt.Sprintf("Tisch %d", n), compile.GroupTables, n, 250))
-		}
-	case PresetNetsession:
-		event = "Netsession LAN"
-		vlans = append(vlans, vlan(1100, "Gameserver", compile.GroupGameserver, 0, 55))
-		for n := 1; n <= 14; n++ {
-			vlans = append(vlans, vlan(1100+n, fmt.Sprintf("Tisch %d", n), compile.GroupTables, n, 55))
-		}
-		vlans = append(vlans, vlan(1253, "User-WiFi", compile.GroupWiFi, 253, 55), vlan(1254, "Orga", compile.GroupOrga, 254, 55))
-	case PresetLab:
-		event = "Labor"
-		vlans = append(vlans, vlan(1100, "Gameserver", compile.GroupGameserver, 0, 55))
-		for n := 1; n <= 3; n++ {
-			vlans = append(vlans, vlan(1100+n, fmt.Sprintf("Tisch %d", n), compile.GroupTables, n, 55))
-		}
-	default:
+	l, ok := presetLayouts[name]
+	if !ok {
 		return store.Config{}, fmt.Errorf("%w %q (%s)", ErrUnknownPreset, name, Presets)
 	}
-	return SetupConfig(event, compile.ModeObserve, vlans, db), nil
+	return SetupConfig(l.event, compile.ModeObserve, l.vlans(parent), db), nil
+}
+
+// presetLayout is the network of a preset: the game servers in VLAN base (10.10.0.0/24), table n in VLAN base+n
+// (10.10.n.0/24), then the extra networks; the relay has host address host in each of them.
+type presetLayout struct {
+	event  string
+	base   int
+	tables int
+	host   int
+	extra  []presetNet
+}
+
+// presetNet is a network of a preset besides game servers and tables: 10.10.third.0/24.
+type presetNet struct {
+	vid         int
+	name, group string
+	third       int
+}
+
+var presetLayouts = map[string]presetLayout{
+	PresetLAN: {event: "LAN", base: 100, tables: 4, host: 250},
+	PresetNetsession: {event: "Netsession LAN", base: 1100, tables: 14, host: 55,
+		extra: []presetNet{{1253, "User-WiFi", compile.GroupWiFi, 253}, {1254, "Orga", compile.GroupOrga, 254}}},
+	PresetLab: {event: "Labor", base: 1100, tables: 3, host: 55},
+}
+
+// vlans returns the networks of the layout on the trunk parent.
+func (l presetLayout) vlans(parent string) []store.VLANConfig {
+	vlan := func(vid int, name, group string, third int) store.VLANConfig {
+		return store.VLANConfig{VID: vid, Name: name, Group: group, CIDR: fmt.Sprintf("10.10.%d.0/24", third),
+			RelayIP: fmt.Sprintf("10.10.%d.%d", third, l.host), Attach: compile.AttachTrunk, Parent: parent, Enabled: true}
+	}
+	vlans := []store.VLANConfig{vlan(l.base, "Gameserver", compile.GroupGameserver, 0)}
+	for n := 1; n <= l.tables; n++ {
+		vlans = append(vlans, vlan(l.base+n, fmt.Sprintf("Tisch %d", n), compile.GroupTables, n))
+	}
+	for _, x := range l.extra {
+		vlans = append(vlans, vlan(x.vid, x.name, x.group, x.third))
+	}
+	return vlans
 }
 
 // SetupConfig is the configuration the first-run setup in the browser creates: the given networks, the default
 // matrix (tables, game servers and orga see each other; only groups that have a network) and the games the
 // database switches on by default.
 func SetupConfig(event, mode string, vlans []store.VLANConfig, db *gamedb.DB) store.Config {
-	c := store.Config{Version: 1, Event: event, Mode: mode, VLANs: vlans}
+	return store.Config{Version: 1, Event: event, Mode: mode, VLANs: vlans,
+		Profiles: []store.ProfileConfig{defaultProfile(vlans)}, Games: defaultGames(db)}
+}
+
+// defaultProfile is the default flow profile limited to the groups that have a network.
+func defaultProfile(vlans []store.VLANConfig) store.ProfileConfig {
 	used := map[string]bool{}
 	for _, v := range vlans {
 		used[v.Group] = true
@@ -82,13 +102,18 @@ func SetupConfig(event, mode string, vlans []store.VLANConfig, db *gamedb.DB) st
 			p.Edges = append(p.Edges, e)
 		}
 	}
-	c.Profiles = []store.ProfileConfig{p}
+	return p
+}
+
+// defaultGames are the games the database switches on by default.
+func defaultGames(db *gamedb.DB) []store.EventGameConfig {
+	var games []store.EventGameConfig
 	for _, g := range db.Games {
 		if g.DefaultEnabled {
-			c.Games = append(c.Games, store.EventGameConfig{ID: g.ID})
+			games = append(games, store.EventGameConfig{ID: g.ID})
 		}
 	}
-	return c
+	return games
 }
 
 // Init creates a fresh configuration: seed games plus preset, mode observe. Refuses if a configuration exists
@@ -102,12 +127,20 @@ func Init(ctx context.Context, st *store.Store, user, preset, parent string, for
 	if err != nil {
 		return res, err
 	}
-	if _, err := st.ActiveEvent(ctx); err == nil && !force {
-		return res, errors.New("configuration exists already (use -force to replace it)")
+	if err := refuseExisting(ctx, st, force); err != nil {
+		return res, err
 	}
 	c, err := Preset(preset, parent, seed)
 	if err != nil {
 		return res, err
 	}
 	return res, st.ImportConfig(ctx, user, c)
+}
+
+// refuseExisting fails when an event is configured already, unless force.
+func refuseExisting(ctx context.Context, st *store.Store, force bool) error {
+	if _, err := st.ActiveEvent(ctx); err == nil && !force {
+		return errors.New("configuration exists already (use -force to replace it)")
+	}
+	return nil
 }

@@ -61,21 +61,24 @@ func (c OIDCConfig) withDefaults() OIDCConfig {
 func (c OIDCConfig) role(groups []string) string {
 	best := ""
 	for _, g := range groups {
-		g = strings.TrimSpace(g)
-		var r string
-		switch {
-		case strings.EqualFold(g, c.GroupAdmin):
-			r = store.RoleAdmin
-		case strings.EqualFold(g, c.GroupOperator):
-			r = store.RoleOperator
-		case strings.EqualFold(g, c.GroupViewer):
-			r = store.RoleViewer
-		}
-		if store.RoleRank(r) > store.RoleRank(best) {
+		if r := c.groupRole(strings.TrimSpace(g)); store.RoleRank(r) > store.RoleRank(best) {
 			best = r
 		}
 	}
 	return best
+}
+
+// groupRole is the role one group gives, "" for any other group.
+func (c OIDCConfig) groupRole(g string) string {
+	switch {
+	case strings.EqualFold(g, c.GroupAdmin):
+		return store.RoleAdmin
+	case strings.EqualFold(g, c.GroupOperator):
+		return store.RoleOperator
+	case strings.EqualFold(g, c.GroupViewer):
+		return store.RoleViewer
+	}
+	return ""
 }
 
 type oidcClient struct {
@@ -148,49 +151,32 @@ type oidcClaims struct {
 }
 
 func (s *Server) oidcCallback(w http.ResponseWriter, r *http.Request) {
-	fail := func(msg string, err error) {
-		if err != nil {
-			s.Log.Warn("oidc login", "err", err)
-		}
-		s.clearCookie(w, r, oidcCookie, "/oidc/", false)
-		back(w, r, "/login", "", errors.New(msg))
-	}
-	if !s.loginLimit.allow("oidc|"+limitKey(s.clientIP(r)), time.Now()) {
-		fail(errThrottle.Error(), nil)
+	if msg := s.oidcCallbackRefusal(r); msg != "" {
+		s.oidcFail(w, r, msg, nil)
 		return
 	}
-	if s.oidc == nil || s.oidc.oauth == nil {
-		fail(msgOIDCOff, nil)
-		return
-	}
-	q := r.URL.Query()
-	st, ok := readOIDCState(r)
-	if !ok {
-		fail(msgOIDCExpired, nil)
-		return
-	}
-	if e := q.Get("error"); e != "" {
-		fail(msgOIDCDenied, errors.New(e+": "+q.Get("error_description")))
+	st, msg, err := oidcCallbackState(r)
+	if msg != "" {
+		s.oidcFail(w, r, msg, err)
 		return
 	}
 	ctx, cancel := context.WithTimeout(r.Context(), 10*time.Second)
 	defer cancel()
-	cl, msg, err := s.oidcIdentity(ctx, q.Get("code"), st)
+	cl, msg, err := s.oidcIdentity(ctx, r.URL.Query().Get("code"), st)
 	if msg != "" {
-		fail(msg, err)
+		s.oidcFail(w, r, msg, err)
 		return
 	}
-	role := s.oidc.cfg.role(cl.Groups)
-	if role == "" {
-		s.audit(r.Context(), cmp.Or(cl.Username, cl.Subject), "login.denied", s.clientIP(r), "", "no relay group")
-		fail(msgOIDCGroup, nil)
+	u, role, msg, err := s.oidcAccount(r, cl)
+	if msg != "" {
+		s.oidcFail(w, r, msg, err)
 		return
 	}
-	u, err := s.Store.UpsertOIDCUser(r.Context(), cl.Subject, cmp.Or(cl.Username, cl.Name), cl.Email, role)
-	if err != nil {
-		fail(msgOIDCFailed, err)
-		return
-	}
+	s.startOIDCSession(w, r, u, role)
+}
+
+// startOIDCSession logs the browser in as u and leaves the login flow.
+func (s *Server) startOIDCSession(w http.ResponseWriter, r *http.Request, u store.User, role string) {
 	token := auth.Token(32)
 	if err := s.Store.CreateSession(r.Context(), u, token, auth.Token(24), s.clientIP(r)); err != nil {
 		s.Log.Error("oidc login: session", "err", err)
@@ -201,6 +187,56 @@ func (s *Server) oidcCallback(w http.ResponseWriter, r *http.Request) {
 	s.setSessionCookie(w, r, token, int(store.SessionTTL.Seconds()))
 	s.Log.Info("login", "name", u.Name, "kind", "oidc", "role", role)
 	http.Redirect(w, r, "/", http.StatusSeeOther)
+}
+
+// oidcFail ends a failed OIDC login: err (may be nil) goes to the log, the browser back to the login page with msg.
+func (s *Server) oidcFail(w http.ResponseWriter, r *http.Request, msg string, err error) {
+	if err != nil {
+		s.Log.Warn("oidc login", "err", err)
+	}
+	s.clearCookie(w, r, oidcCookie, "/oidc/", false)
+	back(w, r, "/login", "", errors.New(msg))
+}
+
+// oidcCallbackRefusal says why a callback is not handled at all (too many logins from the address, OIDC switched
+// off), or "".
+func (s *Server) oidcCallbackRefusal(r *http.Request) string {
+	if !s.loginLimit.allow("oidc|"+limitKey(s.clientIP(r)), time.Now()) {
+		return errThrottle.Error()
+	}
+	if s.oidc == nil || s.oidc.oauth == nil {
+		return msgOIDCOff
+	}
+	return ""
+}
+
+// oidcCallbackState reads the login cookie of the callback and whether the identity provider sent an error
+// instead of a code. On failure msg is the text for the user and err (may be nil) the detail for the log.
+func oidcCallbackState(r *http.Request) (st oidcState, msg string, err error) {
+	st, ok := readOIDCState(r)
+	if !ok {
+		return st, msgOIDCExpired, nil
+	}
+	q := r.URL.Query()
+	if e := q.Get("error"); e != "" {
+		return st, msgOIDCDenied, errors.New(e + ": " + q.Get("error_description"))
+	}
+	return st, "", nil
+}
+
+// oidcAccount gives the local account of a verified identity, with the role its groups give. An identity without
+// a relay group is refused (and audited). On failure msg is the text for the user and err the detail for the log.
+func (s *Server) oidcAccount(r *http.Request, cl oidcClaims) (u store.User, role, msg string, err error) {
+	role = s.oidc.cfg.role(cl.Groups)
+	if role == "" {
+		s.audit(r.Context(), cmp.Or(cl.Username, cl.Subject), "login.denied", s.clientIP(r), "", "no relay group")
+		return u, "", msgOIDCGroup, nil
+	}
+	u, err = s.Store.UpsertOIDCUser(r.Context(), cl.Subject, cmp.Or(cl.Username, cl.Name), cl.Email, role)
+	if err != nil {
+		return u, role, msgOIDCFailed, err
+	}
+	return u, role, "", nil
 }
 
 // oidcState is what oidcLogin stored in the login cookie: the state, the nonce expected in the ID token and the
@@ -228,6 +264,18 @@ func (s *Server) oidcIdentity(ctx context.Context, code string, st oidcState) (c
 	if err != nil {
 		return cl, msgOIDCToken, err
 	}
+	if cl, msg, err = s.oidcIDTokenClaims(ctx, tok, st.nonce); msg != "" {
+		return cl, msg, err
+	}
+	if len(cl.Groups) == 0 {
+		cl.Groups = s.oidcUserInfoGroups(ctx, tok)
+	}
+	return cl, "", nil
+}
+
+// oidcIDTokenClaims verifies the ID token that came with tok and returns its claims; the token must carry nonce.
+// On failure msg is the text for the user and err (may be nil) the detail for the log.
+func (s *Server) oidcIDTokenClaims(ctx context.Context, tok *oauth2.Token, nonce string) (cl oidcClaims, msg string, err error) {
 	raw, ok := tok.Extra("id_token").(string)
 	if !ok {
 		return cl, msgOIDCNoToken, nil
@@ -236,11 +284,8 @@ func (s *Server) oidcIdentity(ctx context.Context, code string, st oidcState) (c
 	if err != nil {
 		return cl, msgOIDCBad, err
 	}
-	if err = idt.Claims(&cl); err != nil || cl.Nonce != st.nonce {
+	if err = idt.Claims(&cl); err != nil || cl.Nonce != nonce {
 		return cl, msgOIDCNonce, err
-	}
-	if len(cl.Groups) == 0 {
-		cl.Groups = s.oidcUserInfoGroups(ctx, tok)
 	}
 	return cl, "", nil
 }

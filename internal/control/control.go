@@ -49,40 +49,53 @@ var (
 // Apply compiles the active configuration, sends it to the engine and records a revision (also when the
 // engine rejects it). dryRun only compiles.
 func Apply(ctx context.Context, st *store.Store, eng Engine, user, note string, dryRun bool) (ApplyResult, error) {
+	cfg, res, err := compileActive(ctx, st)
+	if err != nil || dryRun {
+		return res, err
+	}
+	res.Engine, err = eng.Apply(ctx, res.Snapshot)
+	if err != nil {
+		return res, fmt.Errorf("%w: %w", ErrEngineUnreachable, err)
+	}
+	err = recordApply(ctx, st, user, note, cfg, &res)
+	return res, err
+}
+
+// compileActive reads the active configuration and compiles it. It is read once: what is compiled is what the
+// revision records.
+func compileActive(ctx context.Context, st *store.Store) (store.Config, ApplyResult, error) {
 	var res ApplyResult
-	// one read of the configuration: what is compiled is what the revision records
 	cfg, err := st.ExportConfig(ctx)
 	if err != nil {
-		return res, err
+		return cfg, res, err
 	}
 	in, err := st.InputFor(ctx, cfg)
 	if err != nil {
-		return res, err
+		return cfg, res, err
 	}
 	snap, warns, err := compile.Compile(in)
 	res.Warnings = warns
 	if err != nil {
 		res.Invalid = err
-		return res, fmt.Errorf("%w:\n%w", ErrConfigInvalid, err)
+		return cfg, res, fmt.Errorf("%w:\n%w", ErrConfigInvalid, err)
 	}
 	res.Snapshot = snap
-	if dryRun {
-		return res, nil
-	}
-	res.Engine, err = eng.Apply(ctx, snap)
+	return cfg, res, nil
+}
+
+// recordApply records the revision of an apply the engine answered and audits it; a rejection is an error.
+func recordApply(ctx context.Context, st *store.Store, user, note string, cfg store.Config, res *ApplyResult) error {
+	var err error
+	res.Revision, err = st.AddRevision(ctx, newRevision(user, note, cfg, res.Snapshot, res.Warnings, res.Engine))
 	if err != nil {
-		return res, fmt.Errorf("%w: %w", ErrEngineUnreachable, err)
-	}
-	res.Revision, err = st.AddRevision(ctx, newRevision(user, note, cfg, snap, warns, res.Engine))
-	if err != nil {
-		return res, err
+		return err
 	}
 	if !res.Engine.OK {
-		_ = st.Audit(ctx, user, "apply.rejected", fmt.Sprintf("revision %d", res.Revision), "", snap.Hash)
-		return res, fmt.Errorf("%w: %s", ErrEngineRejected, res.Engine.Error)
+		_ = st.Audit(ctx, user, "apply.rejected", fmt.Sprintf("revision %d", res.Revision), "", res.Snapshot.Hash)
+		return fmt.Errorf("%w: %s", ErrEngineRejected, res.Engine.Error)
 	}
-	_ = st.Audit(ctx, user, "apply", fmt.Sprintf("revision %d", res.Revision), "", snap.Hash)
-	return res, nil
+	_ = st.Audit(ctx, user, "apply", fmt.Sprintf("revision %d", res.Revision), "", res.Snapshot.Hash)
+	return nil
 }
 
 // newRevision is the record of an apply the engine answered: the configuration that was compiled, the snapshot,
@@ -111,31 +124,56 @@ type StatusEngine interface {
 // snapshot. Anything else (engine runs something else, configuration changed but not applied) is left alone.
 // Returns the new revision or 0.
 func Refresh(ctx context.Context, st *store.Store, eng StatusEngine, note string) (int64, error) {
-	revs, err := st.Revisions(ctx, 1)
-	if err != nil || len(revs) == 0 {
+	rev, ok, err := latestRevision(ctx, st)
+	if err != nil || !ok {
 		return 0, err
 	}
-	rev, err := st.RevisionByID(ctx, revs[0].ID)
-	if err != nil {
-		return 0, err
-	}
-	status, err := eng.Status(ctx)
-	if err != nil {
-		return 0, err
-	}
-	if !rev.AppliedOK || status.SnapshotHash != rev.Hash {
-		return 0, nil
-	}
-	same, err := sameConfig(ctx, st, rev)
-	if err != nil || !same {
-		return 0, err
-	}
-	dry, err := Apply(ctx, st, eng, "", "", true)
-	if err != nil || dry.Snapshot.Hash == rev.Hash {
+	outdated, err := outdatedSnapshot(ctx, st, eng, rev)
+	if err != nil || !outdated {
 		return 0, err
 	}
 	res, err := Apply(ctx, st, eng, "system", note, false)
 	return res.Revision, err
+}
+
+// latestRevision returns the newest revision with its configuration; ok is false when there is none.
+func latestRevision(ctx context.Context, st *store.Store) (rev store.Revision, ok bool, err error) {
+	revs, err := st.Revisions(ctx, 1)
+	if err != nil || len(revs) == 0 {
+		return rev, false, err
+	}
+	rev, err = st.RevisionByID(ctx, revs[0].ID)
+	return rev, err == nil, err
+}
+
+// outdatedSnapshot reports whether rev is what runs and what is configured, but compiling it now gives another
+// snapshot: the case Refresh applies again.
+func outdatedSnapshot(ctx context.Context, st *store.Store, eng StatusEngine, rev store.Revision) (bool, error) {
+	if running, err := runsRevision(ctx, eng, rev); err != nil || !running {
+		return false, err
+	}
+	if same, err := sameConfig(ctx, st, rev); err != nil || !same {
+		return false, err
+	}
+	return compilesDifferently(ctx, st, eng, rev)
+}
+
+// compilesDifferently reports whether compiling the configuration now gives another snapshot than rev.
+func compilesDifferently(ctx context.Context, st *store.Store, eng Engine, rev store.Revision) (bool, error) {
+	dry, err := Apply(ctx, st, eng, "", "", true)
+	if err != nil {
+		return false, err
+	}
+	return dry.Snapshot.Hash != rev.Hash, nil
+}
+
+// runsRevision reports whether the engine runs the snapshot of rev and rev was applied successfully.
+func runsRevision(ctx context.Context, eng StatusEngine, rev store.Revision) (bool, error) {
+	status, err := eng.Status(ctx)
+	if err != nil {
+		return false, err
+	}
+	return rev.AppliedOK && status.SnapshotHash == rev.Hash, nil
 }
 
 // sameConfig reports whether the active configuration is still the one the revision recorded. A revision whose

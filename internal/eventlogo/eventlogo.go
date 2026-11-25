@@ -51,14 +51,7 @@ func Process(data []byte) (Logo, error) {
 	if err != nil {
 		return Logo{}, err
 	}
-	b := src.Bounds()
-	img := image.NewRGBA(image.Rect(0, 0, b.Dx(), b.Dy())) // 8 bit, alpha-premultiplied: right for averaging
-	draw.Draw(img, img.Bounds(), src, b.Min, draw.Src)
-	if long := max(b.Dx(), b.Dy()); long > Side {
-		w := max(1, (b.Dx()*Side+long/2)/long)
-		h := max(1, (b.Dy()*Side+long/2)/long)
-		img = shrink(img, w, h)
-	}
+	img := fitted(src)
 	var out bytes.Buffer
 	enc := png.Encoder{CompressionLevel: png.BestCompression}
 	if err := enc.Encode(&out, img); err != nil {
@@ -68,31 +61,56 @@ func Process(data []byte) (Logo, error) {
 	return Logo{PNG: out.Bytes(), Hash: hex.EncodeToString(sum[:]), Width: img.Bounds().Dx(), Height: img.Bounds().Dy()}, nil
 }
 
+// fitted copies src into an RGBA picture, scaled down to at most Side pixels on its longer side.
+func fitted(src image.Image) *image.RGBA {
+	b := src.Bounds()
+	img := image.NewRGBA(image.Rect(0, 0, b.Dx(), b.Dy())) // 8 bit, alpha-premultiplied: right for averaging
+	draw.Draw(img, img.Bounds(), src, b.Min, draw.Src)
+	long := max(b.Dx(), b.Dy())
+	if long <= Side {
+		return img
+	}
+	w := max(1, (b.Dx()*Side+long/2)/long)
+	h := max(1, (b.Dy()*Side+long/2)/long)
+	return shrink(img, w, h)
+}
+
 // accepted reports whether a decoded format is one of the accepted input formats.
 func accepted(format string) bool { return format == "png" || format == "jpeg" }
 
 // decodeUpload decodes a PNG or JPEG upload. The header is checked first: the size bounds the memory a small file
 // can ask for before the pixels are decoded, and the decoded picture must have the size its header announced.
 func decodeUpload(data []byte) (image.Image, error) {
-	cfg, format, err := image.DecodeConfig(bytes.NewReader(data))
-	if err != nil || !accepted(format) || !hasPixels(cfg) {
-		return nil, ErrFormat
-	}
-	if cfg.Width > MaxSide || cfg.Height > MaxSide {
-		return nil, ErrTooWide
+	cfg, err := decodeHeader(data)
+	if err != nil {
+		return nil, err
 	}
 	src, format, err := image.Decode(bytes.NewReader(data))
-	if err != nil || !accepted(format) {
-		return nil, ErrFormat
-	}
-	if b := src.Bounds(); b.Dx() != cfg.Width || b.Dy() != cfg.Height {
+	if err != nil || !accepted(format) || src.Bounds().Size() != image.Pt(cfg.Width, cfg.Height) {
 		return nil, ErrFormat
 	}
 	return src, nil
 }
 
-// hasPixels reports whether a header announces a picture of at least one pixel.
-func hasPixels(cfg image.Config) bool { return cfg.Width >= 1 && cfg.Height >= 1 }
+// decodeHeader reads the header of a PNG or JPEG upload and checks the size it announces.
+func decodeHeader(data []byte) (image.Config, error) {
+	cfg, format, err := image.DecodeConfig(bytes.NewReader(data))
+	if err != nil || !accepted(format) {
+		return cfg, ErrFormat
+	}
+	return cfg, checkSize(cfg)
+}
+
+// checkSize accepts a picture of at least one pixel and at most MaxSide pixels on either side.
+func checkSize(cfg image.Config) error {
+	if cfg.Width < 1 || cfg.Height < 1 {
+		return ErrFormat
+	}
+	if cfg.Width > MaxSide || cfg.Height > MaxSide {
+		return ErrTooWide
+	}
+	return nil
+}
 
 // shrink scales src down to w x h by area averaging: every target pixel is the mean of the source area it
 // covers, partly covered source pixels count by their share. Horizontal pass, then vertical.

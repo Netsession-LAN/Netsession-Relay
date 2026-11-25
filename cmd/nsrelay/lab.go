@@ -106,16 +106,7 @@ func labSnapshot(args []string, stdout, stderr io.Writer) int {
 		fmt.Fprintln(stderr, "-sources:", err)
 		return 2
 	}
-	var ids []string
-	if *games != "" {
-		ids = strings.Split(*games, ",")
-	}
-	var limits compile.Limits
-	if *stormPPS > 0 {
-		limits = compile.DefaultLimits
-		limits.StormPPS = *stormPPS
-	}
-	s, warns, err := lab.SnapshotLimited(*parent, *mode, *relayHost, filter, limits, ids...)
+	s, warns, err := lab.SnapshotLimited(*parent, *mode, *relayHost, filter, labLimits(*stormPPS), labGames(*games)...)
 	if err != nil {
 		fmt.Fprintln(stderr, err)
 		return 1
@@ -128,6 +119,25 @@ func labSnapshot(args []string, stdout, stderr io.Writer) int {
 	}
 	fmt.Fprintf(stdout, "lab snapshot %s: %d VLANs, %d rules, %d warnings\n", s.Hash[:12], len(s.VLANs), len(s.Rules), len(warns))
 	return 0
+}
+
+// labGames splits the -games flag; empty means the defaults of the game database.
+func labGames(games string) []string {
+	if games == "" {
+		return nil
+	}
+	return strings.Split(games, ",")
+}
+
+// labLimits are the engine limits for the -storm-pps flag: the defaults with that storm brake limit, or the zero
+// value (the engine's defaults) for 0.
+func labLimits(stormPPS int) compile.Limits {
+	if stormPPS <= 0 {
+		return compile.Limits{}
+	}
+	limits := compile.DefaultLimits
+	limits.StormPPS = stormPPS
+	return limits
 }
 
 // labBeacon sends relay beacons the way an attacker in a game VLAN would: unsigned, active, started long ago,
@@ -179,7 +189,7 @@ func labSend(args []string, _, stderr io.Writer) int {
 	if err := fs.Parse(args); err != nil {
 		return 2
 	}
-	o := lab.SendOptions{Iface: *iface, SrcPort: uint16(*sport), DstPort: uint16(*dport), Payload: []byte(*payload),
+	o := lab.SendOptions{Iface: *iface, SrcPort: uint16(*sport), DstPort: uint16(*dport),
 		Count: *count, Interval: *interval}
 	var err error
 	if o.Src, err = netip.ParseAddr(*src); err != nil {
@@ -190,20 +200,31 @@ func labSend(args []string, _, stderr io.Writer) int {
 		fmt.Fprintln(stderr, "-dst:", err)
 		return 2
 	}
-	if *payloadHex != "" {
-		if o.Payload, err = hex.DecodeString(*payloadHex); err != nil {
-			fmt.Fprintln(stderr, "-payload-hex:", err)
-			return 2
-		}
-	}
-	if *size > 0 {
-		o.Payload = make([]byte, *size)
+	if o.Payload, err = labPayload(*payload, *payloadHex, *size); err != nil {
+		fmt.Fprintln(stderr, "-payload-hex:", err)
+		return 2
 	}
 	if err := lab.Send(o); err != nil {
 		fmt.Fprintln(stderr, err)
 		return 1
 	}
 	return 0
+}
+
+// labPayload is the payload of lab send: the text, or the hex payload instead, or size zero bytes instead of
+// either. Only the hex payload can be invalid.
+func labPayload(text, hexText string, size int) ([]byte, error) {
+	b := []byte(text)
+	if hexText != "" {
+		var err error
+		if b, err = hex.DecodeString(hexText); err != nil {
+			return nil, err
+		}
+	}
+	if size > 0 {
+		b = make([]byte, size)
+	}
+	return b, nil
 }
 
 // labA2S runs a fake Steam/Source server for the server probe case; fails if no info answer was sent.
@@ -258,12 +279,17 @@ func labExpect(args []string, stdout, stderr io.Writer) int {
 		return 2
 	}
 	got, err := lab.Expect(o)
-	for _, f := range got {
-		fmt.Fprintf(stdout, "%s:%d -> %s:%d len=%d ttl=%d srcmac=%s\n", f.Src, f.SrcPort, f.Dst, f.DstPort, len(f.Payload), f.TTL, f.SrcMAC)
-	}
+	printFrames(stdout, got)
 	if err != nil {
 		fmt.Fprintln(stderr, err)
 		return 1
 	}
 	return 0
+}
+
+// printFrames prints one line per received frame: addresses, payload length, TTL and source MAC.
+func printFrames(w io.Writer, frames []pkt.Frame) {
+	for _, f := range frames {
+		fmt.Fprintf(w, "%s:%d -> %s:%d len=%d ttl=%d srcmac=%s\n", f.Src, f.SrcPort, f.Dst, f.DstPort, len(f.Payload), f.TTL, f.SrcMAC)
+	}
 }

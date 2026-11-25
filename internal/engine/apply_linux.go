@@ -15,25 +15,9 @@ func (e *Engine) apply(s *compile.Snapshot) error {
 	e.mu.Lock()
 	defer e.mu.Unlock()
 
-	if err := e.checkIfaces(s); err != nil { // also for the stored snapshot at start and on SIGHUP
-		return err
-	}
-	links, err := ensureLinks(s)
+	tb, links, err := e.setUpLinks(s)
 	if err != nil {
 		return err
-	}
-	tb, err := NewTable(s, links.macs())
-	if err != nil {
-		return err
-	}
-	// The interfaces exist now: shield them before anything is received or sent on them (no routing, host
-	// firewall, management routes). What cannot be done is reported, the relay works without it.
-	e.prepareHost(s)
-	for _, c := range tb.Clamped {
-		e.Log.Warn("snapshot limit outside the engine's bounds, corrected", "limit", c)
-	}
-	for i := range tb.VLANs {
-		tb.VLANs[i].Ifindex = links[tb.VLANs[i].VID].Index
 	}
 	starting, replaced, err := e.openReceivers(s, links)
 	if err != nil {
@@ -50,13 +34,42 @@ func (e *Engine) apply(s *compile.Snapshot) error {
 		e.Log.Warn("multicast membership", "err", err)
 	}
 	deleted := e.retire(replaced, links.names())
+	e.logApplied(s, old, deleted)
+	return nil
+}
+
+// logApplied logs the applied snapshot s, the one it replaced (old; nil at the start) and the removed interfaces.
+func (e *Engine) logApplied(s *compile.Snapshot, old *state, deleted []string) {
 	oldHash := ""
 	if old != nil {
 		oldHash = old.table.Snapshot.Hash
 	}
 	e.Log.Info("snapshot applied", "hash", short(s.Hash), "previous", short(oldHash), "mode", s.Mode,
 		"vlans", len(s.VLANs), "rules", len(s.Rules), "removed_links", deleted)
-	return nil
+}
+
+// setUpLinks checks the interface policy, creates or adopts the interfaces of the snapshot, shields them and
+// builds the lookup table for them.
+func (e *Engine) setUpLinks(s *compile.Snapshot) (*Table, vlanLinks, error) {
+	if err := e.checkIfaces(s); err != nil { // also for the stored snapshot at start and on SIGHUP
+		return nil, nil, err
+	}
+	links, err := ensureLinks(s)
+	if err != nil {
+		return nil, nil, err
+	}
+	tb, err := NewTable(s, links.macs())
+	if err != nil {
+		return nil, nil, err
+	}
+	// The interfaces exist now: shield them before anything is received or sent on them (no routing, host
+	// firewall, management routes). What cannot be done is reported, the relay works without it.
+	e.prepareHost(s)
+	for _, c := range tb.Clamped {
+		e.Log.Warn("snapshot limit outside the engine's bounds, corrected", "limit", c)
+	}
+	links.setIfindexes(tb)
+	return tb, links, nil
 }
 
 // vlanLinks maps VLAN ID -> the interface of the VLAN.
@@ -81,6 +94,13 @@ func (links vlanLinks) macs() map[int]pkt.MAC {
 		out[vid] = l.MAC
 	}
 	return out
+}
+
+// setIfindexes records the interface index of every VLAN of the table.
+func (links vlanLinks) setIfindexes(tb *Table) {
+	for i := range tb.VLANs {
+		tb.VLANs[i].Ifindex = links[tb.VLANs[i].VID].Index
+	}
 }
 
 func (links vlanLinks) names() map[string]bool {

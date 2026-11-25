@@ -137,18 +137,24 @@ func foreignRelayHint(mode string) string {
 // add merges one alarm instance into its group. The group counts as acknowledged only while every instance is;
 // By names the first one who acknowledged. Last and Detail come from the most recent instance.
 func (g *alarmGroup) add(a engineapi.Alarm) {
-	if len(g.Keys) == 0 {
-		g.Acked, g.By = true, a.AckedBy
-	}
-	if a.AckedAt.IsZero() {
-		g.Acked = false // one open alarm keeps the whole group open
-	} else if g.By == "" {
-		g.By = a.AckedBy
-	}
+	g.addAck(a)
 	g.Keys = append(g.Keys, a.Key)
 	g.Count += a.Count
 	if a.Last.After(g.Last) || g.Detail == "" {
 		g.Last, g.Detail = a.Last, a.Detail
+	}
+}
+
+// addAck merges the acknowledgement of one instance (before its key is added): one open alarm keeps the whole
+// group open, and By stays the first one who acknowledged.
+func (g *alarmGroup) addAck(a engineapi.Alarm) {
+	if len(g.Keys) == 0 {
+		g.Acked, g.By = true, a.AckedBy
+	}
+	if a.AckedAt.IsZero() {
+		g.Acked = false
+	} else if g.By == "" {
+		g.By = a.AckedBy
 	}
 }
 

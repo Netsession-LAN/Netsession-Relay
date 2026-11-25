@@ -41,29 +41,34 @@ type AgentConfig struct {
 
 // ValidateAgent checks the configuration (at least one of v2c and v3).
 func ValidateAgent(c AgentConfig) error {
-	host, port, err := net.SplitHostPort(c.Listen)
+	if err := validateAgentListen(c.Listen); err != nil {
+		return err
+	}
+	return c.versionError()
+}
+
+// validateAgentListen accepts a host:port on a concrete address: the agent must not listen on every interface.
+func validateAgentListen(listen string) error {
+	host, port, err := net.SplitHostPort(listen)
 	if err != nil || port == "" {
-		return fmt.Errorf("listen address %q", c.Listen)
+		return fmt.Errorf("listen address %q", listen)
 	}
 	if a, err := netip.ParseAddr(host); err != nil || a.IsUnspecified() {
 		return errors.New("listen address must be the MGMT address, not 0.0.0.0")
 	}
-	if !c.V2c && c.V3User == "" {
-		return ErrNoVersion
-	}
+	return nil
+}
+
+// versionError checks that v2c or v3 is configured, each with its credentials.
+func (c AgentConfig) versionError() error {
 	if c.V2c && c.Community == "" {
 		return ErrCommunityMissing
 	}
 	if c.V3User != "" {
-		if _, err := authProto(c.AuthProto); err != nil {
-			return err
-		}
-		if _, err := privProto(c.PrivProto); err != nil {
-			return err
-		}
-		if len(c.AuthPass) < 8 || len(c.PrivPass) < 8 {
-			return ErrPasswordShort
-		}
+		return validateUSM(c.AuthProto, c.AuthPass, c.PrivProto, c.PrivPass)
+	}
+	if !c.V2c {
+		return ErrNoVersion
 	}
 	return nil
 }
@@ -101,18 +106,8 @@ func StartAgent(c AgentConfig, view func() *View) (*Agent, error) {
 		return nil, err
 	}
 	a := &Agent{c: c, view: view, start: time.Now(), done: make(chan struct{}), rate: map[netip.Addr]*bucket{}}
-	params := &gosnmp.GoSNMP{Version: gosnmp.Version2c, Timeout: 2 * time.Second, Logger: gosnmp.NewLogger(log.New(io.Discard, "", 0))}
-	if c.V3User != "" {
-		ap, _ := authProto(c.AuthProto)
-		pp, _ := privProto(c.PrivProto)
-		eid, _ := hex.DecodeString(c.EngineID)
-		params.Version, params.SecurityModel, params.MsgFlags = gosnmp.Version3, gosnmp.UserSecurityModel, gosnmp.AuthPriv
-		params.SecurityParameters = &gosnmp.UsmSecurityParameters{UserName: c.V3User, AuthenticationProtocol: ap,
-			AuthenticationPassphrase: c.AuthPass, PrivacyProtocol: pp, PrivacyPassphrase: c.PrivPass,
-			AuthoritativeEngineID: string(eid), AuthoritativeEngineBoots: c.Boots}
-	}
 	tl := gosnmp.NewTrapListener()
-	tl.Params = params
+	tl.Params = listenerParams(c)
 	tl.OnNewTrap = a.handle
 	a.tl = tl
 	errc := make(chan error, 1)
@@ -120,17 +115,39 @@ func StartAgent(c AgentConfig, view func() *View) (*Agent, error) {
 		defer close(a.done)
 		errc <- tl.Listen(c.Listen)
 	}()
+	if err := waitListening(tl, errc); err != nil {
+		return nil, err
+	}
+	return a, nil
+}
+
+// listenerParams are the protocol settings of the agent's listener: v2c, and v3 with the agent as the
+// authoritative engine when a v3 user is configured.
+func listenerParams(c AgentConfig) *gosnmp.GoSNMP {
+	params := &gosnmp.GoSNMP{Version: gosnmp.Version2c, Timeout: 2 * time.Second, Logger: gosnmp.NewLogger(log.New(io.Discard, "", 0))}
+	if c.V3User != "" {
+		eid, _ := hex.DecodeString(c.EngineID)
+		sp := newUSM(c.V3User, c.AuthProto, c.AuthPass, c.PrivProto, c.PrivPass)
+		sp.AuthoritativeEngineID, sp.AuthoritativeEngineBoots = string(eid), c.Boots
+		params.Version, params.SecurityModel, params.MsgFlags = gosnmp.Version3, gosnmp.UserSecurityModel, gosnmp.AuthPriv
+		params.SecurityParameters = sp
+	}
+	return params
+}
+
+// waitListening waits until the listener has bound its socket, failed, or not started within 3 s.
+func waitListening(tl *gosnmp.TrapListener, errc <-chan error) error {
 	select {
 	case <-tl.Listening():
-		return a, nil
+		return nil
 	case err := <-errc:
 		if err == nil {
 			err = errors.New("listener stopped")
 		}
-		return nil, err
+		return err
 	case <-time.After(3 * time.Second):
 		tl.Close()
-		return nil, errors.New("SNMP listener did not start")
+		return errors.New("SNMP listener did not start")
 	}
 }
 
@@ -140,10 +157,17 @@ func (a *Agent) Close() {
 	<-a.done
 }
 
+// allowed reports whether a request from src is answered: the source is in the allow list and within its rate.
 func (a *Agent) allowed(src netip.Addr) bool {
-	if len(a.c.Allow) > 0 && !slices.ContainsFunc(a.c.Allow, func(p netip.Prefix) bool { return p.Contains(src) }) {
-		return false
-	}
+	return a.inAllowList(src) && a.takeToken(src)
+}
+
+func (a *Agent) inAllowList(src netip.Addr) bool {
+	return len(a.c.Allow) == 0 || slices.ContainsFunc(a.c.Allow, func(p netip.Prefix) bool { return p.Contains(src) })
+}
+
+// takeToken takes one request from the token bucket of src (ratePerSource per second).
+func (a *Agent) takeToken(src netip.Addr) bool {
 	a.rateMu.Lock()
 	defer a.rateMu.Unlock()
 	now := time.Now()
@@ -187,16 +211,20 @@ func (a *Agent) authorized(p *gosnmp.SnmpPacket) bool {
 	case gosnmp.Version2c, gosnmp.Version1:
 		return a.c.V2c && subtle.ConstantTimeCompare([]byte(p.Community), []byte(a.c.Community)) == 1
 	case gosnmp.Version3:
-		if a.c.V3User == "" {
-			return false
-		}
-		if sp, ok := p.SecurityParameters.(*gosnmp.UsmSecurityParameters); ok {
-			sp.AuthoritativeEngineBoots = a.c.Boots
-			sp.AuthoritativeEngineTime = uint32(time.Since(a.start).Seconds())
-		}
-		return true
+		return a.authorizedV3(p)
 	}
 	return false
+}
+
+func (a *Agent) authorizedV3(p *gosnmp.SnmpPacket) bool {
+	if a.c.V3User == "" {
+		return false
+	}
+	if sp, ok := p.SecurityParameters.(*gosnmp.UsmSecurityParameters); ok {
+		sp.AuthoritativeEngineBoots = a.c.Boots
+		sp.AuthoritativeEngineTime = uint32(time.Since(a.start).Seconds())
+	}
+	return true
 }
 
 // answer fills the variables (and for SET the error) of the response to request p; false for request types
@@ -240,15 +268,25 @@ func (a *Agent) bulk(es []entry, p *gosnmp.SnmpPacket) []gosnmp.SnmpPDU {
 	}
 	size := 0
 	for r := 0; r < reps && len(cursors) > 0; r++ {
-		for i, c := range cursors {
-			pdu := a.next(es, c)
-			size += pduSize(pdu)
-			if size > maxResponse && len(out) > 0 {
-				return out
-			}
-			out = append(out, pdu)
-			cursors[i] = parseOID(pdu.Name)
+		var full bool
+		if out, full = a.bulkRow(es, cursors, out, &size); full {
+			break
 		}
 	}
 	return out
+}
+
+// bulkRow appends the next variable of every repeater to out and moves the cursors on. full reports that the
+// response reached maxResponse bytes (size counts them across rows); the variable that did not fit is left out.
+func (a *Agent) bulkRow(es []entry, cursors [][]int, out []gosnmp.SnmpPDU, size *int) (_ []gosnmp.SnmpPDU, full bool) {
+	for i, c := range cursors {
+		pdu := a.next(es, c)
+		*size += pduSize(pdu)
+		if *size > maxResponse && len(out) > 0 {
+			return out, true
+		}
+		out = append(out, pdu)
+		cursors[i] = parseOID(pdu.Name)
+	}
+	return out, false
 }

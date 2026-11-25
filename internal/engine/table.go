@@ -133,13 +133,13 @@ func prefixesWithin(ps []netip.Prefix, network netip.Prefix) []netip.Prefix {
 // the ingress VLAN itself.
 func flowTargets(flows []compile.Edge, src string, in int, groupVLANs map[string][]int) []int {
 	var out []int
-	seen := map[int]bool{}
+	seen := map[int]bool{in: true}
 	for _, e := range flows {
 		if e.Src != src {
 			continue
 		}
 		for _, v := range groupVLANs[e.Dst] {
-			if v != in && !seen[v] {
+			if !seen[v] {
 				seen[v] = true
 				out = append(out, v)
 			}
@@ -174,9 +174,9 @@ func (t *Table) indexBroadcast(rt *ruleRT, ports []uint16) error {
 }
 
 func (t *Table) indexMulticast(rt *ruleRT, ports []uint16) error {
-	g, err := netip.ParseAddr(rt.Group)
-	if err != nil || !g.Is4() || !g.IsMulticast() {
-		return fmt.Errorf("bad group %q", rt.Group)
+	g, err := parseMulticastGroup(rt.Group)
+	if err != nil {
+		return err
 	}
 	rt.group = g
 	for _, p := range ports {
@@ -187,6 +187,15 @@ func (t *Table) indexMulticast(rt *ruleRT, ports []uint16) error {
 		t.multicast[k] = rt
 	}
 	return nil
+}
+
+// parseMulticastGroup parses the IPv4 multicast group of a rule.
+func parseMulticastGroup(s string) (netip.Addr, error) {
+	g, err := netip.ParseAddr(s)
+	if err != nil || !g.Is4() || !g.IsMulticast() {
+		return netip.Addr{}, fmt.Errorf("bad group %q", s)
+	}
+	return g, nil
 }
 
 // RuleStats is a per-rule counter snapshot.

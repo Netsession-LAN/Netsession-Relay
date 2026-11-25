@@ -160,6 +160,11 @@ func (z *zabbixText) item(it zItem) {
 	z.w("          tags:")
 	z.w("            - tag: component")
 	z.w("              value: relay")
+	z.triggers(it)
+}
+
+// triggers writes the triggers of an item (nothing when it has none).
+func (z *zabbixText) triggers(it zItem) {
 	if len(it.triggers) == 0 {
 		return
 	}

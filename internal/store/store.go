@@ -80,22 +80,37 @@ func (s *Store) migrate(ctx context.Context, last string) error {
 		return err
 	}
 	sort.Strings(names)
+	return s.applyPending(ctx, names, last)
+}
+
+// applyPending applies the migrations of names that are not recorded yet, in this order, and stops after the
+// migration last (see isLastMigration) if it was among them.
+func (s *Store) applyPending(ctx context.Context, names []string, last string) error {
 	for _, name := range names {
-		applied, err := s.migrationApplied(ctx, name)
+		ran, err := s.applyIfPending(ctx, name)
 		if err != nil {
 			return err
 		}
-		if applied {
-			continue
-		}
-		if err := s.applyMigration(ctx, name); err != nil {
-			return err
-		}
-		if last != "" && strings.HasPrefix(path.Base(name), last) {
+		if ran && isLastMigration(name, last) {
 			break
 		}
 	}
 	return nil
+}
+
+// applyIfPending applies the migration file name unless it is recorded as applied; ran reports that it ran now.
+func (s *Store) applyIfPending(ctx context.Context, name string) (ran bool, err error) {
+	applied, err := s.migrationApplied(ctx, name)
+	if err != nil || applied {
+		return false, err
+	}
+	return true, s.applyMigration(ctx, name)
+}
+
+// isLastMigration reports whether the migration file name is the one openUpTo stops after: its base name starts
+// with last ("" stops nowhere).
+func isLastMigration(name, last string) bool {
+	return last != "" && strings.HasPrefix(path.Base(name), last)
 }
 
 // migrationApplied reports whether the migration file name is recorded as applied.
@@ -127,30 +142,44 @@ func (s *Store) applyMigration(ctx context.Context, name string) error {
 // all the migrations of this package need; a ";" at the end of a line inside a string literal would break it
 // (TestSplitSQLShippedMigrations checks every shipped file).
 func splitSQL(body string) []string {
-	var out []string
-	var cur strings.Builder
-	inTrigger := false
+	var sp sqlSplitter
 	for _, line := range strings.Split(body, "\n") {
-		trimmed := strings.TrimSpace(line)
-		if strings.HasPrefix(trimmed, "--") || trimmed == "" {
-			continue
-		}
-		cur.WriteString(line)
-		cur.WriteString("\n")
-		upper := strings.ToUpper(trimmed)
-		if strings.HasPrefix(upper, "CREATE TRIGGER") {
-			inTrigger = true
-		}
-		if strings.HasSuffix(trimmed, ";") && (!inTrigger || strings.HasSuffix(upper, "END;")) {
-			out = append(out, cur.String())
-			cur.Reset()
-			inTrigger = false
-		}
+		sp.add(line)
 	}
-	if strings.TrimSpace(cur.String()) != "" {
-		out = append(out, cur.String())
+	if strings.TrimSpace(sp.cur.String()) != "" {
+		sp.out = append(sp.out, sp.cur.String())
 	}
-	return out
+	return sp.out
+}
+
+// sqlSplitter collects the lines of the current statement for splitSQL.
+type sqlSplitter struct {
+	out       []string
+	cur       strings.Builder
+	inTrigger bool
+}
+
+func (sp *sqlSplitter) add(line string) {
+	trimmed := strings.TrimSpace(line)
+	if strings.HasPrefix(trimmed, "--") || trimmed == "" {
+		return
+	}
+	sp.cur.WriteString(line)
+	sp.cur.WriteString("\n")
+	upper := strings.ToUpper(trimmed)
+	if strings.HasPrefix(upper, "CREATE TRIGGER") {
+		sp.inTrigger = true
+	}
+	if sp.ends(trimmed, upper) {
+		sp.out = append(sp.out, sp.cur.String())
+		sp.cur.Reset()
+		sp.inTrigger = false
+	}
+}
+
+// ends reports whether the line ends the current statement: it ends in ";", and inside a trigger it is the END.
+func (sp *sqlSplitter) ends(trimmed, upper string) bool {
+	return strings.HasSuffix(trimmed, ";") && (!sp.inTrigger || strings.HasSuffix(upper, "END;"))
 }
 
 func (s *Store) ts() string { return s.Now().UTC().Format(time.RFC3339Nano) }

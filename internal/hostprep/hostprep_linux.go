@@ -31,21 +31,34 @@ func prepare(s *compile.Snapshot, rewrite bool) []Issue {
 	}
 	plan := PlanFor(s, protected, netif.HasIPv4)
 	issues, sysctlOK := hardenLinks(plan.Ifaces)
-	var fwErr error
-	if rewrite || !firewallCurrent(plan.Ifaces) {
-		fwErr = syncFirewall(plan.Ifaces)
-	}
-	if fwErr != nil {
-		issues = append(issues, Issue{IssueFirewall, fwErr.Error()})
-		// neither the sysctl settings nor the firewall stop the host from routing between relay interfaces
-		if len(plan.Ifaces) > 0 && !sysctlOK && forwardingOn() {
-			issues = append(issues, Issue{IssueForward, "net.ipv4.ip_forward = 1"})
-		}
-	}
+	issues = append(issues, firewallIssues(plan.Ifaces, rewrite, sysctlOK)...)
 	if is := syncMgmtRoutes(plan); is != nil {
 		issues = append(issues, *is)
 	}
 	return issues
+}
+
+// firewallIssues brings the firewall table in place (with rewrite always, else only when it is missing or
+// differs) and reports what failed.
+func firewallIssues(ifaces []string, rewrite, sysctlOK bool) []Issue {
+	if !rewrite && firewallCurrent(ifaces) {
+		return nil
+	}
+	err := syncFirewall(ifaces)
+	if err == nil {
+		return nil
+	}
+	issues := []Issue{{IssueFirewall, err.Error()}}
+	if mayRoute(ifaces, sysctlOK) {
+		issues = append(issues, Issue{IssueForward, "net.ipv4.ip_forward = 1"})
+	}
+	return issues
+}
+
+// mayRoute reports, once the firewall failed, whether the host may route between relay interfaces: neither the
+// sysctl settings nor the firewall stop it.
+func mayRoute(ifaces []string, sysctlOK bool) bool {
+	return len(ifaces) > 0 && !sysctlOK && forwardingOn()
 }
 
 // hardenLinks switches routing, ARP and IPv6 off on the relay interfaces. It returns the sysctl and IPv6 issues
@@ -60,13 +73,16 @@ func hardenLinks(ifaces []string) (issues []Issue, sysctlOK bool) {
 			v6Err = append(v6Err, name+": "+err.Error())
 		}
 	}
-	if len(sysErr) > 0 {
-		issues = append(issues, Issue{IssueSysctl, strings.Join(sysErr, "; ")})
-	}
-	if len(v6Err) > 0 {
-		issues = append(issues, Issue{IssueIPv6, strings.Join(v6Err, "; ")})
-	}
+	issues = append(joinedIssue(IssueSysctl, sysErr), joinedIssue(IssueIPv6, v6Err)...)
 	return issues, len(sysErr) == 0
+}
+
+// joinedIssue is one issue with all errors of a kind, none without errors.
+func joinedIssue(code string, errs []string) []Issue {
+	if len(errs) == 0 {
+		return nil
+	}
+	return []Issue{{code, strings.Join(errs, "; ")}}
 }
 
 // Remove takes back what Apply set up on the host: the nftables table of the engine, the policy rules with the

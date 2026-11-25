@@ -192,13 +192,7 @@ func events(w http.ResponseWriter, r *http.Request, e Engine) {
 	defer t.Stop()
 	for {
 		st := e.Status()
-		for _, a := range st.Alarms {
-			k := a.Kind + "|" + a.Key
-			if seen[k] != a.Count {
-				seen[k] = a.Count
-				send(w, "alarm", a)
-			}
-		}
+		sendNewAlarms(w, st.Alarms, seen)
 		st.Alarms = nil
 		send(w, "status", st)
 		fl.Flush()
@@ -206,6 +200,17 @@ func events(w http.ResponseWriter, r *http.Request, e Engine) {
 		case <-r.Context().Done():
 			return
 		case <-t.C:
+		}
+	}
+}
+
+// sendNewAlarms sends the alarms that are new or occurred again since the last call; seen holds the counts sent.
+func sendNewAlarms(w io.Writer, alarms []Alarm, seen map[string]uint64) {
+	for _, a := range alarms {
+		k := a.Kind + "|" + a.Key
+		if seen[k] != a.Count {
+			seen[k] = a.Count
+			send(w, "alarm", a)
 		}
 	}
 }

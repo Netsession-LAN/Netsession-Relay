@@ -190,15 +190,25 @@ func (e *Engine) Validate(s *compile.Snapshot) error {
 		return err
 	}
 	for _, v := range s.VLANs {
-		if v.Attach == compile.AttachTrunk {
-			if _, err := net.InterfaceByName(v.Parent); err != nil {
-				return fmt.Errorf("VLAN %d: trunk interface %q: %w", v.VID, v.Parent, err)
-			}
-		} else if _, err := net.InterfaceByName(v.Device); err != nil {
-			return fmt.Errorf("VLAN %d: interface %q: %w", v.VID, v.Device, err)
+		if err := checkIfaceExists(v); err != nil {
+			return err
 		}
 	}
 	return e.checkIfaces(s)
+}
+
+// checkIfaceExists checks that the interface a VLAN is set up on (its trunk or device) exists on the host.
+func checkIfaceExists(v compile.VLAN) error {
+	if v.Attach == compile.AttachTrunk {
+		if _, err := net.InterfaceByName(v.Parent); err != nil {
+			return fmt.Errorf("VLAN %d: trunk interface %q: %w", v.VID, v.Parent, err)
+		}
+		return nil
+	}
+	if _, err := net.InterfaceByName(v.Device); err != nil {
+		return fmt.Errorf("VLAN %d: interface %q: %w", v.VID, v.Device, err)
+	}
+	return nil
 }
 
 // checkIfaces applies the interface policy (CheckIfaces) with the host's current default routes.

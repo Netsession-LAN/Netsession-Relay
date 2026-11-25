@@ -3,6 +3,7 @@ package gamedb
 
 import (
 	"bytes"
+	"cmp"
 	"crypto/sha256"
 	"encoding/hex"
 	"encoding/json"
@@ -82,24 +83,12 @@ type Spec struct {
 // Effective returns the spec with defaults filled in. Source mode defaults to original for every game:
 // games that older relay setups ran with a rewritten source address work with the original address, too.
 func (s Spec) Effective() Spec {
-	if s.SourceMode == "" {
-		s.SourceMode = SourceOriginal
-	}
-	if s.DstMode == "" {
-		s.DstMode = DstKeep
-	}
-	if s.TTLMode == "" {
-		s.TTLMode = TTLKeep
-	}
-	if s.RatePPS == 0 {
-		s.RatePPS = DefaultRatePPS
-	}
-	if s.RateBurst == 0 {
-		s.RateBurst = DefaultRateBurst
-	}
-	if s.PayloadMax == 0 {
-		s.PayloadMax = DefaultPayloadMax
-	}
+	s.SourceMode = cmp.Or(s.SourceMode, SourceOriginal)
+	s.DstMode = cmp.Or(s.DstMode, DstKeep)
+	s.TTLMode = cmp.Or(s.TTLMode, TTLKeep)
+	s.RatePPS = cmp.Or(s.RatePPS, DefaultRatePPS)
+	s.RateBurst = cmp.Or(s.RateBurst, DefaultRateBurst)
+	s.PayloadMax = cmp.Or(s.PayloadMax, DefaultPayloadMax)
 	return s
 }
 

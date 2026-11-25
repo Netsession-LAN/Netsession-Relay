@@ -45,12 +45,8 @@ func (s *Store) SetGameEnabled(ctx context.Context, user, gameID string, on bool
 	}
 	return s.audited(ctx, func(tx *sql.Tx) (AuditEntry, error) {
 		e := AuditEntry{User: user, Action: action, Object: gameID}
-		var exists int
-		if err := tx.QueryRowContext(ctx, `SELECT count(*) FROM game WHERE id = ?`, gameID).Scan(&exists); err != nil {
+		if err := requireGame(ctx, tx, gameID); err != nil {
 			return e, err
-		}
-		if exists == 0 {
-			return e, fmt.Errorf("%w: game %q", ErrNotFound, gameID)
 		}
 		var err error
 		if on {
@@ -76,15 +72,32 @@ func (s *Store) SetGameProfile(ctx context.Context, user, gameID, profile string
 				return e, err
 			}
 		}
-		res, err := tx.ExecContext(ctx, `UPDATE event_game SET flow_profile = ? WHERE event_id = ? AND game_id = ? AND enabled = 1`, profile, ev, gameID)
-		if err != nil {
-			return e, err
-		}
-		if n, _ := res.RowsAffected(); n == 0 {
-			return e, fmt.Errorf("%w: game %q is not switched on", ErrNotFound, gameID)
-		}
-		return e, nil
+		return e, setEventGameProfile(ctx, tx, ev, gameID, profile)
 	})
+}
+
+// requireGame returns ErrNotFound when the game table has no game with this ID.
+func requireGame(ctx context.Context, tx *sql.Tx, gameID string) error {
+	var exists int
+	if err := tx.QueryRowContext(ctx, `SELECT count(*) FROM game WHERE id = ?`, gameID).Scan(&exists); err != nil {
+		return err
+	}
+	if exists == 0 {
+		return fmt.Errorf("%w: game %q", ErrNotFound, gameID)
+	}
+	return nil
+}
+
+// setEventGameProfile sets the flow profile of a game that is switched on in event ev.
+func setEventGameProfile(ctx context.Context, tx *sql.Tx, ev int64, gameID, profile string) error {
+	res, err := tx.ExecContext(ctx, `UPDATE event_game SET flow_profile = ? WHERE event_id = ? AND game_id = ? AND enabled = 1`, profile, ev, gameID)
+	if err != nil {
+		return err
+	}
+	if n, _ := res.RowsAffected(); n == 0 {
+		return fmt.Errorf("%w: game %q is not switched on", ErrNotFound, gameID)
+	}
+	return nil
 }
 
 // sourceList splits the stored source filter (nil when empty, so exports omit it).

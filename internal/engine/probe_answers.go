@@ -20,6 +20,25 @@ func (p *Prober) Reply(v *VLANRuntime, frame []byte, now time.Time) []byte {
 	}
 	p.mu.Lock()
 	defer p.mu.Unlock()
+	s := p.answering(&f, v.VID, now)
+	if s == nil {
+		return nil
+	}
+	s.Last, s.MAC = now, f.SrcMAC
+	s.Count++
+	return p.readAnswer(s, v, &f)
+}
+
+// Answer headers of the probed protocols.
+var (
+	a2sChallengeHeader = []byte{0xff, 0xff, 0xff, 0xff, 'A'}
+	a2sInfoHeader      = []byte{0xff, 0xff, 0xff, 0xff, 'I'}
+	q3InfoHeader       = []byte("\xff\xff\xff\xffinfoResponse")
+)
+
+// answering returns the server that sent f in answer to the current probe round (recorded on its first answer),
+// or nil: no round running (unsolicited), a port that was not probed, or the server table is full. p.mu is held.
+func (p *Prober) answering(f *pkt.Frame, vid int, now time.Time) *Server {
 	if p.roundAt.IsZero() || now.Sub(p.roundAt) > answerWindow {
 		return nil // no round running: unsolicited
 	}
@@ -27,26 +46,36 @@ func (p *Prober) Reply(v *VLANRuntime, frame []byte, now time.Time) []byte {
 	if rule == "" {
 		return nil // not a port we probed
 	}
-	s := p.server(rule, &f, v.VID, now)
-	if s == nil {
-		return nil
-	}
-	s.Last, s.MAC = now, f.SrcMAC
-	s.Count++
+	return p.server(rule, f, vid, now)
+}
+
+// readAnswer takes name, map and players from an info answer of server s, or returns the A2S_INFO request for an
+// A2S challenge. p.mu is held.
+func (p *Prober) readAnswer(s *Server, v *VLANRuntime, f *pkt.Frame) []byte {
 	pl := f.Payload
 	switch {
-	case len(pl) >= 9 && bytes.Equal(pl[:5], []byte{0xff, 0xff, 0xff, 0xff, 'A'}):
-		return p.askInfo(s, v, &f)
-	case len(pl) >= 6 && bytes.Equal(pl[:5], []byte{0xff, 0xff, 0xff, 0xff, 'I'}):
-		if a, ok := parseA2SInfo(pl[5:]); ok {
-			s.Name, s.Map, s.Game, s.Num, s.Max = a.name, a.mp, a.game, a.num, a.mx
-		}
-	case bytes.HasPrefix(pl, []byte("\xff\xff\xff\xffinfoResponse")):
-		if a, ok := parseQ3Info(pl[len("\xff\xff\xff\xffinfoResponse"):]); ok {
-			s.Name, s.Map, s.Num, s.Max = a.name, a.mp, a.num, a.mx
-		}
+	case len(pl) >= 9 && bytes.HasPrefix(pl, a2sChallengeHeader):
+		return p.askInfo(s, v, f)
+	case bytes.HasPrefix(pl, a2sInfoHeader):
+		s.readA2SInfo(pl[len(a2sInfoHeader):])
+	case bytes.HasPrefix(pl, q3InfoHeader):
+		s.readQ3Info(pl[len(q3InfoHeader):])
 	}
 	return nil
+}
+
+// readA2SInfo takes name, map, game and players from an A2S_INFO answer (after the header).
+func (s *Server) readA2SInfo(b []byte) {
+	if a, ok := parseA2SInfo(b); ok {
+		s.Name, s.Map, s.Game, s.Num, s.Max = a.name, a.mp, a.game, a.num, a.mx
+	}
+}
+
+// readQ3Info takes name, map and players from an id Tech 3 infoResponse (after the header).
+func (s *Server) readQ3Info(b []byte) {
+	if a, ok := parseQ3Info(b); ok {
+		s.Name, s.Map, s.Num, s.Max = a.name, a.mp, a.num, a.mx
+	}
 }
 
 // isProbeAnswer reports whether f is addressed to the probe of VLAN v and comes from inside the VLAN's network.
@@ -120,37 +149,21 @@ type a2sAnswer struct {
 
 // parseA2SInfo reads name, map, game and player counts of an A2S_INFO answer (after the 'I' header byte).
 func parseA2SInfo(b []byte) (a a2sAnswer, ok bool) {
-	var name, mp, game string
+	var str [4][]byte // NUL-terminated: name, map, folder, game
 	if len(b) < 1 {
 		return a, false
 	}
 	b = b[1:] // protocol
-	str := func() (string, bool) {
-		i := bytes.IndexByte(b, 0)
-		if i < 0 {
-			return "", false
+	for i := range str {
+		if str[i], b, ok = bytes.Cut(b, []byte{0}); !ok {
+			return a, false
 		}
-		s := string(b[:i])
-		b = b[i+1:]
-		return s, true
-	}
-	if name, ok = str(); !ok {
-		return a, false
-	}
-	if mp, ok = str(); !ok {
-		return a, false
-	}
-	if _, ok = str(); !ok { // folder
-		return a, false
-	}
-	if game, ok = str(); !ok {
-		return a, false
 	}
 	if len(b) < 4 {
 		return a, false
 	}
 	_ = binary.LittleEndian.Uint16(b[:2]) // app id
-	return a2sAnswer{name: clean(name), mp: clean(mp), game: clean(game), num: int(b[2]), mx: int(b[3])}, true
+	return a2sAnswer{name: clean(string(str[0])), mp: clean(string(str[1])), game: clean(string(str[3])), num: int(b[2]), mx: int(b[3])}, true
 }
 
 // parseQ3Info reads an id Tech 3 info string ("\hostname\x\mapname\y\clients\3\sv_maxclients\16").
@@ -186,7 +199,7 @@ func clean(s string) string {
 	r := []rune(s)
 	out := make([]rune, 0, len(r))
 	for _, c := range r {
-		if c >= 0x20 && c != 0x7f && c != 0xfffd {
+		if printable(c) {
 			out = append(out, c)
 		}
 		if len(out) >= 64 {
@@ -194,4 +207,9 @@ func clean(s string) string {
 		}
 	}
 	return string(out)
+}
+
+// printable reports whether c is shown as is: no control character and no replacement for invalid UTF-8.
+func printable(c rune) bool {
+	return c >= 0x20 && c != 0x7f && c != 0xfffd
 }

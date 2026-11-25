@@ -28,17 +28,28 @@ func (s *Server) rules(ctx context.Context, hash string) *ruleIndex {
 	if s.ruleIdx != nil && hash != "" && s.ruleIdx.hash == hash {
 		return s.ruleIdx
 	}
+	s.ruleIdx = newRuleIndex(hash, s.compiledRules(ctx))
+	return s.ruleIdx
+}
+
+// compiledRules compiles the current configuration as a dry run (nothing is sent); nil when it does not compile.
+func (s *Server) compiledRules(ctx context.Context) []compile.Rule {
+	res, err := control.Apply(ctx, s.Store, s.Engine, "", "", true)
+	if err != nil || res.Snapshot == nil {
+		return nil
+	}
+	return res.Snapshot.Rules
+}
+
+// newRuleIndex indexes the compiled rules by ID and by the games they carry.
+func newRuleIndex(hash string, rules []compile.Rule) *ruleIndex {
 	idx := &ruleIndex{hash: hash, byRule: map[string]compile.Rule{}, byGame: map[string][]compile.Rule{}}
-	// dry run: compiles the current configuration, sends nothing
-	if res, err := control.Apply(ctx, s.Store, s.Engine, "", "", true); err == nil && res.Snapshot != nil {
-		for _, r := range res.Snapshot.Rules {
-			idx.byRule[r.ID] = r
-			for _, g := range r.Specs {
-				idx.byGame[g] = append(idx.byGame[g], r)
-			}
+	for _, r := range rules {
+		idx.byRule[r.ID] = r
+		for _, g := range r.Specs {
+			idx.byGame[g] = append(idx.byGame[g], r)
 		}
 	}
-	s.ruleIdx = idx
 	return idx
 }
 

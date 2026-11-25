@@ -98,12 +98,17 @@ func normalizeAttach(v VLAN, name string) (VLAN, error) {
 	return v, nil
 }
 
+// networksOverlap reports whether both VLANs have a network and the networks overlap.
+func networksOverlap(a, b VLAN) bool {
+	return a.CIDR.IsValid() && b.CIDR.IsValid() && a.CIDR.Overlaps(b.CIDR)
+}
+
 // overlapErrors reports every pair of VLANs (sorted by VID) whose networks overlap.
 func overlapErrors(sorted []VLAN) []error {
 	var errs []error
 	for i, a := range sorted {
 		for _, b := range sorted[i+1:] {
-			if a.CIDR.IsValid() && b.CIDR.IsValid() && a.CIDR.Overlaps(b.CIDR) {
+			if networksOverlap(a, b) {
 				errs = append(errs, fmt.Errorf("VLAN %d and %d: %w: %s and %s", a.VID, b.VID, ErrOverlap, a.CIDR, b.CIDR))
 			}
 		}

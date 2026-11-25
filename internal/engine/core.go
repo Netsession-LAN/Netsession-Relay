@@ -130,14 +130,9 @@ func (p *Processor) process(t *Table, in int, frame []byte, emit Emit) Reason {
 		return r
 	}
 	// 4. rule lookup
-	vin := &t.VLANs[in]
-	rule, r := p.lookupRule(t, vin, &f)
+	rule, r := p.findRule(t, &t.VLANs[in], &f, frame)
 	if r != pass {
 		return r
-	}
-	p.observe(vin, &f, frame, rule)
-	if rule == nil {
-		return DropUnknownPort
 	}
 	// 4.-6. the rule's own checks
 	if r := p.admit(t, rule, in, &f); r != pass {
@@ -197,20 +192,26 @@ func (p *Processor) raiseForeignRelay(vin *VLANRuntime, src netip.Addr, otherVID
 		vin.VID, vin.Name, src, otherVID)
 }
 
-// lookupRule finds the rule of a multicast or broadcast frame (nil: no rule for the port; broadcasts on such ports
-// are counted for the port finder). Other destinations are not relayed at all.
-func (p *Processor) lookupRule(t *Table, vin *VLANRuntime, f *pkt.Frame) (*ruleRT, Reason) {
+// findRule finds the rule of a multicast or broadcast frame; other destinations are not relayed at all. The port
+// finder sees the frame also when no rule has its port, and broadcasts on such ports are counted for it.
+func (p *Processor) findRule(t *Table, vin *VLANRuntime, f *pkt.Frame, frame []byte) (*ruleRT, Reason) {
+	var rule *ruleRT
 	switch {
 	case f.Dst.IsMulticast():
-		return t.multicast[mcastKey{f.Dst, f.DstPort}], pass
+		rule = t.multicast[mcastKey{f.Dst, f.DstPort}]
 	case f.Dst == pkt.LimitedBroadcast || f.Dst == vin.Broadcast:
-		rule := t.broadcast[f.DstPort]
+		rule = t.broadcast[f.DstPort]
 		if rule == nil {
 			p.c.UnknownPorts[f.DstPort].Add(1)
 		}
-		return rule, pass
+	default:
+		return nil, DropNotBroadcast
 	}
-	return nil, DropNotBroadcast
+	p.observe(vin, f, frame, rule)
+	if rule == nil {
+		return nil, DropUnknownPort
+	}
+	return rule, pass
 }
 
 // observe hands the frame to the game finder while it records.
@@ -233,18 +234,29 @@ func (p *Processor) admit(t *Table, rule *ruleRT, in int, f *pkt.Frame) Reason {
 	}
 	rule.rx.Add(1)
 	p.learn(t, rule, t.VLANs[in].VID, f)
+	return checkDelivery(rule, in, f)
+}
+
+// checkDelivery checks that the frame has targets, a size the rule relays and TTL left (steps 5-6).
+func checkDelivery(rule *ruleRT, in int, f *pkt.Frame) Reason {
 	if len(rule.targets[in]) == 0 {
 		return DropNoTarget
 	}
 	if len(f.Payload) == 0 || len(f.Payload) > rule.PayloadMax {
 		return DropSize
 	}
-	if rule.TTLMode == gamedb.TTLDecrement {
-		if f.TTL <= 1 {
-			return DropTTL
-		}
-		f.TTL--
+	return applyTTLMode(rule.TTLMode, f)
+}
+
+// applyTTLMode lowers the TTL with mode decrement; a frame whose TTL would reach zero is dropped.
+func applyTTLMode(mode string, f *pkt.Frame) Reason {
+	if mode != gamedb.TTLDecrement {
+		return pass
 	}
+	if f.TTL <= 1 {
+		return DropTTL
+	}
+	f.TTL--
 	return pass
 }
 

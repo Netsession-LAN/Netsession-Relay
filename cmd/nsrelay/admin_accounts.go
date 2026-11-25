@@ -4,6 +4,7 @@ import (
 	"fmt"
 
 	"github.com/Netsession-LAN/Netsession-Relay/internal/auth"
+	"github.com/Netsession-LAN/Netsession-Relay/internal/store"
 )
 
 // Admin subcommands for local accounts and sessions.
@@ -22,16 +23,23 @@ func adminSetPassword(c *adminCall) int {
 	}
 	defer st.Close()
 	name := c.fs.Arg(0)
-	pw := auth.Password()
-	hash, err := auth.Hash(pw)
+	pw, err := setNewPassword(c, st, name, *role)
 	if err != nil {
-		return c.fail(err)
-	}
-	if err := st.SetLocalUser(c.ctx, c.common.user, name, hash, *role); err != nil {
 		return c.fail(err)
 	}
 	fmt.Fprintf(c.stdout, "account %q (%s) - password (shown only now): %s\n", name, *role, pw)
 	return 0
+}
+
+// setNewPassword stores the local account (created or updated) with role and a new random password, and returns
+// the password.
+func setNewPassword(c *adminCall, st *store.Store, name, role string) (string, error) {
+	pw := auth.Password()
+	hash, err := auth.Hash(pw)
+	if err != nil {
+		return "", err
+	}
+	return pw, st.SetLocalUser(c.ctx, c.common.user, name, hash, role)
 }
 
 func adminLogout(c *adminCall) int {

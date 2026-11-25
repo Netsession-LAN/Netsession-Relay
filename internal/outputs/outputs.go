@@ -267,12 +267,17 @@ func otlpConfig(t store.Target, res otlp.Resource, bind netip.Addr) otlp.Config 
 	if v, ok := t.Config["interval_s"].(float64); ok && v > 0 {
 		c.Interval = time.Duration(v) * time.Second
 	}
-	for k, v := range t.Secret {
+	addOTLPHeaders(c.Headers, t.Secret)
+	return c
+}
+
+// addOTLPHeaders copies the headers stored as secrets ("header:<name>") into headers; empty values are left out.
+func addOTLPHeaders(headers, secret map[string]string) {
+	for k, v := range secret {
 		if name, ok := strings.CutPrefix(k, "header:"); ok && v != "" {
-			c.Headers[name] = v
+			headers[name] = v
 		}
 	}
-	return c
 }
 
 func syslogConfig(t store.Target, host string, bind netip.Addr) syslog.Config {

@@ -49,24 +49,41 @@ func loadCatalog(fsys fs.FS) (map[string]string, error) {
 	}
 	sort.Strings(files)
 	out := map[string]string{}
-	from := map[string]string{}
+	from := map[string]string{} // file of each entry, for the error message
 	for _, f := range files {
-		b, err := fs.ReadFile(fsys, f)
+		m, err := readCatalogFile(fsys, f)
 		if err != nil {
 			return nil, err
 		}
-		var m map[string]string
-		if err := json.Unmarshal(b, &m); err != nil {
-			return nil, fmt.Errorf("%s: %w", f, err)
-		}
-		for de, en := range m {
-			if old, ok := out[de]; ok && old != en {
-				return nil, fmt.Errorf("%q translated twice: %q (%s) and %q (%s)", de, old, from[de], en, f)
-			}
-			out[de], from[de] = en, f
+		if err := mergeCatalog(out, from, m, f); err != nil {
+			return nil, err
 		}
 	}
 	return out, nil
+}
+
+// mergeCatalog adds the entries m of file to out; from records the file of every entry.
+func mergeCatalog(out, from, m map[string]string, file string) error {
+	for de, en := range m {
+		if old, ok := out[de]; ok && old != en {
+			return fmt.Errorf("%q translated twice: %q (%s) and %q (%s)", de, old, from[de], en, file)
+		}
+		out[de], from[de] = en, file
+	}
+	return nil
+}
+
+// readCatalogFile reads one catalog file (German text -> English text).
+func readCatalogFile(fsys fs.FS, name string) (map[string]string, error) {
+	b, err := fs.ReadFile(fsys, name)
+	if err != nil {
+		return nil, err
+	}
+	var m map[string]string
+	if err := json.Unmarshal(b, &m); err != nil {
+		return nil, fmt.Errorf("%s: %w", name, err)
+	}
+	return m, nil
 }
 
 // translator returns the text in the page language; with arguments it formats like fmt.Sprintf.
@@ -79,19 +96,26 @@ var onMissEN atomic.Pointer[func(string)]
 func trFor(lang string) translator {
 	return func(s string, args ...any) string {
 		if lang == langEN && s != "" {
-			if t, ok := catalogEN[s]; ok {
-				s = t
-			} else if strings.IndexFunc(s, unicode.IsLetter) >= 0 { // "–" or a number needs no entry
-				if report := onMissEN.Load(); report != nil {
-					(*report)(s)
-				}
-			}
+			s = translateEN(s)
 		}
 		if len(args) > 0 {
 			return fmt.Sprintf(s, args...)
 		}
 		return s
 	}
+}
+
+// translateEN looks s up in the English catalog. A text without an entry stays German and is reported to onMissEN.
+func translateEN(s string) string {
+	if t, ok := catalogEN[s]; ok {
+		return t
+	}
+	if strings.IndexFunc(s, unicode.IsLetter) >= 0 { // "–" or a number needs no entry
+		if report := onMissEN.Load(); report != nil {
+			(*report)(s)
+		}
+	}
+	return s
 }
 
 // lookupQuiet translates s when the catalog has it and keeps it otherwise, without recording a miss: for page

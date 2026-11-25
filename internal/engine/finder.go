@@ -100,23 +100,28 @@ var ErrFinderDuration = errors.New("duration must be between 1 s and 10 min")
 // CheckFinderVIDs refuses a session for VLAN IDs the relay has no network for (have = the VLAN IDs of the active
 // configuration): such a session would run its time and find nothing, which reads like "the game sends nothing".
 func CheckFinderVIDs(want, have []int) error {
-	var unknown []string
+	var unknown []int
 	for _, v := range want {
 		if !slices.Contains(have, v) {
-			unknown = append(unknown, strconv.Itoa(v))
+			unknown = append(unknown, v)
 		}
 	}
 	if len(unknown) == 0 {
 		return nil
 	}
 	if len(have) == 0 {
-		return fmt.Errorf("VLAN %s: the relay has no network yet (set up the networks and apply first)", strings.Join(unknown, ", "))
+		return fmt.Errorf("VLAN %s: the relay has no network yet (set up the networks and apply first)", joinVIDs(unknown))
 	}
-	known := make([]string, len(have))
-	for i, v := range slices.Sorted(slices.Values(have)) {
-		known[i] = strconv.Itoa(v)
+	return fmt.Errorf("VLAN %s is not a network of this relay (configured: %s)", joinVIDs(unknown), joinVIDs(slices.Sorted(slices.Values(have))))
+}
+
+// joinVIDs lists VLAN IDs as "1101, 1102".
+func joinVIDs(vids []int) string {
+	s := make([]string, len(vids))
+	for i, v := range vids {
+		s[i] = strconv.Itoa(v)
 	}
-	return fmt.Errorf("VLAN %s is not a network of this relay (configured: %s)", strings.Join(unknown, ", "), strings.Join(known, ", "))
+	return strings.Join(s, ", ")
 }
 
 // Start begins a new session and drops the results of the previous one.
@@ -163,31 +168,56 @@ func (f *Finder) Observe(vid int, fr *pkt.Frame, raw []byte, rule string, now ti
 		f.active.Store(false)
 		return
 	}
-	if s.vids != nil && !s.vids[vid] {
-		return
-	}
-	if s.req.Src.IsValid() && fr.Src != s.req.Src {
+	if !s.wants(vid, fr.Src) {
 		return
 	}
 	s.frames++
-	k := groupKey{port: fr.DstPort}
-	kind := "broadcast"
-	if fr.Dst.IsMulticast() {
-		k.group, kind = fr.Dst, "multicast"
-	}
+	k := frameGroupKey(fr)
 	g := s.groups[k]
 	if g == nil {
-		if len(s.groups) >= finderMaxGroups {
+		if g = s.newGroup(k, fr, rule, now); g == nil {
 			return
 		}
-		g = &FinderGroup{Kind: kind, Port: fr.DstPort, Rule: rule, First: now, MinLen: len(fr.Payload),
-			New: now.Sub(s.started) > finderNewAfter}
-		if k.group.IsValid() {
-			g.Group = k.group.String()
-		}
-		g.Sample = append([]byte(nil), fr.Payload[:min(len(fr.Payload), finderSampleLen)]...)
-		s.groups[k] = g
 	}
+	g.record(vid, fr, now)
+	s.capture(raw, now)
+}
+
+// wants applies the session's filter: VLAN and sender.
+func (s *finderSession) wants(vid int, src netip.Addr) bool {
+	if s.vids != nil && !s.vids[vid] {
+		return false
+	}
+	return !s.req.Src.IsValid() || src == s.req.Src
+}
+
+// frameGroupKey returns the group of a frame: its multicast group (none for a broadcast) and destination port.
+func frameGroupKey(fr *pkt.Frame) groupKey {
+	k := groupKey{port: fr.DstPort}
+	if fr.Dst.IsMulticast() {
+		k.group = fr.Dst
+	}
+	return k
+}
+
+// newGroup records the group k of a frame seen for the first time (nil when the session has finderMaxGroups
+// already).
+func (s *finderSession) newGroup(k groupKey, fr *pkt.Frame, rule string, now time.Time) *FinderGroup {
+	if len(s.groups) >= finderMaxGroups {
+		return nil
+	}
+	g := &FinderGroup{Kind: "broadcast", Port: fr.DstPort, Rule: rule, First: now, MinLen: len(fr.Payload),
+		New: now.Sub(s.started) > finderNewAfter}
+	if k.group.IsValid() {
+		g.Kind, g.Group = "multicast", k.group.String()
+	}
+	g.Sample = append([]byte(nil), fr.Payload[:min(len(fr.Payload), finderSampleLen)]...)
+	s.groups[k] = g
+	return g
+}
+
+// record counts one frame of the group from VLAN vid.
+func (g *FinderGroup) record(vid int, fr *pkt.Frame, now time.Time) {
 	g.Count++
 	g.Last = now
 	g.MinLen, g.MaxLen = min(g.MinLen, len(fr.Payload)), max(g.MaxLen, len(fr.Payload))
@@ -197,10 +227,15 @@ func (f *Finder) Observe(vid int, fr *pkt.Frame, raw []byte, rule string, now ti
 	if !slices.Contains(g.VIDs, vid) {
 		g.VIDs = append(g.VIDs, vid)
 	}
-	if len(s.caps) < finderMaxFrames && s.bytes+len(raw) <= finderMaxBytes {
-		s.caps = append(s.caps, capFrame{ts: now, data: append([]byte(nil), raw...)})
-		s.bytes += len(raw)
+}
+
+// capture keeps a copy of the raw frame for the pcap download while the limits allow.
+func (s *finderSession) capture(raw []byte, now time.Time) {
+	if len(s.caps) >= finderMaxFrames || s.bytes+len(raw) > finderMaxBytes {
+		return
 	}
+	s.caps = append(s.caps, capFrame{ts: now, data: append([]byte(nil), raw...)})
+	s.bytes += len(raw)
 }
 
 // Status returns a copy of the session state, groups sorted by count.
@@ -248,18 +283,24 @@ func (f *Finder) WritePcap(w io.Writer) error {
 	}
 	rec := make([]byte, 16)
 	for _, c := range caps {
-		binary.LittleEndian.PutUint32(rec[0:], uint32(c.ts.Unix()))
-		binary.LittleEndian.PutUint32(rec[4:], uint32(c.ts.Nanosecond()/1000))
-		binary.LittleEndian.PutUint32(rec[8:], uint32(len(c.data)))
-		binary.LittleEndian.PutUint32(rec[12:], uint32(len(c.data)))
-		if _, err := w.Write(rec); err != nil {
-			return err
-		}
-		if _, err := w.Write(c.data); err != nil {
+		if err := writePcapRecord(w, rec, c); err != nil {
 			return err
 		}
 	}
 	return nil
+}
+
+// writePcapRecord writes the record header (in rec, 16 bytes) and the data of one captured frame.
+func writePcapRecord(w io.Writer, rec []byte, c capFrame) error {
+	binary.LittleEndian.PutUint32(rec[0:], uint32(c.ts.Unix()))
+	binary.LittleEndian.PutUint32(rec[4:], uint32(c.ts.Nanosecond()/1000))
+	binary.LittleEndian.PutUint32(rec[8:], uint32(len(c.data)))
+	binary.LittleEndian.PutUint32(rec[12:], uint32(len(c.data)))
+	if _, err := w.Write(rec); err != nil {
+		return err
+	}
+	_, err := w.Write(c.data)
+	return err
 }
 
 // FinderAPI converts a finder status for the engine API.

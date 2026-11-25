@@ -87,20 +87,28 @@ func (g *Guard) BeaconFrame(mac pkt.MAC, s *compile.Snapshot, now time.Time) []b
 // key every beacon counts, as before signatures existed. It returns true when this engine enters standby.
 func (g *Guard) SeeFrame(f []byte, vid int, now time.Time) bool {
 	b, ok := ParseBeacon(f)
-	if !ok || b.Instance == g.Instance {
+	if !ok || b.Instance == g.Instance || !g.trusted(f, &b, vid, now) {
 		return false
 	}
-	if g.beaconKey != nil {
-		if why := BeaconAuth(f, g.beaconKey, now); why != "" {
-			if mp := g.myPorts(); portsOverlap(mp.all, mp.ranges, b.AllPorts, b.Ports) {
-				g.Alarms.Raise(AlarmUnknownBeacon, strconv.Itoa(vid), now,
-					"VLAN %d: relay signal from %s without a valid signature (%s), ignored: another relay without the same key, or a forged frame",
-					vid, pkt.MAC(f[ethOffSrc:ethOffType]), why)
-			}
-			return false
-		}
-	}
 	return g.SeeBeacon(b, now)
+}
+
+// trusted reports whether the beacon frame f (decoded: b) may take part in the dual-active guard: always without
+// a key, with a key only when it is signed with it. An untrusted beacon for this engine's ports raises the alarm.
+func (g *Guard) trusted(f []byte, b *Beacon, vid int, now time.Time) bool {
+	if g.beaconKey == nil {
+		return true
+	}
+	why := BeaconAuth(f, g.beaconKey, now)
+	if why == "" {
+		return true
+	}
+	if mp := g.myPorts(); portsOverlap(mp.all, mp.ranges, b.AllPorts, b.Ports) {
+		g.Alarms.Raise(AlarmUnknownBeacon, strconv.Itoa(vid), now,
+			"VLAN %d: relay signal from %s without a valid signature (%s), ignored: another relay without the same key, or a forged frame",
+			vid, pkt.MAC(f[ethOffSrc:ethOffType]), why)
+	}
+	return false
 }
 
 // RelayedPorts returns the merged UDP destination port ranges of all rules of a snapshot.
@@ -143,9 +151,11 @@ func (r PortRange) reaches(p uint16) bool {
 // portsOverlap reports whether two port sets share a port; "all" overlaps anything, also an empty set
 // (an engine without rules sends nothing, but it may get rules any second).
 func portsOverlap(aAll bool, a []PortRange, bAll bool, b []PortRange) bool {
-	if aAll || bAll {
-		return true
-	}
+	return aAll || bAll || rangesOverlap(a, b)
+}
+
+// rangesOverlap reports whether two sorted, merged range lists share a port.
+func rangesOverlap(a, b []PortRange) bool {
 	for i, j := 0, 0; i < len(a) && j < len(b); {
 		if a[i].Hi < b[j].Lo {
 			i++
@@ -161,7 +171,7 @@ func portsOverlap(aAll bool, a []PortRange, bAll bool, b []PortRange) bool {
 // BuildBeacon returns a broadcast beacon frame sent from mac.
 func BuildBeacon(mac pkt.MAC, b Beacon) []byte {
 	n := len(b.Ports)
-	if b.AllPorts || n > beaconMaxRanges {
+	if b.sendsAllPorts() {
 		n = 0
 	}
 	f := make([]byte, pkt.EthHeaderLen+beaconOffRanges+n*beaconRangeBytes, 96+n*beaconRangeBytes) // padded by the NIC
@@ -177,7 +187,7 @@ func BuildBeacon(mac pkt.MAC, b Beacon) []byte {
 		p[beaconOffActive] = 1
 	}
 	copy(p[beaconOffHash:beaconOffFlags], b.Hash[:])
-	if b.AllPorts || len(b.Ports) > beaconMaxRanges {
+	if b.sendsAllPorts() {
 		p[beaconOffFlags] = beaconFlagAll
 	}
 	binary.BigEndian.PutUint16(p[beaconOffCount:], uint16(n))
@@ -189,17 +199,19 @@ func BuildBeacon(mac pkt.MAC, b Beacon) []byte {
 	return f
 }
 
+// sendsAllPorts reports whether the beacon goes out as "all ports": ports unknown, or more ranges than fit.
+func (b *Beacon) sendsAllPorts() bool {
+	return b.AllPorts || len(b.Ports) > beaconMaxRanges
+}
+
 // ParseBeacon decodes a beacon frame (version 1 or 2).
 func ParseBeacon(f []byte) (Beacon, bool) {
 	var b Beacon
-	if len(f) < pkt.EthHeaderLen+beaconLen || binary.BigEndian.Uint16(f[ethOffType:]) != BeaconEtherType {
+	version, ok := beaconFrameVersion(f)
+	if !ok {
 		return b, false
 	}
 	p := f[pkt.EthHeaderLen:]
-	version := p[beaconOffVersion]
-	if !bytes.Equal(p[beaconOffMagic:beaconOffVersion], beaconMagic[:]) || (version != 1 && version != beaconVersion) {
-		return b, false
-	}
 	copy(b.Instance[:], p[beaconOffInstance:beaconOffStarted])
 	b.Started = int64(binary.BigEndian.Uint64(p[beaconOffStarted:beaconOffActive]))
 	b.Active = p[beaconOffActive] == 1
@@ -208,19 +220,38 @@ func ParseBeacon(f []byte) (Beacon, bool) {
 		b.AllPorts = true
 		return b, true
 	}
-	if len(p) < beaconOffRanges {
+	if !b.parsePorts(p) {
 		return Beacon{}, false
+	}
+	return b, true
+}
+
+// beaconFrameVersion returns the beacon version of frame f; false if f is no beacon of a known version.
+func beaconFrameVersion(f []byte) (byte, bool) {
+	if len(f) < pkt.EthHeaderLen+beaconLen || binary.BigEndian.Uint16(f[ethOffType:]) != BeaconEtherType {
+		return 0, false
+	}
+	p := f[pkt.EthHeaderLen:]
+	version := p[beaconOffVersion]
+	known := version == 1 || version == beaconVersion
+	return version, known && bytes.Equal(p[beaconOffMagic:beaconOffVersion], beaconMagic[:])
+}
+
+// parsePorts reads the port part of a version 2 beacon payload p.
+func (b *Beacon) parsePorts(p []byte) bool {
+	if len(p) < beaconOffRanges {
+		return false
 	}
 	b.AllPorts = p[beaconOffFlags]&beaconFlagAll != 0
 	n := int(binary.BigEndian.Uint16(p[beaconOffCount:beaconOffRanges]))
 	if n > beaconMaxRanges || len(p) < beaconOffRanges+n*beaconRangeBytes {
-		return Beacon{}, false
+		return false
 	}
 	for i := 0; i < n; i++ {
 		o := beaconOffRanges + i*beaconRangeBytes
 		b.Ports = append(b.Ports, PortRange{binary.BigEndian.Uint16(p[o : o+2]), binary.BigEndian.Uint16(p[o+2 : o+4])})
 	}
-	return b, true
+	return true
 }
 
 // SetPorts records the ports of the applied snapshot (sent in the beacon, compared with peers).
@@ -252,14 +283,8 @@ func (g *Guard) SeeBeacon(b Beacon, now time.Time) bool {
 	if b.Instance == g.Instance || !b.Active {
 		return false
 	}
-	mp := g.myPorts()
-	if !portsOverlap(mp.all, mp.ranges, b.AllPorts, b.Ports) {
+	if !g.yieldsTo(&b) {
 		return false
-	}
-	mine := g.Started.UnixNano()
-	earlier := b.Started < mine || (b.Started == mine && bytes.Compare(b.Instance[:], g.Instance[:]) < 0)
-	if !earlier {
-		return false // the other one yields
 	}
 	g.lastPeerActive.Store(now.UnixNano())
 	if g.standby.CompareAndSwap(false, true) {
@@ -268,6 +293,17 @@ func (g *Guard) SeeBeacon(b Beacon, now time.Time) bool {
 		return true
 	}
 	return false
+}
+
+// yieldsTo reports whether this engine gives way to the active engine of beacon b: b relays at least one of this
+// engine's ports and started earlier (ties broken by instance ID). Otherwise the other one yields.
+func (g *Guard) yieldsTo(b *Beacon) bool {
+	mp := g.myPorts()
+	if !portsOverlap(mp.all, mp.ranges, b.AllPorts, b.Ports) {
+		return false
+	}
+	mine := g.Started.UnixNano()
+	return b.Started < mine || (b.Started == mine && bytes.Compare(b.Instance[:], g.Instance[:]) < 0)
 }
 
 // PeerTick leaves standby when the earlier engine has been silent for the peer timeout (10 s).

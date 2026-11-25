@@ -225,3 +225,29 @@ func FuzzParse(f *testing.F) {
 		}
 	})
 }
+
+func BenchmarkParse(b *testing.B) {
+	f := sampleFrame()
+	f.Payload = make([]byte, 106)
+	raw, err := Build(nil, &f)
+	if err != nil {
+		b.Fatal(err)
+	}
+	b.ReportAllocs()
+	for b.Loop() {
+		if _, err := Parse(raw); err != nil {
+			b.Fatal(err)
+		}
+	}
+}
+
+func TestParseFlagsWithoutFragment(t *testing.T) {
+	f := sampleFrame()
+	f.DontFragment = true
+	b, _ := Build(nil, &f)
+	b[20] |= 0x80 // reserved bit: not a fragment either
+	got, err := Parse(b)
+	if err != nil || !got.DontFragment {
+		t.Fatalf("DF frame: err=%v df=%v", err, got.DontFragment)
+	}
+}

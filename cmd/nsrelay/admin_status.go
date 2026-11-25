@@ -62,6 +62,11 @@ func printStatusProblems(out io.Writer, st engineapi.Status) {
 	for _, p := range st.TopUnknown {
 		fmt.Fprintf(out, "unknown broadcast port %d: %d\n", p.Port, p.Count)
 	}
+	printHostIssues(out, st)
+}
+
+// printHostIssues lists what the engine could not prepare on the host, or that it prepared everything.
+func printHostIssues(out io.Writer, st engineapi.Status) {
 	for _, is := range st.HostIssues {
 		fmt.Fprintf(out, "HOST %s: %s\n", is.Code, is.Detail)
 	}

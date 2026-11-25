@@ -121,10 +121,7 @@ func (s *Server) targetSave(w http.ResponseWriter, r *http.Request) {
 	T := s.T(r)
 	f := readTargetForm(r)
 	stored := s.adoptStoredTarget(r, &f)
-	title := "Ziel hinzufügen"
-	if f.ID != 0 {
-		title = T("%s bearbeiten", f.Name)
-	}
+	title := targetEditTitle(f, T)
 	reject := func(msg string) {
 		f.Err = msg
 		w.WriteHeader(http.StatusUnprocessableEntity)
@@ -150,6 +147,14 @@ func (s *Server) targetSave(w http.ResponseWriter, r *http.Request) {
 	}
 	s.Outputs.Reload(r.Context())
 	back(w, r, "/system/monitoring", T("%s gespeichert. Schick eine Testmeldung.", t.Name), nil)
+}
+
+// targetEditTitle is the title of the target form: adding a target, or editing the stored one.
+func targetEditTitle(f targetForm, T translator) string {
+	if f.ID == 0 {
+		return "Ziel hinzufügen"
+	}
+	return T("%s bearbeiten", f.Name)
 }
 
 // adoptStoredTarget takes over what an existing target keeps: its kind, and the names of its stored secrets
@@ -249,6 +254,20 @@ func otlpTargetOptions(f *targetForm, T translator) (map[string]any, map[string]
 	if err := otlp.Validate(f.Endpoint, c); err != nil {
 		return nil, nil, targetError(err, T)
 	}
+	return otlpTargetConfig(*f), otlpHeaderSecrets(headers), ""
+}
+
+// otlpHeaderSecrets stores the headers of an OTLP target as secrets ("header:Name").
+func otlpHeaderSecrets(headers map[string]string) map[string]string {
+	secret := map[string]string{}
+	for k, val := range headers {
+		secret["header:"+k] = val
+	}
+	return secret
+}
+
+// otlpTargetConfig is the stored options of a checked OTLP target (the headers are secrets).
+func otlpTargetConfig(f targetForm) map[string]any {
 	tls := "none"
 	if f.TLS {
 		tls = "tls"
@@ -258,11 +277,7 @@ func otlpTargetOptions(f *targetForm, T translator) (map[string]any, map[string]
 	if f.TLS {
 		config["tls_ca"], config["tls_skip_verify"] = f.TLSCA, f.SkipVerify
 	}
-	secret := map[string]string{}
-	for k, val := range headers {
-		secret["header:"+k] = val
-	}
-	return config, secret, ""
+	return config
 }
 
 // trapTargetOptions validates with the secrets that will be in effect: the new value, or the stored one where
@@ -289,9 +304,8 @@ func parseHeaders(text string) (map[string]string, string) {
 		if line == "" {
 			continue
 		}
-		k, v, ok := strings.Cut(line, ":")
-		k, v = strings.TrimSpace(k), strings.TrimSpace(v)
-		if !ok || k == "" || v == "" || strings.ContainsAny(k, " \t") {
+		k, v, ok := parseHeaderLine(line)
+		if !ok {
 			return nil, "Header bitte als „Name: Wert“, einer pro Zeile."
 		}
 		out[k] = v
@@ -299,29 +313,39 @@ func parseHeaders(text string) (map[string]string, string) {
 	return out, ""
 }
 
+// parseHeaderLine splits one "Name: value" line; ok is false without a name, a value, or with blanks in the name.
+func parseHeaderLine(line string) (name, value string, ok bool) {
+	name, value, ok = strings.Cut(line, ":")
+	name, value = strings.TrimSpace(name), strings.TrimSpace(value)
+	if !ok || name == "" || value == "" || strings.ContainsAny(name, " \t") {
+		return "", "", false
+	}
+	return name, value, true
+}
+
 // targetError words a validation error of a target in the language of T. The problems without an identity of
 // their own (an unknown transport, a bad header name) are described by their text.
 func targetError(err error, T translator) string {
-	is := func(targets ...error) bool {
-		return slices.ContainsFunc(targets, func(t error) bool { return errors.Is(err, t) })
-	}
-	switch {
-	case is(syslog.ErrEndpoint, otlp.ErrEndpoint, snmp.ErrEndpoint):
-		return T("Adresse bitte als Adresse:Port, z. B. 10.0.0.5:514.")
-	case is(otlp.ErrEndpointURL):
-		return T("Adresse bitte als URL, z. B. http://10.0.0.5:4318.")
-	case is(otlp.ErrNoSignal):
-		return T("Bitte Metriken, Meldungen oder beides wählen.")
-	case is(snmp.ErrCommunityMissing):
-		return T("Bitte die Community eintragen.")
-	case is(snmp.ErrUserMissing):
-		return T("Bitte den SNMPv3-Benutzer eintragen.")
-	case is(snmp.ErrPasswordShort):
-		return T("Die SNMPv3-Passwörter brauchen mindestens 8 Zeichen.")
-	case is(syslog.ErrTLSCA, otlp.ErrTLSCA):
-		return T("Im CA-Feld steht kein Zertifikat (PEM).")
+	for _, e := range targetErrorTexts {
+		if slices.ContainsFunc(e.errs, func(t error) bool { return errors.Is(err, t) }) {
+			return T(e.text)
+		}
 	}
 	return T("Das passt nicht: %s", err.Error())
+}
+
+// targetErrorTexts are the sentences for the validation errors of the outputs, first match wins.
+var targetErrorTexts = []struct {
+	errs []error
+	text string
+}{
+	{[]error{syslog.ErrEndpoint, otlp.ErrEndpoint, snmp.ErrEndpoint}, "Adresse bitte als Adresse:Port, z. B. 10.0.0.5:514."},
+	{[]error{otlp.ErrEndpointURL}, "Adresse bitte als URL, z. B. http://10.0.0.5:4318."},
+	{[]error{otlp.ErrNoSignal}, "Bitte Metriken, Meldungen oder beides wählen."},
+	{[]error{snmp.ErrCommunityMissing}, "Bitte die Community eintragen."},
+	{[]error{snmp.ErrUserMissing}, "Bitte den SNMPv3-Benutzer eintragen."},
+	{[]error{snmp.ErrPasswordShort}, "Die SNMPv3-Passwörter brauchen mindestens 8 Zeichen."},
+	{[]error{syslog.ErrTLSCA, otlp.ErrTLSCA}, "Im CA-Feld steht kein Zertifikat (PEM)."},
 }
 
 // targetStoreError words why a target could not be stored; anything unexpected is an internal error.

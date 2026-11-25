@@ -2,6 +2,7 @@ package engine
 
 import (
 	"bytes"
+	"maps"
 	"net/netip"
 	"sort"
 	"sync"
@@ -95,30 +96,45 @@ func (p *Prober) Learn(rule string, port uint16, payload []byte, now time.Time) 
 	k := queryKey{rule, port}
 	p.mu.Lock()
 	defer p.mu.Unlock()
+	if q := p.queries[k]; q != nil {
+		q.update(payload, now)
+		return
+	}
+	p.addQuery(k, payload, now)
+}
+
+// update notes that the query was sent again at now, with payload.
+func (q *ProbeQuery) update(payload []byte, now time.Time) {
+	q.Learned = now
+	if !bytes.Equal(q.Payload, payload) && !isA2SChallenged(payload) {
+		q.Payload = append(q.Payload[:0], payload...)
+	}
+}
+
+// addQuery stores a new query, replacing the oldest one when maxProbePorts are known. p.mu is held.
+func (p *Prober) addQuery(k queryKey, payload []byte, now time.Time) {
 	if p.queries == nil {
 		p.queries = map[queryKey]*ProbeQuery{}
-	}
-	if q := p.queries[k]; q != nil {
-		q.Learned = now
-		if !bytes.Equal(q.Payload, payload) && !isA2SChallenged(payload) {
-			q.Payload = append(q.Payload[:0], payload...)
-		}
-		return
 	}
 	if isA2SChallenged(payload) { // a client's second request carries its own challenge: keep the plain one
 		payload = a2sInfo
 	}
 	if len(p.queries) >= maxProbePorts {
-		var oldest queryKey
-		var at time.Time
-		for kk, q := range p.queries {
-			if at.IsZero() || q.Learned.Before(at) {
-				oldest, at = kk, q.Learned
-			}
-		}
-		delete(p.queries, oldest)
+		p.dropOldestQuery()
 	}
-	p.queries[k] = &ProbeQuery{Rule: rule, Port: port, Payload: append([]byte(nil), payload...), Learned: now}
+	p.queries[k] = &ProbeQuery{Rule: k.rule, Port: k.port, Payload: append([]byte(nil), payload...), Learned: now}
+}
+
+// dropOldestQuery removes the query that was learned longest ago. p.mu is held.
+func (p *Prober) dropOldestQuery() {
+	var oldest queryKey
+	var at time.Time
+	for k, q := range p.queries {
+		if at.IsZero() || q.Learned.Before(at) {
+			oldest, at = k, q.Learned
+		}
+	}
+	delete(p.queries, oldest)
 }
 
 // q3GetInfo is the id Tech 3 LAN query (Quake 3, Wolfenstein ET, RtCW, Urban Terror, OpenArena, Call of Duty 1-4:
@@ -139,39 +155,39 @@ var seeds = []struct {
 // Seed adds the built-in query for probe rules on known ports that have no learned query yet.
 func (p *Prober) Seed(rule string, ports []uint16, now time.Time) {
 	for _, port := range ports {
-		for _, s := range seeds {
-			if port < s.lo || port > s.hi {
-				continue
-			}
-			p.mu.Lock()
-			_, ok := p.queries[queryKey{rule, port}]
-			p.mu.Unlock()
-			if !ok {
-				p.Learn(rule, port, s.payload, now)
-			}
+		payload := seedQuery(port)
+		if payload == nil || p.hasQuery(queryKey{rule, port}) {
+			continue
+		}
+		p.Learn(rule, port, payload, now)
+	}
+}
+
+// seedQuery returns the built-in query for a port, or nil.
+func seedQuery(port uint16) []byte {
+	for _, s := range seeds {
+		if port >= s.lo && port <= s.hi {
+			return s.payload
 		}
 	}
+	return nil
+}
+
+func (p *Prober) hasQuery(k queryKey) bool {
+	p.mu.Lock()
+	defer p.mu.Unlock()
+	_, ok := p.queries[k]
+	return ok
 }
 
 // Forget drops learned queries of rules that are no longer probe rules.
 func (p *Prober) Forget(keep map[string]bool) {
 	p.mu.Lock()
 	defer p.mu.Unlock()
-	for k := range p.queries {
-		if !keep[k.rule] {
-			delete(p.queries, k)
-		}
-	}
-	for k, s := range p.servers {
-		if !keep[s.Rule] {
-			delete(p.servers, k)
-		}
-	}
-	for port, rule := range p.byPort { // answers from ports that are no longer probed are ignored again
-		if !keep[rule] {
-			delete(p.byPort, port)
-		}
-	}
+	maps.DeleteFunc(p.queries, func(k queryKey, _ *ProbeQuery) bool { return !keep[k.rule] })
+	maps.DeleteFunc(p.servers, func(_ serverKey, s *Server) bool { return !keep[s.Rule] })
+	// answers from ports that are no longer probed are ignored again
+	maps.DeleteFunc(p.byPort, func(_ uint16, rule string) bool { return !keep[rule] })
 }
 
 // Queries returns the learned queries (sorted by rule and port) and starts a probe round: for answerWindow,

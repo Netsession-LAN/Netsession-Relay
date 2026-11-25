@@ -67,10 +67,20 @@ func Validate(endpoint string, c Config) error {
 	if !c.Metrics && !c.Logs {
 		return ErrNoSignal
 	}
-	if c.TLSCA != "" && !x509.NewCertPool().AppendCertsFromPEM([]byte(c.TLSCA)) {
+	if !validCA(c.TLSCA) {
 		return ErrTLSCA
 	}
-	for k := range c.Headers {
+	return validateHeaders(c.Headers)
+}
+
+// validCA reports whether pem is empty (system roots) or holds at least one certificate.
+func validCA(pem string) bool {
+	return pem == "" || x509.NewCertPool().AppendCertsFromPEM([]byte(pem))
+}
+
+// validateHeaders refuses empty header names and names with spaces, colons or line breaks.
+func validateHeaders(headers map[string]string) error {
+	for k := range headers {
 		if k == "" || strings.ContainsAny(k, " :\r\n") {
 			return fmt.Errorf("header name %q", k)
 		}
@@ -82,11 +92,11 @@ func Validate(endpoint string, c Config) error {
 func validateEndpoint(protocol, endpoint string) error {
 	switch protocol {
 	case "grpc":
-		if h, p, err := net.SplitHostPort(endpoint); err != nil || h == "" || p == "" {
+		if !isHostPort(endpoint) {
 			return fmt.Errorf("OTLP gRPC endpoint %q: %w", endpoint, ErrEndpoint)
 		}
 	case "http":
-		if u, err := url.Parse(endpoint); err != nil || !isHTTPURL(u) {
+		if !isHTTPURL(endpoint) {
 			return fmt.Errorf("OTLP HTTP endpoint %q: %w", endpoint, ErrEndpointURL)
 		}
 	default:
@@ -95,9 +105,16 @@ func validateEndpoint(protocol, endpoint string) error {
 	return nil
 }
 
-// isHTTPURL reports whether u is an http or https URL with a host.
-func isHTTPURL(u *url.URL) bool {
-	return (u.Scheme == "http" || u.Scheme == "https") && u.Host != ""
+// isHostPort reports whether endpoint is host:port with both parts set.
+func isHostPort(endpoint string) bool {
+	h, p, err := net.SplitHostPort(endpoint)
+	return err == nil && h != "" && p != ""
+}
+
+// isHTTPURL reports whether endpoint is an http or https URL with a host.
+func isHTTPURL(endpoint string) bool {
+	u, err := url.Parse(endpoint)
+	return err == nil && (u.Scheme == "http" || u.Scheme == "https") && u.Host != ""
 }
 
 // Sender is one OTLP target: logs through the notify queue, metrics on its own ticker.
@@ -122,14 +139,8 @@ func NewSender(endpoint string, c Config, source Source) (*Sender, error) {
 	}
 	c = c.withDefaults()
 	s := &Sender{endpoint: endpoint, c: c, source: source, stop: make(chan struct{}), done: make(chan struct{})}
-	tlsConf, dialer := c.tlsConfig(), c.dialer()
-	if c.Protocol == "grpc" {
-		if err := s.connectGRPC(tlsConf, dialer); err != nil {
-			return nil, err
-		}
-	} else {
-		tr := &http.Transport{DialContext: dialer.DialContext, TLSClientConfig: tlsConf, MaxIdleConns: 2, IdleConnTimeout: time.Minute}
-		s.httpC = &http.Client{Transport: tr, Timeout: 5 * time.Second}
+	if err := s.setupTransport(); err != nil {
+		return nil, err
 	}
 	if c.Metrics && source != nil {
 		go s.loop()
@@ -137,6 +148,17 @@ func NewSender(endpoint string, c Config, source Source) (*Sender, error) {
 		close(s.done)
 	}
 	return s, nil
+}
+
+// setupTransport connects the gRPC client or builds the HTTP client of the configured protocol.
+func (s *Sender) setupTransport() error {
+	tlsConf, dialer := s.c.tlsConfig(), s.c.dialer()
+	if s.c.Protocol == "grpc" {
+		return s.connectGRPC(tlsConf, dialer)
+	}
+	tr := &http.Transport{DialContext: dialer.DialContext, TLSClientConfig: tlsConf, MaxIdleConns: 2, IdleConnTimeout: time.Minute}
+	s.httpC = &http.Client{Transport: tr, Timeout: 5 * time.Second}
+	return nil
 }
 
 // withDefaults bounds the metrics interval (outside 10 s .. 5 min: 30 s or 5 min) and fills in the service name.

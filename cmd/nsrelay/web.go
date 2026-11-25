@@ -155,13 +155,7 @@ func setupBackups(ctx context.Context, ui *web.Server, st *store.Store, db strin
 // takes effect right after a deploy (control.Refresh). Tries for two minutes; the engine may start later.
 func refreshAfterUpdate(ctx context.Context, st *store.Store, eng *engineapi.Client, log *slog.Logger) {
 	for range 24 {
-		tctx, cancel := context.WithTimeout(ctx, 20*time.Second)
-		rev, err := control.Refresh(tctx, st, eng, "Neu übersetzt nach Update auf "+version)
-		cancel()
-		if err == nil {
-			if rev > 0 {
-				log.Info("configuration re-applied after update", "revision", rev, "version", version)
-			}
+		if refreshOnce(ctx, st, eng, log) {
 			return
 		}
 		select {
@@ -171,6 +165,20 @@ func refreshAfterUpdate(ctx context.Context, st *store.Store, eng *engineapi.Cli
 		}
 	}
 	log.Warn("could not check whether the configuration needs a re-apply after the update (engine not reachable)")
+}
+
+// refreshOnce tries control.Refresh once (20 s at most) and reports whether the engine answered.
+func refreshOnce(ctx context.Context, st *store.Store, eng *engineapi.Client, log *slog.Logger) bool {
+	tctx, cancel := context.WithTimeout(ctx, 20*time.Second)
+	defer cancel()
+	rev, err := control.Refresh(tctx, st, eng, "Neu übersetzt nach Update auf "+version)
+	if err != nil {
+		return false
+	}
+	if rev > 0 {
+		log.Info("configuration re-applied after update", "revision", rev, "version", version)
+	}
+	return true
 }
 
 // serveWeb serves the UI until ctx ends, then gives open requests five seconds to finish. The live streams of

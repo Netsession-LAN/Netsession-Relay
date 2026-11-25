@@ -25,17 +25,11 @@ func Backup(ctx context.Context, st *store.Store, dir string, keep int) (string,
 		return "", err
 	}
 	stamp := st.Now().UTC().Format(backupStamp)
-	// SQLite would create the copy with the permissions the umask leaves (usually readable by everybody), so the
-	// file is created here, empty and private; VACUUM INTO accepts an empty file as its target.
-	base, err := createBackupFile(dir, stamp)
+	base, err := copyDatabase(ctx, st, dir, stamp)
 	if err != nil {
 		return "", fmt.Errorf("backup: %w", err)
 	}
 	dbPath := base + ".db"
-	if err := st.VacuumInto(ctx, dbPath); err != nil {
-		os.Remove(dbPath)
-		return "", fmt.Errorf("backup: %w", err)
-	}
 	if cfg, err := st.ExportConfig(ctx); err == nil {
 		b, _ := yaml.Marshal(cfg)
 		header := "# Netsession Relay configuration export " + stamp + " (readable copy; restore uses the .db file)\n"
@@ -49,6 +43,21 @@ func Backup(ctx context.Context, st *store.Store, dir string, keep int) (string,
 // backupStamp is the time in a backup's file name: nsrelay-<stamp>.db, nsrelay-<stamp>-<n>.db for a further
 // backup within the same second.
 const backupStamp = "20060102-150405"
+
+// copyDatabase writes the database copy of a new backup and returns its path without the extension. SQLite
+// would create the copy with the permissions the umask leaves (usually readable by everybody), so the file is
+// created here, empty and private; VACUUM INTO accepts an empty file as its target.
+func copyDatabase(ctx context.Context, st *store.Store, dir, stamp string) (string, error) {
+	base, err := createBackupFile(dir, stamp)
+	if err != nil {
+		return "", err
+	}
+	if err := st.VacuumInto(ctx, base+".db"); err != nil {
+		os.Remove(base + ".db")
+		return "", err
+	}
+	return base, nil
+}
 
 // createBackupFile creates the empty, private database file of a new backup and returns its path without the
 // extension. The file is created exclusively, so two backups at the same moment never share a name.

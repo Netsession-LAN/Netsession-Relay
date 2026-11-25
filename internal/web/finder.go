@@ -96,13 +96,18 @@ func hexASCII(b []byte) (string, string) {
 			h.WriteByte(' ')
 		}
 		fmt.Fprintf(&h, "%02x", c)
-		if c >= 0x20 && c < 0x7f {
-			a.WriteByte(c)
-		} else {
-			a.WriteByte('.')
-		}
+		a.WriteByte(printableOrDot(c))
 	}
 	return h.String(), a.String()
+}
+
+// printableOrDot is how the ASCII column of the sample shows a byte: printable ASCII as itself, anything else
+// as '.'.
+func printableOrDot(c byte) byte {
+	if c >= 0x20 && c < 0x7f {
+		return c
+	}
+	return '.'
 }
 
 // finderRowCtx is what turning the engine's finder groups into table rows needs besides the group itself.
@@ -140,18 +145,30 @@ func (s *Server) finderData(ctx context.Context, showNoise bool) finderView {
 	if fs.Active {
 		v.Left = finderLeft(time.Until(fs.Until))
 	}
-	for _, g := range fs.Groups {
+	v.addRows(rc, fs.Groups)
+	v.Unknown = finderUnknownRows(st.TopUnknown, games)
+	return v
+}
+
+// addRows turns the groups the finder saw into table rows; noise that is not shown is only counted.
+func (v *finderView) addRows(rc finderRowCtx, groups []engineapi.FinderGroup) {
+	for _, g := range groups {
 		if rc.hidden(g) {
 			v.Hidden++
 			continue
 		}
 		v.Rows = append(v.Rows, rc.row(g))
 	}
-	for _, p := range st.TopUnknown {
-		v.Unknown = append(v.Unknown, unknownRow{Port: p.Port, Count: p.Count, Noise: noisePorts[p.Port],
+}
+
+// finderUnknownRows lists the busiest broadcast ports without a rule, with the database games that use them.
+func finderUnknownRows(ports []engineapi.PortCount, games []store.GameRow) []unknownRow {
+	var out []unknownRow
+	for _, p := range ports {
+		out = append(out, unknownRow{Port: p.Port, Count: p.Count, Noise: noisePorts[p.Port],
 			Games: portGames(games, gamedb.KindBroadcast, "", p.Port)})
 	}
-	return v
+	return out
 }
 
 // finderGameHints indexes the games of the database by ID.
@@ -315,19 +332,25 @@ func slug(name string) string {
 	return s
 }
 
+// gameEntryErrors are the errors about the entry itself, with the German text that explains them.
+var gameEntryErrors = []struct {
+	err  error
+	text string
+}{
+	{store.ErrExists, "Diese Kennung gibt es schon. Bitte eine andere wählen."},
+	{gamedb.ErrInvalidID, "Die Kennung darf nur Kleinbuchstaben, Ziffern und _ enthalten."},
+	{gamedb.ErrNameMissing, "Bitte einen Namen eingeben."},
+	{gamedb.ErrBlockedPort, "DHCP (67/68) wird nie weitergeleitet."},
+}
+
 // gameError puts an error of storing a game into words, in the language of r: what is wrong with the entry, or
 // (anything that is not about the entry) an internal error.
 func (s *Server) gameError(r *http.Request, err error) string {
 	T := s.T(r)
-	switch {
-	case errors.Is(err, store.ErrExists):
-		return T("Diese Kennung gibt es schon. Bitte eine andere wählen.")
-	case errors.Is(err, gamedb.ErrInvalidID):
-		return T("Die Kennung darf nur Kleinbuchstaben, Ziffern und _ enthalten.")
-	case errors.Is(err, gamedb.ErrNameMissing):
-		return T("Bitte einen Namen eingeben.")
-	case errors.Is(err, gamedb.ErrBlockedPort):
-		return T("DHCP (67/68) wird nie weitergeleitet.")
+	for _, e := range gameEntryErrors {
+		if errors.Is(err, e.err) {
+			return T(e.text)
+		}
 	}
 	if errors.Is(err, gamedb.ErrInvalid) {
 		return T("Das Spiel passt nicht: %s", err.Error())

@@ -257,32 +257,37 @@ func severity(e notify.Event) (logspb.SeverityNumber, string) {
 	return logspb.SeverityNumber_SEVERITY_NUMBER_INFO, "INFO"
 }
 
+// logAttributes are the attributes of the log record of e; empty values are left out.
+func logAttributes(e notify.Event) []KV {
+	kvs := []KV{{"nsrelay.msgid", e.MsgID()}}
+	add := func(k, v string) {
+		if v != "" {
+			kvs = append(kvs, KV{k, v})
+		}
+	}
+	if e.Type == notify.TypeAlarm {
+		add("nsrelay.alarm.kind", e.Kind)
+		add("nsrelay.alarm.key", e.Key)
+		add("nsrelay.alarm.state", e.State)
+	}
+	if e.VLAN > 0 {
+		kvs = append(kvs, KV{"vlan", int64(e.VLAN)})
+	}
+	if e.Type == notify.TypeAudit {
+		add("nsrelay.audit.action", e.Action)
+		add("nsrelay.audit.object", e.Object)
+	}
+	add("user.name", e.User)
+	return kvs
+}
+
 func resourceLogs(r Resource, batch []notify.Event) []*logspb.ResourceLogs {
 	now := time.Now()
 	recs := make([]*logspb.LogRecord, 0, len(batch))
 	for _, e := range batch {
 		num, text := severity(e)
-		kvs := []KV{{"nsrelay.msgid", e.MsgID()}}
-		add := func(k, v string) {
-			if v != "" {
-				kvs = append(kvs, KV{k, v})
-			}
-		}
-		if e.Type == notify.TypeAlarm {
-			add("nsrelay.alarm.kind", e.Kind)
-			add("nsrelay.alarm.key", e.Key)
-			add("nsrelay.alarm.state", e.State)
-		}
-		if e.VLAN > 0 {
-			kvs = append(kvs, KV{"vlan", int64(e.VLAN)})
-		}
-		if e.Type == notify.TypeAudit {
-			add("nsrelay.audit.action", e.Action)
-			add("nsrelay.audit.object", e.Object)
-		}
-		add("user.name", e.User)
 		recs = append(recs, &logspb.LogRecord{TimeUnixNano: nanos(e.Time), ObservedTimeUnixNano: nanos(now),
-			SeverityNumber: num, SeverityText: text, Body: anyValue(e.Text), Attributes: attributes(kvs)})
+			SeverityNumber: num, SeverityText: text, Body: anyValue(e.Text), Attributes: attributes(logAttributes(e))})
 	}
 	return []*logspb.ResourceLogs{{Resource: resource(r), ScopeLogs: []*logspb.ScopeLogs{{
 		Scope: &commonpb.InstrumentationScope{Name: "nsrelay", Version: r.Version}, LogRecords: recs}}}}

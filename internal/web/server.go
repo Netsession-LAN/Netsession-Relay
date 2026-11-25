@@ -157,21 +157,28 @@ func (s *Server) parseTemplates(base template.FuncMap) error {
 		return err
 	}
 	for _, lang := range langs {
-		funcs := localFuncs(base, lang)
-		s.tpl[lang] = map[string]*template.Template{}
-		for _, p := range pages {
-			name := strings.TrimSuffix(strings.TrimPrefix(p, "templates/"), ".html")
-			if name == "layout" {
-				continue
-			}
-			t, err := template.New("layout.html").Funcs(funcs).ParseFS(templateFS, "templates/layout.html", p)
-			if err != nil {
-				return err
-			}
-			s.tpl[lang][name] = t
+		if s.tpl[lang], err = parsePages(pages, localFuncs(base, lang)); err != nil {
+			return err
 		}
 	}
 	return nil
+}
+
+// parsePages parses every page with the layout and the template functions of one language, by page name.
+func parsePages(pages []string, funcs template.FuncMap) (map[string]*template.Template, error) {
+	tpl := map[string]*template.Template{}
+	for _, p := range pages {
+		name := strings.TrimSuffix(strings.TrimPrefix(p, "templates/"), ".html")
+		if name == "layout" {
+			continue
+		}
+		t, err := template.New("layout.html").Funcs(funcs).ParseFS(templateFS, "templates/layout.html", p)
+		if err != nil {
+			return nil, err
+		}
+		tpl[name] = t
+	}
+	return tpl, nil
 }
 
 // Close ends what would keep a shutdown waiting: the open live streams and the poll that feeds them. The HTTP

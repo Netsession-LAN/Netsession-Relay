@@ -2,6 +2,7 @@ package web
 
 import (
 	"cmp"
+	"context"
 	"errors"
 	"fmt"
 	"net/http"
@@ -97,12 +98,7 @@ func (s *Server) network(w http.ResponseWriter, r *http.Request) {
 	for _, v := range c.VLANs {
 		n.add(networkVLANRow(v, live.VLANs))
 	}
-	names := map[string]string{}
-	if games, err := s.Store.Games(r.Context()); err == nil {
-		for _, g := range games {
-			names[g.ID] = g.Name
-		}
-	}
+	names := s.networkGameNames(r.Context())
 	var profiles []profileView
 	for _, p := range c.Profiles {
 		v := matrix(p, slices.Clone(n.groups), s.T(r))
@@ -111,6 +107,18 @@ func (s *Server) network(w http.ResponseWriter, r *http.Request) {
 	}
 	s.renderLive(w, r, "network", "Netz", "network", map[string]any{"VLANs": n.rows, "Groups": n.byGroup, "GroupN": n.groupN,
 		"Profiles": profiles, "On": n.on, "Total": len(n.rows)}, live)
+}
+
+// networkGameNames gives the names of the games by ID (empty when the games cannot be read: the page then shows
+// the IDs).
+func (s *Server) networkGameNames(ctx context.Context) map[string]string {
+	names := map[string]string{}
+	if games, err := s.Store.Games(ctx); err == nil {
+		for _, g := range games {
+			names[g.ID] = g.Name
+		}
+	}
+	return names
 }
 
 // networkList is the networks page's list of networks: all rows, the rows by group (groups in the order of

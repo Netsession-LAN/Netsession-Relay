@@ -56,27 +56,47 @@ func (s *Store) Targets(ctx context.Context) ([]Target, error) {
 	defer rows.Close()
 	var out []Target
 	for rows.Next() {
-		var t Target
-		var events, cfg, sec string
-		if err := rows.Scan(&t.ID, &t.Kind, &t.Name, &t.Enabled, &t.Endpoint, &events, &cfg, &sec, &t.Created, &t.Updated); err != nil {
+		t, err := scanTarget(rows)
+		if err != nil {
 			return nil, err
-		}
-		for _, e := range strings.Split(events, ",") {
-			if e = strings.TrimSpace(e); e != "" {
-				t.Events = append(t.Events, e)
-			}
-		}
-		_ = json.Unmarshal([]byte(cfg), &t.Config)
-		_ = json.Unmarshal([]byte(sec), &t.Secret)
-		if t.Config == nil {
-			t.Config = map[string]any{}
-		}
-		if t.Secret == nil {
-			t.Secret = map[string]string{}
 		}
 		out = append(out, t)
 	}
 	return out, rows.Err()
+}
+
+func scanTarget(rows *sql.Rows) (Target, error) {
+	var t Target
+	var events, cfg, sec string
+	if err := rows.Scan(&t.ID, &t.Kind, &t.Name, &t.Enabled, &t.Endpoint, &events, &cfg, &sec, &t.Created, &t.Updated); err != nil {
+		return t, err
+	}
+	t.Events = eventList(events)
+	_ = json.Unmarshal([]byte(cfg), &t.Config)
+	_ = json.Unmarshal([]byte(sec), &t.Secret)
+	t.initMaps()
+	return t, nil
+}
+
+// eventList splits the stored event types ("alarm,audit"); nil when there are none.
+func eventList(s string) []string {
+	var out []string
+	for _, e := range strings.Split(s, ",") {
+		if e = strings.TrimSpace(e); e != "" {
+			out = append(out, e)
+		}
+	}
+	return out
+}
+
+// initMaps gives a target without config or secrets empty maps, so they are stored and shown as {}.
+func (t *Target) initMaps() {
+	if t.Config == nil {
+		t.Config = map[string]any{}
+	}
+	if t.Secret == nil {
+		t.Secret = map[string]string{}
+	}
 }
 
 // Target returns one target.
@@ -107,20 +127,37 @@ func (s *Store) SaveTarget(ctx context.Context, user string, t Target) (int64, e
 	if err := checkTarget(t); err != nil {
 		return 0, err
 	}
-	var before Target
-	if t.ID != 0 {
-		var err error
-		if before, err = s.Target(ctx, t.ID); err != nil {
-			return 0, err
-		}
-		t.Secret = mergeSecrets(before.Secret, t.Secret)
+	before, err := s.keepStoredSecrets(ctx, &t)
+	if err != nil {
+		return 0, err
 	}
-	if t.Config == nil {
-		t.Config = map[string]any{}
+	t.initMaps()
+	id, err := s.writeTarget(ctx, user, t, before)
+	if isUniqueViolation(err) {
+		return 0, fmt.Errorf("%w: target %q", ErrExists, t.Name)
 	}
-	if t.Secret == nil {
-		t.Secret = map[string]string{}
+	if err != nil {
+		return 0, err
 	}
+	return id, nil
+}
+
+// keepStoredSecrets merges the secrets of an existing target (ID != 0) into t and returns the stored target;
+// for a new target it returns the zero Target.
+func (s *Store) keepStoredSecrets(ctx context.Context, t *Target) (Target, error) {
+	if t.ID == 0 {
+		return Target{}, nil
+	}
+	before, err := s.Target(ctx, t.ID)
+	if err != nil {
+		return Target{}, err
+	}
+	t.Secret = mergeSecrets(before.Secret, t.Secret)
+	return before, nil
+}
+
+// writeTarget updates or inserts the row of t with its audit entry and returns the target's ID.
+func (s *Store) writeTarget(ctx context.Context, user string, t, before Target) (int64, error) {
 	row := targetRowOf(t, s.ts())
 	id := t.ID
 	err := s.audited(ctx, func(tx *sql.Tx) (AuditEntry, error) {
@@ -133,13 +170,7 @@ func (s *Store) SaveTarget(ctx context.Context, user string, t Target) (int64, e
 		id, err = row.insert(ctx, tx)
 		return e, err
 	})
-	if isUniqueViolation(err) {
-		return 0, fmt.Errorf("%w: target %q", ErrExists, t.Name)
-	}
-	if err != nil {
-		return 0, err
-	}
-	return id, nil
+	return id, err
 }
 
 // checkTarget refuses an unknown kind, a missing or overlong name or endpoint and unknown event types.
@@ -147,12 +178,19 @@ func checkTarget(t Target) error {
 	switch {
 	case !slices.Contains([]string{TargetSyslog, TargetOTLP, TargetSNMPTrap}, t.Kind):
 		return fmt.Errorf("%w: kind %q", ErrInvalid, t.Kind)
-	case t.Name == "" || len(t.Name) > 60:
+	case !filledUpTo(t.Name, 60):
 		return fmt.Errorf("%w: name", ErrInvalid)
-	case t.Endpoint == "" || len(t.Endpoint) > 300:
+	case !filledUpTo(t.Endpoint, 300):
 		return fmt.Errorf("%w: endpoint", ErrInvalid)
 	}
-	for _, e := range t.Events {
+	return checkTargetEvents(t.Events)
+}
+
+// filledUpTo reports whether s is not empty and at most limit bytes long.
+func filledUpTo(s string, limit int) bool { return s != "" && len(s) <= limit }
+
+func checkTargetEvents(events []string) error {
+	for _, e := range events {
 		if e != "alarm" && e != "audit" {
 			return fmt.Errorf("%w: event %q", ErrInvalid, e)
 		}

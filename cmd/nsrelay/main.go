@@ -22,6 +22,7 @@ import (
 	"os"
 	"os/signal"
 	"runtime"
+	"slices"
 	"syscall"
 	"time"
 
@@ -74,27 +75,35 @@ func runCleanup(args []string, stdout, stderr io.Writer) int {
 		fmt.Fprintln(stderr, "cleanup: an engine is running and would put everything back; stop it first (docker compose stop), then run cleanup again")
 		return 1
 	}
+	return cleanupHost(stdout, stderr)
+}
+
+// cleanupHost removes the interfaces, then the firewall table and the routing, and prints what went.
+func cleanupHost(stdout, stderr io.Writer) int {
 	code := 0
 	links, err := netif.Cleanup(nil)
 	if err != nil {
 		fmt.Fprintln(stderr, "cleanup: interfaces:", err)
 		code = 1
 	}
-	for _, l := range links {
-		fmt.Fprintln(stdout, "removed: interface", l)
-	}
+	printRemoved(stdout, "removed: interface", links)
 	rest, err := hostprep.Remove()
 	if err != nil {
 		fmt.Fprintln(stderr, "cleanup: firewall and routing:", err)
 		code = 1
 	}
-	for _, r := range rest {
-		fmt.Fprintln(stdout, "removed:", r)
-	}
+	printRemoved(stdout, "removed:", rest)
 	if code == 0 && len(links)+len(rest) == 0 {
 		fmt.Fprintln(stdout, "nothing to remove: no interface, firewall table or routing rule of the relay on this host")
 	}
 	return code
+}
+
+// printRemoved prints one line per removed item, after prefix.
+func printRemoved(w io.Writer, prefix string, items []string) {
+	for _, it := range items {
+		fmt.Fprintln(w, prefix, it)
+	}
 }
 
 // engineAnswers reports whether an engine answers on the API socket within two seconds; no socket, no engine.
@@ -135,10 +144,8 @@ func run(args []string, stdout, stderr io.Writer) int {
 		usage(stdout)
 		return 0
 	}
-	for _, c := range commands {
-		if c.name == args[0] {
-			return c.run(args[1:], stdout, stderr)
-		}
+	if i := slices.IndexFunc(commands, func(c command) bool { return c.name == args[0] }); i >= 0 {
+		return commands[i].run(args[1:], stdout, stderr)
 	}
 	fmt.Fprintf(stderr, "nsrelay: unknown command %q\n\n", args[0])
 	usage(stderr)

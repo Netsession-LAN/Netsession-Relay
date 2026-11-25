@@ -74,10 +74,16 @@ func (w *worker) drain(backoff *time.Duration) bool {
 			*backoff = time.Second
 			continue
 		}
-		if w.sender.Reliable() && !w.waitRetry(err, backoff) {
+		if !w.afterFailure(err, backoff) {
 			return false
 		}
 	}
+}
+
+// afterFailure waits for the retry of a failed batch on a reliable transport (an unreliable one goes on with the
+// next batch at once). It returns false when the worker was stopped while waiting.
+func (w *worker) afterFailure(err error, backoff *time.Duration) bool {
+	return !w.sender.Reliable() || w.waitRetry(err, backoff)
 }
 
 // nextBatch drops the events that waited too long (a dead target for 10 minutes: they are worthless) and returns

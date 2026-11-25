@@ -76,16 +76,12 @@ func Parse(b []byte) (Frame, error) {
 		return f, ErrNotIPv4
 	}
 	ip := b[EthHeaderLen:]
-	if ip[0]>>4 != 4 {
-		return f, ErrNotIPv4
-	}
-	ihl := int(ip[0]&0x0f) * 4
-	total := int(binary.BigEndian.Uint16(ip[2:4]))
-	if ihl < IPv4HeaderLen || total < ihl+UDPHeaderLen || total > len(ip) {
-		return f, ErrBadIPHeader
+	ihl, total, err := ipv4Lengths(ip)
+	if err != nil {
+		return f, err
 	}
 	flagsFrag := binary.BigEndian.Uint16(ip[6:8])
-	if flagsFrag&0x2000 != 0 || flagsFrag&0x1fff != 0 { // MF set or offset > 0
+	if flagsFrag&0x3fff != 0 { // MF set or offset > 0
 		return f, ErrFragment
 	}
 	if ip[9] != ProtoUDP {
@@ -97,17 +93,34 @@ func Parse(b []byte) (Frame, error) {
 	f.TTL = ip[8]
 	f.Src = netip.AddrFrom4([4]byte(ip[12:16]))
 	f.Dst = netip.AddrFrom4([4]byte(ip[16:20]))
+	err = f.parseUDP(ip[ihl:total])
+	return f, err
+}
 
-	udp := ip[ihl:total]
+// ipv4Lengths returns the header length and the total length of an IPv4 packet after checking that both fit.
+func ipv4Lengths(ip []byte) (ihl, total int, err error) {
+	if ip[0]>>4 != 4 {
+		return 0, 0, ErrNotIPv4
+	}
+	ihl = int(ip[0]&0x0f) * 4
+	total = int(binary.BigEndian.Uint16(ip[2:4]))
+	if ihl < IPv4HeaderLen || total < ihl+UDPHeaderLen || total > len(ip) {
+		return 0, 0, ErrBadIPHeader
+	}
+	return ihl, total, nil
+}
+
+// parseUDP fills the UDP header fields and the payload of the segment udp into f.
+func (f *Frame) parseUDP(udp []byte) error {
 	ulen := int(binary.BigEndian.Uint16(udp[4:6]))
 	if ulen < UDPHeaderLen || ulen > len(udp) {
-		return f, ErrBadUDP
+		return ErrBadUDP
 	}
 	f.SrcPort = binary.BigEndian.Uint16(udp[0:2])
 	f.DstPort = binary.BigEndian.Uint16(udp[2:4])
 	f.UDPChecksum = binary.BigEndian.Uint16(udp[6:8])
 	f.Payload = udp[UDPHeaderLen:ulen]
-	return f, nil
+	return nil
 }
 
 // Len returns the size of the frame Build produces.

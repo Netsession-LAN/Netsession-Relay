@@ -117,26 +117,41 @@ func (s *Server) isRelayAddr(a netip.Addr) bool {
 	if !a.IsValid() || a.IsLoopback() {
 		return false
 	}
-	g := &s.guard
-	g.mu.Lock()
-	defer g.mu.Unlock()
-	if g.blocked == nil || time.Since(g.at) > guardTTL {
-		ctx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
-		g.blocked = s.relayAddrs(ctx)
-		cancel()
-		g.at = time.Now()
-	}
-	if !g.blocked[a] {
+	s.guard.mu.Lock()
+	defer s.guard.mu.Unlock()
+	s.refreshRelayAddrs()
+	if !s.guard.blocked[a] {
 		return false
 	}
+	s.logRelayAddrRefused(a)
+	return true
+}
+
+// refreshRelayAddrs reads the relay addresses again when the cached ones are older than guardTTL. s.guard.mu is
+// held.
+func (s *Server) refreshRelayAddrs() {
+	g := &s.guard
+	if g.blocked != nil && time.Since(g.at) <= guardTTL {
+		return
+	}
+	ctx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
+	g.blocked = s.relayAddrs(ctx)
+	cancel()
+	g.at = time.Now()
+}
+
+// logRelayAddrRefused logs a connection closed on relay address a, one line a minute per address. s.guard.mu is
+// held.
+func (s *Server) logRelayAddrRefused(a netip.Addr) {
+	g := &s.guard
 	if g.logged == nil {
 		g.logged = map[netip.Addr]time.Time{}
 	}
-	if t, ok := g.logged[a]; !ok || time.Since(t) > time.Minute { // one line a minute per address
-		g.logged[a] = time.Now()
-		s.Log.Warn("connection closed: the web UI is not served on relay addresses", "local", a.String())
+	if t, ok := g.logged[a]; ok && time.Since(t) <= time.Minute {
+		return
 	}
-	return true
+	g.logged[a] = time.Now()
+	s.Log.Warn("connection closed: the web UI is not served on relay addresses", "local", a.String())
 }
 
 // mgmtAddr is the IPv4 address of the management side: the first one on an interface with a default route.
@@ -167,12 +182,19 @@ func (l *guardListener) Accept() (net.Conn, error) {
 		if err != nil {
 			return nil, err
 		}
-		if ta, ok := c.LocalAddr().(*net.TCPAddr); ok {
-			if a, ok := netip.AddrFromSlice(ta.IP); ok && l.s.isRelayAddr(a) {
-				_ = c.Close()
-				continue
-			}
+		if !l.onRelayAddr(c) {
+			return c, nil
 		}
-		return c, nil
+		_ = c.Close()
 	}
+}
+
+// onRelayAddr reports whether a connection came in on an address of the relay side.
+func (l *guardListener) onRelayAddr(c net.Conn) bool {
+	ta, ok := c.LocalAddr().(*net.TCPAddr)
+	if !ok {
+		return false
+	}
+	a, ok := netip.AddrFromSlice(ta.IP)
+	return ok && l.s.isRelayAddr(a)
 }

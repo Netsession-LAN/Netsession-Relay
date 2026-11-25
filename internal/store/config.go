@@ -118,21 +118,28 @@ func (s *Store) exportGames(ctx context.Context, ev int64) ([]EventGameConfig, e
 	defer rows.Close()
 	var out []EventGameConfig
 	for rows.Next() {
-		var g EventGameConfig
-		var ov, sources string
-		var enabled bool
-		if err := rows.Scan(&g.ID, &g.FlowProfile, &ov, &sources, &enabled); err != nil {
+		g, keep, err := scanExportGame(rows)
+		if err != nil {
 			return nil, err
 		}
-		g.Sources = sourceList(sources)
-		_ = json.Unmarshal([]byte(ov), &g.Override)
-		g.Off = !enabled
-		if g.Off && keepsNothing(g, ov) {
-			continue
+		if keep {
+			out = append(out, g)
 		}
-		out = append(out, g)
 	}
 	return out, rows.Err()
+}
+
+// scanExportGame reads one game of the event; keep is false for a switched-off game without settings of its own.
+func scanExportGame(rows *sql.Rows) (g EventGameConfig, keep bool, err error) {
+	var ov, sources string
+	var enabled bool
+	if err := rows.Scan(&g.ID, &g.FlowProfile, &ov, &sources, &enabled); err != nil {
+		return g, false, err
+	}
+	g.Sources = sourceList(sources)
+	_ = json.Unmarshal([]byte(ov), &g.Override)
+	g.Off = !enabled
+	return g, !g.Off || !keepsNothing(g, ov), nil
 }
 
 // keepsNothing reports whether a game of the event has no settings of its own (flow profile, sources,

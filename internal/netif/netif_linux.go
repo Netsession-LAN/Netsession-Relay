@@ -17,29 +17,45 @@ import (
 // It is idempotent.
 func Ensure(v compile.VLAN) (Link, error) {
 	name := LinkName(v)
-	var link netlink.Link
-	var err error
-	switch v.Attach {
-	case compile.AttachTrunk:
-		link, err = ensureVLAN(v.Parent, name, v.VID)
-	case compile.AttachDevice:
-		link, err = netlink.LinkByName(name)
-	default:
-		err = fmt.Errorf("attach %q", v.Attach)
-	}
+	link, err := attachLink(v, name)
 	if err != nil {
 		return Link{}, fmt.Errorf("VLAN %d (%s): %w", v.VID, name, err)
 	}
 	if err := netlink.LinkSetUp(link); err != nil {
 		return Link{}, fmt.Errorf("%s: set up: %w", name, err)
 	}
-	if v.RelayIP.IsValid() {
-		addr := &netlink.Addr{IPNet: &net.IPNet{IP: v.RelayIP.AsSlice(), Mask: net.CIDRMask(v.CIDR.Bits(), 32)}}
-		if err := netlink.AddrReplace(link, addr); err != nil {
-			return Link{}, fmt.Errorf("%s: address %s: %w", name, addr, err)
-		}
+	if err := assignRelayIP(link, v, name); err != nil {
+		return Link{}, err
 	}
-	link, err = netlink.LinkByIndex(link.Attrs().Index) // refresh (MAC, state)
+	return readLink(link.Attrs().Index, name)
+}
+
+// attachLink returns the interface for v: the VLAN subinterface on the trunk (created if missing) or the device.
+func attachLink(v compile.VLAN, name string) (netlink.Link, error) {
+	switch v.Attach {
+	case compile.AttachTrunk:
+		return ensureVLAN(v.Parent, name, v.VID)
+	case compile.AttachDevice:
+		return netlink.LinkByName(name)
+	}
+	return nil, fmt.Errorf("attach %q", v.Attach)
+}
+
+// assignRelayIP puts the relay IP of v on the interface (nothing for a VLAN without one).
+func assignRelayIP(link netlink.Link, v compile.VLAN, name string) error {
+	if !v.RelayIP.IsValid() {
+		return nil
+	}
+	addr := &netlink.Addr{IPNet: &net.IPNet{IP: v.RelayIP.AsSlice(), Mask: net.CIDRMask(v.CIDR.Bits(), 32)}}
+	if err := netlink.AddrReplace(link, addr); err != nil {
+		return fmt.Errorf("%s: address %s: %w", name, addr, err)
+	}
+	return nil
+}
+
+// readLink reads the interface again (MAC, state) after it was set up.
+func readLink(index int, name string) (Link, error) {
+	link, err := netlink.LinkByIndex(index)
 	if err != nil {
 		return Link{}, err
 	}
@@ -51,6 +67,18 @@ func Ensure(v compile.VLAN) (Link, error) {
 }
 
 func ensureVLAN(parentName, name string, vid int) (netlink.Link, error) {
+	parent, err := upTrunk(parentName)
+	if err != nil {
+		return nil, err
+	}
+	if l, err := netlink.LinkByName(name); err == nil {
+		return adoptVLAN(l, name, vid, parent, parentName)
+	}
+	return createVLAN(name, vid, parent)
+}
+
+// upTrunk looks up the trunk interface and brings it up.
+func upTrunk(parentName string) (netlink.Link, error) {
 	parent, err := netlink.LinkByName(parentName)
 	if err != nil {
 		return nil, fmt.Errorf("trunk interface %q: %w", parentName, err)
@@ -58,13 +86,20 @@ func ensureVLAN(parentName, name string, vid int) (netlink.Link, error) {
 	if err := netlink.LinkSetUp(parent); err != nil {
 		return nil, fmt.Errorf("trunk %s: set up: %w", parentName, err)
 	}
-	if l, err := netlink.LinkByName(name); err == nil {
-		vl, ok := l.(*netlink.Vlan)
-		if !ok || vl.VlanId != vid || vl.ParentIndex != parent.Attrs().Index {
-			return nil, fmt.Errorf("interface %s exists but is not VLAN %d on %s", name, vid, parentName)
-		}
-		return l, nil
+	return parent, nil
+}
+
+// adoptVLAN accepts an existing interface only if it is VLAN vid on the trunk.
+func adoptVLAN(l netlink.Link, name string, vid int, parent netlink.Link, parentName string) (netlink.Link, error) {
+	vl, ok := l.(*netlink.Vlan)
+	if !ok || vl.VlanId != vid || vl.ParentIndex != parent.Attrs().Index {
+		return nil, fmt.Errorf("interface %s exists but is not VLAN %d on %s", name, vid, parentName)
 	}
+	return l, nil
+}
+
+// createVLAN adds VLAN vid on the trunk, marks it as the relay's (alias) and switches IPv6 off.
+func createVLAN(name string, vid int, parent netlink.Link) (netlink.Link, error) {
 	vl := &netlink.Vlan{LinkAttrs: netlink.LinkAttrs{Name: name, ParentIndex: parent.Attrs().Index}, VlanId: vid}
 	if err := netlink.LinkAdd(vl); err != nil {
 		return nil, fmt.Errorf("create: %w", err)
@@ -112,24 +147,32 @@ func DefaultRouteLinks() (map[string]bool, error) {
 		return nil, err
 	}
 	out := map[string]bool{}
-	add := func(index int) {
-		if index <= 0 {
-			return
-		}
-		if l, err := netlink.LinkByIndex(index); err == nil {
-			out[l.Attrs().Name] = true
-		}
-	}
 	for _, r := range routes {
-		if r.Dst != nil {
-			if ones, _ := r.Dst.Mask.Size(); ones != 0 {
-				continue
-			}
+		if !isDefaultRoute(r) {
+			continue
 		}
-		add(r.LinkIndex)
+		addLinkName(out, r.LinkIndex)
 		for _, nh := range r.MultiPath {
-			add(nh.LinkIndex)
+			addLinkName(out, nh.LinkIndex)
 		}
 	}
 	return out, nil
+}
+
+func isDefaultRoute(r netlink.Route) bool {
+	if r.Dst == nil {
+		return true
+	}
+	ones, _ := r.Dst.Mask.Size()
+	return ones == 0
+}
+
+// addLinkName adds the name of the interface with this index (none for index 0, a route without device).
+func addLinkName(names map[string]bool, index int) {
+	if index <= 0 {
+		return
+	}
+	if l, err := netlink.LinkByIndex(index); err == nil {
+		names[l.Attrs().Name] = true
+	}
 }

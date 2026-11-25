@@ -111,12 +111,17 @@ func gameProblems(g Game, duplicate bool) problems {
 	}
 	p.checkRelay(g)
 	p.checkGamePorts(g.GamePorts)
-	for i, s := range g.Discovery {
+	p.checkDiscovery(g.Discovery)
+	return p
+}
+
+// checkDiscovery checks every discovery spec; a problem names the spec's index.
+func (p *problems) checkDiscovery(specs []Spec) {
+	for i, s := range specs {
 		for _, e := range specProblems(s) {
 			p.add("discovery[%d]: %w", i, e)
 		}
 	}
-	return p
 }
 
 // checkRelay checks that discovery specs and relay_needed=yes go together, and that only a game that needs the
@@ -125,9 +130,10 @@ func (p *problems) checkRelay(g Game) {
 	relays := g.RelayNeeded == RelayYes
 	hasSpecs := len(g.Discovery) > 0
 	switch {
-	case relays && !hasSpecs:
+	case relays == hasSpecs:
+	case relays:
 		p.add("relay_needed=yes but no discovery spec")
-	case !relays && hasSpecs:
+	default:
 		p.add("discovery specs present but relay_needed=%s", g.RelayNeeded)
 	}
 	if g.DefaultEnabled && !relays {

@@ -81,34 +81,69 @@ var (
 // Verify checks a password against an encoded hash in constant time. The parameters of the hash are checked
 // against fixed bounds before anything is computed.
 func Verify(password, encoded string) error {
-	parts := strings.Split(encoded, "$")
-	if len(parts) != 6 || parts[0] != "" || parts[1] != "argon2id" {
-		return ErrFormat
-	}
-	var v int
-	if _, err := fmt.Sscanf(parts[2], "v=%d", &v); err != nil || v != argon2.Version {
-		return fmt.Errorf("%w: argon2 version", ErrFormat)
-	}
-	var p Params
-	if _, err := fmt.Sscanf(parts[3], "m=%d,t=%d,p=%d", &p.Memory, &p.Passes, &p.Threads); err != nil {
-		return fmt.Errorf("%w: parameters", ErrFormat)
-	}
-	salt, err := b64.DecodeString(parts[4])
+	h, err := parsePHC(encoded)
 	if err != nil {
-		return fmt.Errorf("%w: salt", ErrFormat)
+		return err
 	}
-	want, err := b64.DecodeString(parts[5])
-	if err != nil {
-		return fmt.Errorf("%w: key", ErrFormat)
-	}
-	if !p.valid() || !within(len(salt), minSaltLen, maxSaltLen) || !within(len(want), minKeyLen, maxKeyLen) {
+	if !h.inBounds() {
 		return ErrParams
 	}
-	got := argon2.IDKey([]byte(password), salt, p.Passes, p.Memory, p.Threads, uint32(len(want)))
-	if subtle.ConstantTimeCompare(got, want) != 1 {
+	got := argon2.IDKey([]byte(password), h.salt, h.params.Passes, h.params.Memory, h.params.Threads, uint32(len(h.key)))
+	if subtle.ConstantTimeCompare(got, h.key) != 1 {
 		return ErrMismatch
 	}
 	return nil
+}
+
+// phcHash is a decoded "$argon2id$v=..$m=..,t=..,p=..$<salt>$<key>" string.
+type phcHash struct {
+	params    Params
+	salt, key []byte
+}
+
+// parsePHC decodes an Argon2id hash in the PHC format; its parameters are not checked against the bounds yet.
+func parsePHC(encoded string) (phcHash, error) {
+	var h phcHash
+	parts := strings.Split(encoded, "$")
+	if len(parts) != 6 || !strings.HasPrefix(encoded, "$argon2id$") {
+		return h, ErrFormat
+	}
+	p, err := parsePHCParams(parts[2], parts[3])
+	if err != nil {
+		return h, err
+	}
+	h.params = p
+	if h.salt, err = decodePHCField(parts[4], "salt"); err != nil {
+		return h, err
+	}
+	h.key, err = decodePHCField(parts[5], "key")
+	return h, err
+}
+
+// parsePHCParams reads the version ("v=19") and the cost parameters ("m=65536,t=3,p=2") of a PHC string.
+func parsePHCParams(version, costs string) (Params, error) {
+	var p Params
+	var v int
+	if _, err := fmt.Sscanf(version, "v=%d", &v); err != nil || v != argon2.Version {
+		return p, fmt.Errorf("%w: argon2 version", ErrFormat)
+	}
+	if _, err := fmt.Sscanf(costs, "m=%d,t=%d,p=%d", &p.Memory, &p.Passes, &p.Threads); err != nil {
+		return p, fmt.Errorf("%w: parameters", ErrFormat)
+	}
+	return p, nil
+}
+
+func decodePHCField(s, name string) ([]byte, error) {
+	b, err := b64.DecodeString(s)
+	if err != nil {
+		return nil, fmt.Errorf("%w: %s", ErrFormat, name)
+	}
+	return b, nil
+}
+
+// inBounds reports whether cost parameters, salt and key length are within the bounds Verify accepts.
+func (h phcHash) inBounds() bool {
+	return h.params.valid() && within(len(h.salt), minSaltLen, maxSaltLen) && within(len(h.key), minKeyLen, maxKeyLen)
 }
 
 // Token returns n random bytes, URL-safe base64 encoded.

@@ -63,9 +63,7 @@ func (e *Engine) readFailed(r *receiver, err error) {
 // broadcasts and multicasts to the processor.
 func (e *Engine) handle(r *receiver, p *Processor, frame []byte) {
 	if isBeacon(frame) {
-		if e.guard.SeeFrame(frame, int(r.vid.Load()), time.Now()) {
-			e.Log.Warn("dual-active guard: another active relay started earlier, going to STANDBY", "if", r.sock.name)
-		}
+		e.seeBeacon(r, frame)
 		return
 	}
 	// A receiver can run before any state exists, and a network with constant broadcasts delivers a frame
@@ -78,7 +76,7 @@ func (e *Engine) handle(r *receiver, p *Processor, frame []byte) {
 	if !known {
 		return
 	}
-	if len(frame) > 0 && frame[0]&1 == 0 { // unicast passes the filter only as an answer to the server probe
+	if isUnicast(frame) { // unicast passes the filter only as an answer to the server probe
 		e.followUpProbe(r, &st.table.VLANs[in], frame)
 		return
 	}
@@ -87,6 +85,18 @@ func (e *Engine) handle(r *receiver, p *Processor, frame []byte) {
 
 func isBeacon(frame []byte) bool {
 	return len(frame) >= pkt.EthHeaderLen && binary.BigEndian.Uint16(frame[ethOffType:]) == BeaconEtherType
+}
+
+// isUnicast reports whether the destination MAC of frame is an individual address.
+func isUnicast(frame []byte) bool {
+	return len(frame) > 0 && frame[0]&1 == 0
+}
+
+// seeBeacon hands a beacon received by r to the dual-active guard.
+func (e *Engine) seeBeacon(r *receiver, frame []byte) {
+	if e.guard.SeeFrame(frame, int(r.vid.Load()), time.Now()) {
+		e.Log.Warn("dual-active guard: another active relay started earlier, going to STANDBY", "if", r.sock.name)
+	}
 }
 
 // followUpProbe sends what an answer to the server probe asks for (a second query), if anything.

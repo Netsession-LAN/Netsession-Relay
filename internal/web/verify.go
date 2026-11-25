@@ -99,14 +99,7 @@ func gamesYAML(games []gamedb.Game, ver map[string][]store.Verification) ([]byte
 	fmt.Fprintf(&b, "# Paste the entries into games/games.yaml (replace the old entry with the same id) and commit.\n\n")
 	for _, g := range games {
 		for _, v := range ver[g.ID] {
-			line := fmt.Sprintf("# verified %s, %s: %s", v.TS[:min(10, len(v.TS))], v.Event, v.Result)
-			if v.Variant != "" {
-				line += " (" + v.Variant + ")"
-			}
-			if v.Note != "" {
-				line += " - " + v.Note
-			}
-			fmt.Fprintln(&b, line+" ["+v.User+"]")
+			fmt.Fprintln(&b, verificationComment(v))
 		}
 		enc := yaml.NewEncoder(&b)
 		enc.SetIndent(2)
@@ -117,6 +110,18 @@ func gamesYAML(games []gamedb.Game, ver map[string][]store.Verification) ([]byte
 		b.WriteString("\n")
 	}
 	return b.Bytes(), nil
+}
+
+// verificationComment is the comment line of one verification above its game in the export.
+func verificationComment(v store.Verification) string {
+	line := fmt.Sprintf("# verified %s, %s: %s", v.TS[:min(10, len(v.TS))], v.Event, v.Result)
+	if v.Variant != "" {
+		line += " (" + v.Variant + ")"
+	}
+	if v.Note != "" {
+		line += " - " + v.Note
+	}
+	return line + " [" + v.User + "]"
 }
 
 func sendYAML(w http.ResponseWriter, name string, body []byte) {
@@ -163,18 +168,23 @@ func (s *Server) changedGamesYAML(w http.ResponseWriter, r *http.Request) {
 	for _, v := range all {
 		ver[v.GameID] = append(ver[v.GameID], v)
 	}
+	body, err := gamesYAML(changedGames(games, ver), ver)
+	if err != nil {
+		s.failInternal(w, r, "games export: YAML", err)
+		return
+	}
+	sendYAML(w, "spiele-geprueft-"+time.Now().Format("2006-01-02")+".yaml", body)
+}
+
+// changedGames are the games that were checked at an event (ver: verifications by game) or differ from the seed.
+func changedGames(games []store.GameRow, ver map[string][]store.Verification) []gamedb.Game {
 	var list []gamedb.Game
 	for _, g := range games {
 		if len(ver[g.ID]) > 0 || g.Origin != "seed" || g.LocallyModified {
 			list = append(list, g.Game)
 		}
 	}
-	body, err := gamesYAML(list, ver)
-	if err != nil {
-		s.failInternal(w, r, "games export: YAML", err)
-		return
-	}
-	sendYAML(w, "spiele-geprueft-"+time.Now().Format("2006-01-02")+".yaml", body)
+	return list
 }
 
 // configYAML exports the active configuration (VLANs, profiles, games of the event) as YAML.

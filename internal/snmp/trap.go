@@ -80,28 +80,46 @@ func ValidateTrap(endpoint string, c TrapConfig) error {
 	if err != nil || host == "" || port == "" {
 		return fmt.Errorf("trap receiver %q: %w", endpoint, ErrEndpoint)
 	}
+	return c.versionError()
+}
+
+// versionError checks the version and its credentials.
+func (c TrapConfig) versionError() error {
 	switch c.Version {
 	case "v2c":
 		if c.Community == "" {
 			return ErrCommunityMissing
 		}
+		return nil
 	case "v3":
 		if c.User == "" {
 			return ErrUserMissing
 		}
-		if _, err := authProto(c.AuthProto); err != nil {
-			return err
-		}
-		if _, err := privProto(c.PrivProto); err != nil {
-			return err
-		}
-		if len(c.AuthPass) < 8 || len(c.PrivPass) < 8 {
-			return ErrPasswordShort
-		}
-	default:
-		return fmt.Errorf("version %q", c.Version)
+		return validateUSM(c.AuthProto, c.AuthPass, c.PrivProto, c.PrivPass)
+	}
+	return fmt.Errorf("version %q", c.Version)
+}
+
+// validateUSM checks the protocols and passwords of a v3 user (authPriv).
+func validateUSM(auth, authPass, priv, privPass string) error {
+	if _, err := authProto(auth); err != nil {
+		return err
+	}
+	if _, err := privProto(priv); err != nil {
+		return err
+	}
+	if len(authPass) < 8 || len(privPass) < 8 {
+		return ErrPasswordShort
 	}
 	return nil
+}
+
+// newUSM returns the security parameters of a v3 user whose protocols passed validateUSM.
+func newUSM(user, auth, authPass, priv, privPass string) *gosnmp.UsmSecurityParameters {
+	ap, _ := authProto(auth)
+	pp, _ := privProto(priv)
+	return &gosnmp.UsmSecurityParameters{UserName: user, AuthenticationProtocol: ap, AuthenticationPassphrase: authPass,
+		PrivacyProtocol: pp, PrivacyPassphrase: privPass}
 }
 
 // TrapSender sends events as SNMP notifications to one receiver.
@@ -139,28 +157,30 @@ func (s *TrapSender) client() (*gosnmp.GoSNMP, error) {
 	if s.c.Bind.IsValid() {
 		g.LocalAddr = net.JoinHostPort(s.c.Bind.String(), "0")
 	}
-	if s.c.Version == "v2c" {
-		g.Version, g.Community = gosnmp.Version2c, s.c.Community
-	} else {
-		ap, _ := authProto(s.c.AuthProto)
-		pp, _ := privProto(s.c.PrivProto)
-		eid, _ := hex.DecodeString(s.c.EngineID)
-		g.Version, g.SecurityModel, g.MsgFlags = gosnmp.Version3, gosnmp.UserSecurityModel, gosnmp.AuthPriv
-		sp := &gosnmp.UsmSecurityParameters{UserName: s.c.User, AuthenticationProtocol: ap, AuthenticationPassphrase: s.c.AuthPass,
-			PrivacyProtocol: pp, PrivacyPassphrase: s.c.PrivPass}
-		if !s.c.Inform {
-			// traps: we are the authoritative engine
-			sp.AuthoritativeEngineID = string(eid)
-			sp.AuthoritativeEngineBoots = s.c.Boots
-			sp.AuthoritativeEngineTime = uint32(time.Since(s.start).Seconds())
-		}
-		g.SecurityParameters = sp
-	}
+	s.setVersion(g)
 	if err := g.Connect(); err != nil {
 		return nil, err
 	}
 	s.g = g
 	return g, nil
+}
+
+// setVersion configures g for v2c or for the v3 user.
+func (s *TrapSender) setVersion(g *gosnmp.GoSNMP) {
+	if s.c.Version == "v2c" {
+		g.Version, g.Community = gosnmp.Version2c, s.c.Community
+		return
+	}
+	eid, _ := hex.DecodeString(s.c.EngineID)
+	g.Version, g.SecurityModel, g.MsgFlags = gosnmp.Version3, gosnmp.UserSecurityModel, gosnmp.AuthPriv
+	sp := newUSM(s.c.User, s.c.AuthProto, s.c.AuthPass, s.c.PrivProto, s.c.PrivPass)
+	if !s.c.Inform {
+		// traps: we are the authoritative engine
+		sp.AuthoritativeEngineID = string(eid)
+		sp.AuthoritativeEngineBoots = s.c.Boots
+		sp.AuthoritativeEngineTime = uint32(time.Since(s.start).Seconds())
+	}
+	g.SecurityParameters = sp
 }
 
 // notificationFor returns the notification OID and varbinds of an event.
@@ -172,23 +192,17 @@ func notificationFor(e notify.Event) (string, []gosnmp.SnmpPDU) {
 	if e.VLAN > 0 {
 		vlan = strconv.Itoa(e.VLAN)
 	}
-	var trap string
-	var vars []gosnmp.SnmpPDU
-	switch {
-	case e.Type == notify.TypeAlarm && e.State == "clear":
-		trap = "0.2"
-		vars = []gosnmp.SnmpPDU{str("nsRelayEventKind", e.Kind), str("nsRelayEventKey", e.Key), str("nsRelayEventVlan", vlan), str("nsRelayEventText", e.Text)}
-	case e.Type == notify.TypeAlarm:
-		trap = "0.1"
-		vars = []gosnmp.SnmpPDU{str("nsRelayEventKind", e.Kind), str("nsRelayEventKey", e.Key), str("nsRelayEventVlan", vlan), str("nsRelayEventText", e.Text)}
-	case e.Type == notify.TypeAudit:
-		trap = "0.3"
-		vars = []gosnmp.SnmpPDU{str("nsRelayEventAction", e.Action), str("nsRelayEventUser", e.User), str("nsRelayEventObject", e.Object), str("nsRelayEventText", e.Text)}
-	default:
-		trap = "0.4"
-		vars = []gosnmp.SnmpPDU{str("nsRelayEventUser", e.User), str("nsRelayEventText", e.Text)}
+	switch e.Type {
+	case notify.TypeAlarm:
+		trap := "0.1"
+		if e.State == "clear" {
+			trap = "0.2"
+		}
+		return OID(trap), []gosnmp.SnmpPDU{str("nsRelayEventKind", e.Kind), str("nsRelayEventKey", e.Key), str("nsRelayEventVlan", vlan), str("nsRelayEventText", e.Text)}
+	case notify.TypeAudit:
+		return OID("0.3"), []gosnmp.SnmpPDU{str("nsRelayEventAction", e.Action), str("nsRelayEventUser", e.User), str("nsRelayEventObject", e.Object), str("nsRelayEventText", e.Text)}
 	}
-	return OID(trap), vars
+	return OID("0.4"), []gosnmp.SnmpPDU{str("nsRelayEventUser", e.User), str("nsRelayEventText", e.Text)}
 }
 
 // Send sends one notification per event.
@@ -199,30 +213,41 @@ func (s *TrapSender) Send(ctx context.Context, batch []notify.Event) error {
 	if err != nil {
 		return err
 	}
-	if dl, ok := ctx.Deadline(); ok {
-		g.Timeout = min(2*time.Second, time.Until(dl))
-	}
-	if sp, ok := g.SecurityParameters.(*gosnmp.UsmSecurityParameters); ok && !s.c.Inform {
-		sp.AuthoritativeEngineTime = uint32(time.Since(s.start).Seconds())
-	}
+	s.updateTiming(ctx, g)
 	for _, e := range batch {
-		trapOID, vars := notificationFor(e)
-		pdus := append([]gosnmp.SnmpPDU{
-			{Name: ".1.3.6.1.2.1.1.3.0", Type: gosnmp.TimeTicks, Value: uint32(time.Since(s.start).Seconds() * 100)},
-			{Name: ".1.3.6.1.6.3.1.1.4.1.0", Type: gosnmp.ObjectIdentifier, Value: "." + trapOID},
-		}, vars...)
-		for i := range pdus {
-			if pdus[i].Name[0] != '.' {
-				pdus[i].Name = "." + pdus[i].Name
-			}
-		}
-		if _, err := g.SendTrap(gosnmp.SnmpTrap{Variables: pdus, IsInform: s.c.Inform}); err != nil {
+		if _, err := g.SendTrap(gosnmp.SnmpTrap{Variables: s.trapVariables(e), IsInform: s.c.Inform}); err != nil {
 			_ = g.Conn.Close()
 			s.g = nil
 			return err
 		}
 	}
 	return nil
+}
+
+// updateTiming fits the timeout into the deadline of ctx and, for v3 traps, brings our engine time up to date.
+func (s *TrapSender) updateTiming(ctx context.Context, g *gosnmp.GoSNMP) {
+	if dl, ok := ctx.Deadline(); ok {
+		g.Timeout = min(2*time.Second, time.Until(dl))
+	}
+	if sp, ok := g.SecurityParameters.(*gosnmp.UsmSecurityParameters); ok && !s.c.Inform {
+		sp.AuthoritativeEngineTime = uint32(time.Since(s.start).Seconds())
+	}
+}
+
+// trapVariables are the varbinds of the notification for e: sysUpTime, snmpTrapOID, then the event's objects,
+// every name with a leading dot.
+func (s *TrapSender) trapVariables(e notify.Event) []gosnmp.SnmpPDU {
+	trapOID, vars := notificationFor(e)
+	pdus := append([]gosnmp.SnmpPDU{
+		{Name: ".1.3.6.1.2.1.1.3.0", Type: gosnmp.TimeTicks, Value: uint32(time.Since(s.start).Seconds() * 100)},
+		{Name: ".1.3.6.1.6.3.1.1.4.1.0", Type: gosnmp.ObjectIdentifier, Value: "." + trapOID},
+	}, vars...)
+	for i := range pdus {
+		if pdus[i].Name[0] != '.' {
+			pdus[i].Name = "." + pdus[i].Name
+		}
+	}
+	return pdus
 }
 
 // Close closes the socket.

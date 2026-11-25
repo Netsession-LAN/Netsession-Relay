@@ -70,13 +70,17 @@ func (s *Store) AddProfile(ctx context.Context, user, name, copyFrom string) err
 		if _, err := tx.ExecContext(ctx, `INSERT INTO flow_profile(name, is_default) VALUES (?, 0)`, name); err != nil {
 			return e, err
 		}
-		if copyFrom != "" {
-			if _, err := tx.ExecContext(ctx, `INSERT INTO flow_profile_edge(profile, src, dst) SELECT ?, src, dst FROM flow_profile_edge WHERE profile = ?`, name, copyFrom); err != nil {
-				return e, err
-			}
-		}
-		return e, nil
+		return e, copyProfileEdges(ctx, tx, name, copyFrom)
 	})
+}
+
+// copyProfileEdges gives profile name the edges of profile from ("" copies nothing).
+func copyProfileEdges(ctx context.Context, tx *sql.Tx, name, from string) error {
+	if from == "" {
+		return nil
+	}
+	_, err := tx.ExecContext(ctx, `INSERT INTO flow_profile_edge(profile, src, dst) SELECT ?, src, dst FROM flow_profile_edge WHERE profile = ?`, name, from)
+	return err
 }
 
 // DeleteProfile removes a flow profile; games that used it fall back to the default profile.

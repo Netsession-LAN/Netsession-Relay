@@ -87,13 +87,19 @@ func (s *Server) setupNetwork(w http.ResponseWriter, r *http.Request) {
 		reject(string(s.userError(r, "setup: store the configuration", err)))
 		return
 	}
+	s.applySetup(w, r, f.Mode, cfg, trunk)
+}
+
+// applySetup applies the configuration the setup stored and leaves the setup with the result.
+func (s *Server) applySetup(w http.ResponseWriter, r *http.Request, mode string, cfg store.Config, trunk string) {
+	T := s.T(r)
 	a := s.applyNow(r, "Einrichtung")
-	s.Log.Info("setup: network configured", "user", s.actor(r), "trunk", trunk, "vlans", len(cfg.VLANs), "mode", f.Mode, "ok", a.OK)
+	s.Log.Info("setup: network configured", "user", s.actor(r), "trunk", trunk, "vlans", len(cfg.VLANs), "mode", mode, "ok", a.OK)
 	if !a.OK {
 		back(w, r, "/", "", errors.New(T("Die Einrichtung ist gespeichert, aber das Anwenden ist fehlgeschlagen: %s", a.Error)))
 		return
 	}
-	back(w, r, "/", setupDoneMessage(f.Mode, len(cfg.VLANs), len(cfg.Games), T), nil)
+	back(w, r, "/", setupDoneMessage(mode, len(cfg.VLANs), len(cfg.Games), T), nil)
 }
 
 // setupConfig checks the finished form of step 2 and builds the configuration from it (cfg.VLANs are the
@@ -128,25 +134,45 @@ func setupDoneMessage(mode string, n, games int, T translator) string {
 // setupBasics checks the fields above the list of networks: trunk interface, mode, name of the event and the
 // host part of the relay address. msg is "" or what is wrong, in the language of T.
 func (s *Server) setupBasics(ctx context.Context, f setupForm, T translator) (trunk string, host int, msg string) {
-	// trunk: the typed name wins over the list
-	trunk = cmp.Or(f.TrunkOther, f.Trunk)
-	if !ifName.MatchString(trunk) {
-		return "", 0, T("Bitte die Schnittstelle wählen, an der die Netze als Trunk anliegen.")
-	}
-	if msg := s.setupTrunkProblem(ctx, trunk, T); msg != "" {
+	if trunk, msg = s.setupTrunk(ctx, f, T); msg != "" {
 		return "", 0, msg
 	}
-	if f.Mode != compile.ModeObserve && f.Mode != compile.ModeActive {
-		return "", 0, T("Bitte eine Betriebsart wählen.")
+	if msg = setupModeEventProblem(f, T); msg != "" {
+		return "", 0, msg
 	}
-	if f.Event == "" || len(f.Event) > 60 {
-		return "", 0, T("Bitte einen Namen für die LAN eingeben (höchstens 60 Zeichen).")
-	}
-	host, err := strconv.Atoi(f.Host)
-	if err != nil || host < 1 || host > 65534 {
-		return "", 0, T("Die Stelle der Relay-Adresse muss eine Zahl sein, z. B. 250.")
+	if host, msg = setupHostPart(f.Host, T); msg != "" {
+		return "", 0, msg
 	}
 	return trunk, host, ""
+}
+
+// setupHostPart reads the host part of the relay address (the same in every network), or says what is wrong.
+func setupHostPart(field string, T translator) (int, string) {
+	host, err := strconv.Atoi(field)
+	if err != nil || host < 1 || host > 65534 {
+		return 0, T("Die Stelle der Relay-Adresse muss eine Zahl sein, z. B. 250.")
+	}
+	return host, ""
+}
+
+// setupTrunk is the trunk interface of the form (the typed name wins over the list), or what is wrong with it.
+func (s *Server) setupTrunk(ctx context.Context, f setupForm, T translator) (trunk, msg string) {
+	trunk = cmp.Or(f.TrunkOther, f.Trunk)
+	if !ifName.MatchString(trunk) {
+		return "", T("Bitte die Schnittstelle wählen, an der die Netze als Trunk anliegen.")
+	}
+	return trunk, s.setupTrunkProblem(ctx, trunk, T)
+}
+
+// setupModeEventProblem checks the mode and the name of the event; "" or what is wrong.
+func setupModeEventProblem(f setupForm, T translator) string {
+	if f.Mode != compile.ModeObserve && f.Mode != compile.ModeActive {
+		return T("Bitte eine Betriebsart wählen.")
+	}
+	if f.Event == "" || len(f.Event) > 60 {
+		return T("Bitte einen Namen für die LAN eingeben (höchstens 60 Zeichen).")
+	}
+	return ""
 }
 
 // setupVLANs turns the filled rows into networks on the trunk; the relay address of each is the host-th address
@@ -223,15 +249,20 @@ func (s *Server) setupCheck(r *http.Request, f setupForm, vlans []store.VLANConf
 	case err != nil:
 		return cfg, T("Das Netz passt nicht zur Konfiguration: %s", err.Error())
 	}
+	return cfg, s.setupEngineProblem(ctx, snap, T)
+}
+
+// setupEngineProblem lets the engine check the snapshot of the setup; "" or why it cannot be used.
+func (s *Server) setupEngineProblem(ctx context.Context, snap *compile.Snapshot, T translator) string {
 	vctx, cancel := context.WithTimeout(ctx, 10*time.Second)
 	defer cancel()
 	res, err := s.Engine.Validate(vctx, snap)
 	switch {
 	case err != nil:
 		s.Log.Error("setup: engine not reachable", "err", err)
-		return cfg, T("Die Engine antwortet nicht, deshalb wurde nichts gespeichert. Läuft der Container der Engine?")
+		return T("Die Engine antwortet nicht, deshalb wurde nichts gespeichert. Läuft der Container der Engine?")
 	case !res.OK:
-		return cfg, T("Die Engine lehnt diese Netze ab: %s", res.Error)
+		return T("Die Engine lehnt diese Netze ab: %s", res.Error)
 	}
-	return cfg, ""
+	return ""
 }

@@ -34,22 +34,15 @@ func runWebDemo(ctx context.Context, addr string, log *slog.Logger, fresh bool, 
 	if fresh {
 		return runWebDemoSetup(ctx, addr, st, log, logo)
 	}
-	if _, err := control.Init(ctx, st, "demo", "netsession", "ens19", false); err != nil {
-		log.Error("demo init", "err", err)
-		return 1
-	}
-	// a preset starts in observe; the demo shows a relay that is switched on
-	if err := st.SetMode(ctx, "demo", compile.ModeActive); err != nil {
-		log.Error("demo mode", "err", err)
-		return 1
-	}
-	if err := demoAccounts(ctx, st); err != nil {
-		log.Error("demo account", "err", err)
-		return 1
-	}
+	return runWebDemoEvent(ctx, addr, st, log, logo)
+}
+
+// runWebDemoEvent serves the demo of a running event: the netsession preset, switched on and applied to the
+// fake engine.
+func runWebDemoEvent(ctx context.Context, addr string, st *store.Store, log *slog.Logger, logo string) int {
 	eng := demo.NewEngine()
-	if _, err := control.Apply(ctx, st, eng, "demo", "Demo-Start", false); err != nil {
-		log.Error("demo apply", "err", err)
+	if step, err := setupDemoEvent(ctx, st, eng); err != nil {
+		log.Error(step, "err", err)
 		return 1
 	}
 	ui, err := web.New(st, eng, log, version)
@@ -64,6 +57,25 @@ func runWebDemo(ctx context.Context, addr string, log *slog.Logger, fresh bool, 
 	}
 	log.Warn("DEMO MODE: invented data, nothing is relayed; accounts demo (admin), op (operator), view (viewer), password demo")
 	return serveWeb(ctx, addr, ui, log, "demo")
+}
+
+// setupDemoEvent fills the empty database with the demo event and applies it to eng. On failure it returns the
+// step that failed, as the log message.
+func setupDemoEvent(ctx context.Context, st *store.Store, eng *demo.Engine) (step string, err error) {
+	if _, err := control.Init(ctx, st, "demo", "netsession", "ens19", false); err != nil {
+		return "demo init", err
+	}
+	// a preset starts in observe; the demo shows a relay that is switched on
+	if err := st.SetMode(ctx, "demo", compile.ModeActive); err != nil {
+		return "demo mode", err
+	}
+	if err := demoAccounts(ctx, st); err != nil {
+		return "demo account", err
+	}
+	if _, err := control.Apply(ctx, st, eng, "demo", "Demo-Start", false); err != nil {
+		return "demo apply", err
+	}
+	return "", nil
 }
 
 // demoAccounts creates the demo accounts demo (admin), op (operator) and view (viewer), all with password demo.

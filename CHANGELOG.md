@@ -2,6 +2,17 @@
 
 All notable changes to Netsession Relay. Versions follow [Semantic Versioning](https://semver.org/).
 
+## [1.0.3] - 2026-11-25
+
+### Changed
+- No function above a cyclomatic complexity of 7 any more (before: 17), most at 5 or below. Behaviour, messages
+  and output are unchanged; the packet path stays allocation-free and as fast as before (new benchmarks for the
+  per-frame helpers).
+- Scrutinizer measures the unit test coverage again (Cobertura) and no longer rates test files.
+
+### Fixed
+- The SNMPv3 agent test no longer times out on slow CI machines.
+
 ## [1.0.2] - 2026-11-24
 
 ### Changed

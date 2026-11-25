@@ -20,7 +20,9 @@
 package hostprep
 
 import (
+	"maps"
 	"net/netip"
+	"slices"
 	"sort"
 
 	"github.com/Netsession-LAN/Netsession-Relay/internal/compile"
@@ -69,10 +71,7 @@ func PlanFor(s *compile.Snapshot, protected map[string]bool, hasAddr func(string
 			set[v.Parent] = true
 		}
 	}
-	for n := range set {
-		p.Ifaces = append(p.Ifaces, n)
-	}
-	sort.Strings(p.Ifaces)
+	p.Ifaces = slices.Sorted(maps.Keys(set))
 	sort.Slice(p.Networks, func(i, j int) bool { return p.Networks[i].Addr().Less(p.Networks[j].Addr()) })
 	return p
 }

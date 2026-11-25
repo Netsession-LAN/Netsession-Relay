@@ -114,13 +114,18 @@ func (g *Guard) SeenElsewhere(f *pkt.Frame, vlan int, now time.Time, window time
 	}
 	sh.m[key] = dedupEntry{vlan: vlan, at: ts}
 	if len(sh.m) > 4096 { // bounded memory: drop expired entries
-		for k, e := range sh.m {
-			if ts-e.at > window.Nanoseconds() {
-				delete(sh.m, k)
-			}
-		}
+		sh.dropExpired(ts, window)
 	}
 	return false
+}
+
+// dropExpired removes the entries older than window at ts. sh.mu is held.
+func (sh *dedupShard) dropExpired(ts int64, window time.Duration) {
+	for k, e := range sh.m {
+		if ts-e.at > window.Nanoseconds() {
+			delete(sh.m, k)
+		}
+	}
 }
 
 // ---- step 9: token buckets ----
@@ -170,10 +175,7 @@ func (g *Guard) takeN(k bucketKey, n, rate, burst int, now time.Time) bool {
 		b = &bucket{tokens: float64(burst), last: ts}
 		sh.m[k] = b
 	}
-	b.tokens += float64(ts-b.last) / 1e9 * float64(rate)
-	if b.tokens > float64(burst) {
-		b.tokens = float64(burst)
-	}
+	b.tokens = min(b.tokens+float64(ts-b.last)/1e9*float64(rate), float64(burst))
 	b.last = ts
 	if b.tokens < float64(n) {
 		return false
@@ -223,33 +225,8 @@ const StormPause = 60 * time.Second
 // the engine stays over the limit, the next loudest pair follows three seconds later. It returns the paused
 // rule ID and VLAN ID ("" and 0 when nothing was paused).
 func (g *Guard) StormTick(t *Table, c *Counters, now time.Time) (string, int) {
-	sent := c.Sent.Load()
-	delta := sent - g.lastSent
-	if sent < g.lastSent {
-		delta = sent
-	}
-	g.lastSent = sent
-	var top stormKey
-	var topRate uint64
-	last := g.lastCopies
-	g.lastCopies = make(map[stormKey]uint64, len(last))
-	for _, r := range t.rules {
-		for in := range r.copies {
-			v := r.copies[in].Load()
-			if v == 0 {
-				continue
-			}
-			k := stormKey{r.ID, t.VLANs[in].VID}
-			d := v
-			if p, ok := last[k]; ok && p <= v { // counters start at 0 with every new table
-				d = v - p
-			}
-			g.lastCopies[k] = v
-			if d > topRate {
-				top, topRate = k, d
-			}
-		}
-	}
+	delta := g.sentSinceLastTick(c)
+	top, topRate := g.loudestPair(t)
 	g.expirePauses(now)
 	if delta <= uint64(t.limits.StormPPS) {
 		g.stormOverSecs = 0
@@ -267,6 +244,45 @@ func (g *Guard) StormTick(t *Table, c *Counters, now time.Time) (string, int) {
 	g.Alarms.Raise(AlarmStorm, top.rule, now, "paused for 60 s for frames from VLAN %d only: %d frames/s sent in total, %d/s of them by this rule from that VLAN",
 		top.vid, delta, topRate)
 	return top.rule, top.vid
+}
+
+// sentSinceLastTick returns the frames the engine sent since the last StormTick.
+func (g *Guard) sentSinceLastTick(c *Counters) uint64 {
+	sent := c.Sent.Load()
+	delta := sent - g.lastSent
+	if sent < g.lastSent {
+		delta = sent
+	}
+	g.lastSent = sent
+	return delta
+}
+
+// loudestPair returns the pair (rule, ingress VLAN) that caused most copies since the last tick, and that number.
+func (g *Guard) loudestPair(t *Table) (top stormKey, topRate uint64) {
+	last := g.lastCopies
+	g.lastCopies = make(map[stormKey]uint64, len(last))
+	for _, r := range t.rules {
+		for in := range r.copies {
+			k := stormKey{r.ID, t.VLANs[in].VID}
+			if d := g.copiesSince(last, k, r.copies[in].Load()); d > topRate {
+				top, topRate = k, d
+			}
+		}
+	}
+	return top, topRate
+}
+
+// copiesSince returns the copies of pair k since the last tick (last: the counters then, v: the counter now) and
+// remembers v for the next tick.
+func (g *Guard) copiesSince(last map[stormKey]uint64, k stormKey, v uint64) uint64 {
+	if v == 0 {
+		return 0
+	}
+	g.lastCopies[k] = v
+	if p, ok := last[k]; ok && p <= v { // counters start at 0 with every new table
+		return v - p
+	}
+	return v
 }
 
 // Paused reports whether the storm brake currently drops frames of the rule arriving on the VLAN.

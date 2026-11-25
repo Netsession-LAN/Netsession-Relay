@@ -50,13 +50,7 @@ func (s *Server) gameEditForm(w http.ResponseWriter, r *http.Request) {
 
 func (s *Server) gameCreate(w http.ResponseWriter, r *http.Request) {
 	T := s.T(r)
-	f := readGameForm(r, true)
-	if strings.HasPrefix(r.URL.Path, "/finder/") {
-		f.From = "finder"
-	}
-	if f.ID == "" {
-		f.ID = slug(f.Name)
-	}
+	f := newGameForm(r)
 	reject := func(msg string) {
 		f.Err = msg
 		f.pad()
@@ -81,6 +75,19 @@ func (s *Server) gameCreate(w http.ResponseWriter, r *http.Request) {
 		msg = s.enableNewGame(r, f.Name, g.ID, msg)
 	}
 	http.Redirect(w, r, "/spiele/"+url.PathEscape(g.ID)+"?ok="+urlQuery(msg), http.StatusSeeOther)
+}
+
+// newGameForm reads the form of a new game: marked as coming from the port finder when it was sent there, and
+// with an ID made from the name when none was given.
+func newGameForm(r *http.Request) gameForm {
+	f := readGameForm(r, true)
+	if strings.HasPrefix(r.URL.Path, "/finder/") {
+		f.From = "finder"
+	}
+	if f.ID == "" {
+		f.ID = slug(f.Name)
+	}
+	return f
 }
 
 // enableNewGame switches a just created game on and applies the config. It returns the message for the
@@ -121,15 +128,22 @@ func (s *Server) gameUpdate(w http.ResponseWriter, r *http.Request) {
 		reject(s.gameError(r, err))
 		return
 	}
-	msg = T("%s gespeichert.", g.Name)
-	if cur.Enabled {
-		if a := s.applyNow(r, g.ID+" geändert"); a.OK {
-			msg = T("%s gespeichert und angewendet (Revision %d).", g.Name, a.Revision)
-		} else {
-			msg = T("%s gespeichert, Anwenden fehlgeschlagen: %s", g.Name, a.Error)
-		}
-	}
+	msg = s.applySavedGame(r, g, cur.Enabled)
 	http.Redirect(w, r, "/spiele/"+url.PathEscape(g.ID)+"?ok="+urlQuery(msg), http.StatusSeeOther)
+}
+
+// applySavedGame applies the configuration after a switched-on game was changed and returns the message for the
+// redirect.
+func (s *Server) applySavedGame(r *http.Request, g gamedb.Game, enabled bool) string {
+	T := s.T(r)
+	if !enabled {
+		return T("%s gespeichert.", g.Name)
+	}
+	a := s.applyNow(r, g.ID+" geändert")
+	if !a.OK {
+		return T("%s gespeichert, Anwenden fehlgeschlagen: %s", g.Name, a.Error)
+	}
+	return T("%s gespeichert und angewendet (Revision %d).", g.Name, a.Revision)
 }
 
 func (s *Server) gameDelete(w http.ResponseWriter, r *http.Request) {
@@ -141,10 +155,7 @@ func (s *Server) gameDelete(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	if err := s.Store.DeleteGame(r.Context(), s.actor(r), id); err != nil {
-		if errors.Is(err, store.ErrSeedGame) {
-			err = uimsg.Error("Spiele aus der Spiele-Datenbank lassen sich nicht löschen, nur ausschalten.")
-		}
-		back(w, r, "/spiele/"+url.PathEscape(id), "", s.userError(r, "game: delete", err))
+		back(w, r, "/spiele/"+url.PathEscape(id), "", s.userError(r, "game: delete", gameDeleteRefusal(err)))
 		return
 	}
 	msg := T("%s gelöscht.", cur.Name)
@@ -154,4 +165,12 @@ func (s *Server) gameDelete(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 	back(w, r, "/spiele", msg, nil)
+}
+
+// gameDeleteRefusal explains why a game of the game database cannot be deleted; any other error stays as it is.
+func gameDeleteRefusal(err error) error {
+	if errors.Is(err, store.ErrSeedGame) {
+		return uimsg.Error("Spiele aus der Spiele-Datenbank lassen sich nicht löschen, nur ausschalten.")
+	}
+	return err
 }

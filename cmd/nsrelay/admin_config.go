@@ -2,11 +2,14 @@ package main
 
 import (
 	"fmt"
+	"io"
 	"strconv"
 	"strings"
 
+	"github.com/Netsession-LAN/Netsession-Relay/internal/compile"
 	"github.com/Netsession-LAN/Netsession-Relay/internal/control"
 	"github.com/Netsession-LAN/Netsession-Relay/internal/gamedb"
+	"github.com/Netsession-LAN/Netsession-Relay/internal/store"
 )
 
 // Admin subcommands that change the configuration of the active event and apply it to the engine.
@@ -66,13 +69,21 @@ func adminEnable(c *adminCall) int {
 		return 1
 	}
 	defer st.Close()
-	for _, id := range c.fs.Args() {
-		if err := st.SetGameEnabled(c.ctx, c.common.user, id, c.name == "enable"); err != nil {
-			return c.fail(err)
-		}
+	if err := setGamesEnabled(c, st, c.fs.Args(), c.name == "enable"); err != nil {
+		return c.fail(err)
 	}
 	fmt.Fprintf(c.stdout, "%sd: %s (takes effect with `nsrelay admin apply`)\n", c.name, strings.Join(c.fs.Args(), ", "))
 	return 0
+}
+
+// setGamesEnabled switches the games on or off, one after the other; it stops at the first error.
+func setGamesEnabled(c *adminCall, st *store.Store, ids []string, on bool) error {
+	for _, id := range ids {
+		if err := st.SetGameEnabled(c.ctx, c.common.user, id, on); err != nil {
+			return err
+		}
+	}
+	return nil
 }
 
 func adminMode(c *adminCall) int {
@@ -106,11 +117,7 @@ func adminApply(c *adminCall) int {
 	}
 	defer st.Close()
 	res, err := control.Apply(c.ctx, st, c.engine(), c.common.user, *note, *dry)
-	for _, w := range res.Warnings {
-		if w.Code != "shared_port" {
-			fmt.Fprintln(c.stdout, "warning:", w)
-		}
-	}
+	printApplyWarnings(c.stdout, res.Warnings)
 	if err != nil {
 		return c.fail(err)
 	}
@@ -121,6 +128,15 @@ func adminApply(c *adminCall) int {
 		fmt.Fprintf(c.stdout, "applied revision %d: %d VLANs, %d rules, hash %s\n", res.Revision, len(s.VLANs), len(s.Rules), s.Hash[:12])
 	}
 	return 0
+}
+
+// printApplyWarnings prints the compiler's warnings except shared_port, which the command line leaves out.
+func printApplyWarnings(w io.Writer, warnings []compile.Warning) {
+	for _, wa := range warnings {
+		if wa.Code != "shared_port" {
+			fmt.Fprintln(w, "warning:", wa)
+		}
+	}
 }
 
 func adminRollback(c *adminCall) int {

@@ -30,18 +30,8 @@ func (s *Store) importConfig(ctx context.Context, tx *sql.Tx, c Config) error {
 	if err := importMode(ctx, tx, c.Mode); err != nil {
 		return err
 	}
-	if err := clearDefinitions(ctx, tx); err != nil {
+	if err := replaceDefinitions(ctx, tx, c); err != nil {
 		return err
-	}
-	for _, v := range c.VLANs {
-		if err := insertVLAN(ctx, tx, v); err != nil {
-			return fmt.Errorf("VLAN %d: %w", v.VID, err)
-		}
-	}
-	for _, p := range c.Profiles {
-		if err := insertProfile(ctx, tx, p); err != nil {
-			return err
-		}
 	}
 	ev, err := s.activateEvent(ctx, tx, c.Event)
 	if err != nil {
@@ -66,6 +56,35 @@ func importMode(ctx context.Context, tx *sql.Tx, mode string) error {
 func clearDefinitions(ctx context.Context, tx *sql.Tx) error {
 	for _, stmt := range []string{`DELETE FROM flow_profile_edge`, `DELETE FROM flow_profile`, `DELETE FROM event_vlan`, `DELETE FROM vlan`} {
 		if _, err := tx.ExecContext(ctx, stmt); err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
+// replaceDefinitions replaces all VLANs and flow profiles with those of c.
+func replaceDefinitions(ctx context.Context, tx *sql.Tx, c Config) error {
+	if err := clearDefinitions(ctx, tx); err != nil {
+		return err
+	}
+	if err := insertVLANs(ctx, tx, c.VLANs); err != nil {
+		return err
+	}
+	return insertProfiles(ctx, tx, c.Profiles)
+}
+
+func insertVLANs(ctx context.Context, tx *sql.Tx, vlans []VLANConfig) error {
+	for _, v := range vlans {
+		if err := insertVLAN(ctx, tx, v); err != nil {
+			return fmt.Errorf("VLAN %d: %w", v.VID, err)
+		}
+	}
+	return nil
+}
+
+func insertProfiles(ctx context.Context, tx *sql.Tx, profiles []ProfileConfig) error {
+	for _, p := range profiles {
+		if err := insertProfile(ctx, tx, p); err != nil {
 			return err
 		}
 	}

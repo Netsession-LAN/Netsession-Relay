@@ -46,19 +46,23 @@ func removeStaleMgmtRules(want map[string]*netlink.Rule) (missingRules, error) {
 		return m, err
 	}
 	for i := range have {
-		r := have[i]
-		if r.Priority != MgmtPriority {
-			continue
-		}
-		key := mgmtRuleKey(&r)
-		if _, ok := want[key]; ok && r.Table == MgmtTable {
-			delete(want, key)
-			continue
-		}
-		r.Family = netlink.FAMILY_V4
-		if err := netlink.RuleDel(&r); err != nil {
-			m.errs = append(m.errs, fmt.Errorf("remove rule: %w", err))
+		if have[i].Priority == MgmtPriority {
+			m.settle(have[i])
 		}
 	}
 	return m, nil
+}
+
+// settle handles a rule of the host with the management priority: a wanted one is no longer missing, any other
+// one is removed.
+func (m *missingRules) settle(r netlink.Rule) {
+	key := mgmtRuleKey(&r)
+	if _, ok := m.rules[key]; ok && r.Table == MgmtTable {
+		delete(m.rules, key)
+		return
+	}
+	r.Family = netlink.FAMILY_V4
+	if err := netlink.RuleDel(&r); err != nil {
+		m.errs = append(m.errs, fmt.Errorf("remove rule: %w", err))
+	}
 }

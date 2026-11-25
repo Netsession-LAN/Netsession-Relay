@@ -25,10 +25,15 @@ func adminGames(c *adminCall) int {
 	if err != nil {
 		return c.fail(err)
 	}
+	return printGames(c, games, *onlyEnabled)
+}
+
+// printGames prints the game table; with onlyEnabled only the games that are switched on.
+func printGames(c *adminCall, games []store.GameRow, onlyEnabled bool) int {
 	tw := tabwriter.NewWriter(c.stdout, 0, 4, 2, ' ', 0)
 	fmt.Fprintln(tw, "ON\tID\tNAME\tRELAY\tCONF\tPORTS")
 	for _, g := range games {
-		if *onlyEnabled && !g.Enabled {
+		if onlyEnabled && !g.Enabled {
 			continue
 		}
 		fmt.Fprintf(tw, "%s\t%s\t%s\t%s\t%s\t%s\n", mark(g.Enabled), g.ID, g.Name, g.RelayNeeded, g.Confidence, discoveryPorts(g.Discovery))
@@ -111,13 +116,17 @@ func adminRevisions(c *adminCall) int {
 	tw := tabwriter.NewWriter(c.stdout, 0, 4, 2, ' ', 0)
 	fmt.Fprintln(tw, "ID\tTIME\tUSER\tOK\tHASH\tNOTE")
 	for _, r := range revs {
-		applied := "yes"
-		if !r.AppliedOK {
-			applied = "NO: " + r.EngineMessage
-		}
-		fmt.Fprintf(tw, "%d\t%s\t%s\t%s\t%s\t%s\n", r.ID, r.TS[:19], r.User, applied, r.Hash[:12], r.Note)
+		fmt.Fprintf(tw, "%d\t%s\t%s\t%s\t%s\t%s\n", r.ID, r.TS[:19], r.User, appliedColumn(r), r.Hash[:12], r.Note)
 	}
 	return flush(c, tw)
+}
+
+// appliedColumn is the OK column of the revision list: yes, or NO with the engine's message.
+func appliedColumn(r store.Revision) string {
+	if r.AppliedOK {
+		return "yes"
+	}
+	return "NO: " + r.EngineMessage
 }
 
 func adminAudit(c *adminCall) int {

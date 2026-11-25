@@ -41,12 +41,7 @@ func Send(o SendOptions) error {
 		return fmt.Errorf("lab send: %w", err)
 	}
 	defer unix.Close(fd)
-	f := pkt.Frame{SrcMAC: pkt.MAC(ifi.HardwareAddr), DstMAC: pkt.BroadcastMAC, TTL: 64, ID: 1,
-		Src: o.Src, Dst: o.Dst, SrcPort: o.SrcPort, DstPort: o.DstPort, UDPChecksum: 1, Payload: o.Payload}
-	if o.Dst.IsMulticast() {
-		f.DstMAC = pkt.MulticastMAC(o.Dst)
-		f.TTL = 1
-	}
+	f := sendFrame(o, pkt.MAC(ifi.HardwareAddr))
 	for i := range max(o.Count, 1) {
 		f.ID = uint16(i + 1)
 		b, err := pkt.Build(nil, &f)
@@ -56,11 +51,27 @@ func Send(o SendOptions) error {
 		if _, err := unix.Write(fd, b); err != nil {
 			return fmt.Errorf("lab send: %w", err)
 		}
-		if o.Interval > 0 && i < o.Count-1 {
-			time.Sleep(time.Duration(o.Interval) * time.Millisecond)
-		}
+		pauseBetween(i, o.Count, o.Interval)
 	}
 	return nil
+}
+
+// sendFrame is the frame Send transmits: to the broadcast MAC, or to the group's MAC with TTL 1 for multicast.
+func sendFrame(o SendOptions, mac pkt.MAC) pkt.Frame {
+	f := pkt.Frame{SrcMAC: mac, DstMAC: pkt.BroadcastMAC, TTL: 64, ID: 1,
+		Src: o.Src, Dst: o.Dst, SrcPort: o.SrcPort, DstPort: o.DstPort, UDPChecksum: 1, Payload: o.Payload}
+	if o.Dst.IsMulticast() {
+		f.DstMAC = pkt.MulticastMAC(o.Dst)
+		f.TTL = 1
+	}
+	return f
+}
+
+// pauseBetween waits interval milliseconds after frame i of count, except after the last one.
+func pauseBetween(i, count, interval int) {
+	if interval > 0 && i < count-1 {
+		time.Sleep(time.Duration(interval) * time.Millisecond)
+	}
 }
 
 // SendRaw transmits count Ethernet frames built by build (which gets the interface MAC as source address),
@@ -75,9 +86,7 @@ func SendRaw(iface string, count, interval int, build func(mac pkt.MAC) []byte) 
 		if _, err := unix.Write(fd, build(pkt.MAC(ifi.HardwareAddr))); err != nil {
 			return fmt.Errorf("lab send: %w", err)
 		}
-		if interval > 0 && i < count-1 {
-			time.Sleep(time.Duration(interval) * time.Millisecond)
-		}
+		pauseBetween(i, count, interval)
 	}
 	return nil
 }
@@ -90,12 +99,8 @@ func receiveFrames(fd, timeout int, handle func(pkt.Frame) (done bool, err error
 	_ = unix.SetsockoptTimeval(fd, unix.SOL_SOCKET, unix.SO_RCVTIMEO, &tv)
 	buf := make([]byte, 2048)
 	for time.Now().Before(deadline) {
-		n, err := unix.Read(fd, buf)
-		if err != nil {
-			continue
-		}
-		f, err := pkt.Parse(append([]byte{}, buf[:n]...))
-		if err != nil {
+		f, ok := readFrame(fd, buf)
+		if !ok {
 			continue
 		}
 		if done, err := handle(f); done || err != nil {
@@ -103,6 +108,17 @@ func receiveFrames(fd, timeout int, handle func(pkt.Frame) (done bool, err error
 		}
 	}
 	return nil
+}
+
+// readFrame reads one frame into buf and parses a copy of it; false on a read timeout or a frame that does not
+// parse.
+func readFrame(fd int, buf []byte) (pkt.Frame, bool) {
+	n, err := unix.Read(fd, buf)
+	if err != nil {
+		return pkt.Frame{}, false
+	}
+	f, err := pkt.Parse(append([]byte{}, buf[:n]...))
+	return f, err == nil
 }
 
 // Expect waits for matching UDP frames on opts.Iface and returns them.
@@ -132,32 +148,50 @@ func A2SServer(o A2SOptions) (int, error) {
 		return 0, fmt.Errorf("lab a2s-server: %w", err)
 	}
 	defer unix.Close(fd)
-	port := o.Port
-	if port == 0 {
-		port = 27015
+	if o.Port == 0 {
+		o.Port = 27015
 	}
-	infos := 0
-	err = receiveFrames(fd, o.Timeout, func(f pkt.Frame) (bool, error) {
-		if f.DstPort != port {
-			return false, nil
-		}
-		answer, info, ok := a2sAnswer(f.Payload, o.Name)
-		if !ok {
-			return false, nil
-		}
-		if info {
-			infos++
-		}
-		out := pkt.Frame{DstMAC: f.SrcMAC, SrcMAC: pkt.MAC(ifi.HardwareAddr), TTL: 64, ID: uint16(infos + 1), Src: o.IP,
-			Dst: f.Src, SrcPort: port, DstPort: f.SrcPort, UDPChecksum: 1, Payload: answer}
-		b, err := pkt.Build(nil, &out)
-		if err != nil {
-			return true, err
-		}
-		if _, err := unix.Write(fd, b); err != nil {
-			return true, fmt.Errorf("lab a2s-server: %w", err)
-		}
+	s := a2sResponder{fd: fd, mac: pkt.MAC(ifi.HardwareAddr), o: o}
+	err = receiveFrames(fd, o.Timeout, s.handle)
+	return s.infos, err
+}
+
+// a2sResponder is the state of one A2SServer run; o.Port is set.
+type a2sResponder struct {
+	fd    int
+	mac   pkt.MAC
+	o     A2SOptions
+	infos int // info answers sent
+}
+
+// handle answers a query to the server's port; it stops the run when an answer cannot be sent.
+func (s *a2sResponder) handle(f pkt.Frame) (bool, error) {
+	if f.DstPort != s.o.Port {
 		return false, nil
-	})
-	return infos, err
+	}
+	answer, info, ok := a2sAnswer(f.Payload, s.o.Name)
+	if !ok {
+		return false, nil
+	}
+	if info {
+		s.infos++
+	}
+	if err := s.send(f, answer); err != nil {
+		return true, err
+	}
+	return false, nil
+}
+
+// send transmits answer to the sender of the query f.
+func (s *a2sResponder) send(f pkt.Frame, answer []byte) error {
+	out := pkt.Frame{DstMAC: f.SrcMAC, SrcMAC: s.mac, TTL: 64, ID: uint16(s.infos + 1), Src: s.o.IP,
+		Dst: f.Src, SrcPort: s.o.Port, DstPort: f.SrcPort, UDPChecksum: 1, Payload: answer}
+	b, err := pkt.Build(nil, &out)
+	if err != nil {
+		return err
+	}
+	if _, err := unix.Write(s.fd, b); err != nil {
+		return fmt.Errorf("lab a2s-server: %w", err)
+	}
+	return nil
 }

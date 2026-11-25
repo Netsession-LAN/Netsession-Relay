@@ -5,6 +5,7 @@ import (
 	"context"
 	"errors"
 	"io"
+	"mime/multipart"
 	"net/http"
 	"time"
 
@@ -114,22 +115,10 @@ func (s *Server) eventLogo(w http.ResponseWriter, r *http.Request) {
 }
 
 func (s *Server) logoSet(w http.ResponseWriter, r *http.Request) {
-	var data []byte
-	if r.MultipartForm != nil && len(r.MultipartForm.File["logo"]) > 0 {
-		fh := r.MultipartForm.File["logo"][0]
-		if fh.Size > eventlogo.MaxUpload {
-			back(w, r, logoPanel, "", msgLogoTooBig)
-			return
-		}
-		f, err := fh.Open()
-		if err == nil {
-			data, err = io.ReadAll(io.LimitReader(f, eventlogo.MaxUpload+1))
-			f.Close()
-		}
-		if err != nil {
-			back(w, r, logoPanel, "", msgLogoFormat)
-			return
-		}
+	data, refused := logoUpload(r)
+	if refused != "" {
+		back(w, r, logoPanel, "", refused)
+		return
 	}
 	if err := s.SetEventLogo(r.Context(), s.actor(r), data); err != nil {
 		msg, refused := logoMessage(err)
@@ -141,6 +130,33 @@ func (s *Server) logoSet(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	back(w, r, logoPanel, "Logo gespeichert. Es steht jetzt oben in der Leiste, auf der Übersicht und auf der Anmeldeseite.", nil)
+}
+
+// logoUpload reads the file of the logo form. No file gives no data (eventlogo refuses that with its own message);
+// refused is the message for a file that is too big or cannot be read.
+func logoUpload(r *http.Request) (data []byte, refused uimsg.Error) {
+	if r.MultipartForm == nil || len(r.MultipartForm.File["logo"]) == 0 {
+		return nil, ""
+	}
+	fh := r.MultipartForm.File["logo"][0]
+	if fh.Size > eventlogo.MaxUpload {
+		return nil, msgLogoTooBig
+	}
+	data, err := readLogoFile(fh)
+	if err != nil {
+		return nil, msgLogoFormat
+	}
+	return data, ""
+}
+
+// readLogoFile reads an uploaded file, at most one byte more than eventlogo accepts.
+func readLogoFile(fh *multipart.FileHeader) ([]byte, error) {
+	f, err := fh.Open()
+	if err != nil {
+		return nil, err
+	}
+	defer f.Close()
+	return io.ReadAll(io.LimitReader(f, eventlogo.MaxUpload+1))
 }
 
 func (s *Server) logoRemove(w http.ResponseWriter, r *http.Request) {

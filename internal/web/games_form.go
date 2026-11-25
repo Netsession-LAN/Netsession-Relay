@@ -156,11 +156,10 @@ func (f gameForm) discovery(stored map[string]bool, admin bool, T translator) ([
 }
 
 // spec is the discovery spec of one form row; ok is false when its hidden advanced value is not acceptable.
-func (sp specForm) spec(stored map[string]bool, admin bool) (spec gamedb.Spec, ok bool) {
-	if sp.Adv != "" {
-		if err := json.Unmarshal([]byte(sp.Adv), &spec); err != nil || (!admin && !stored[advOf(spec)]) {
-			return spec, false
-		}
+func (sp specForm) spec(stored map[string]bool, admin bool) (gamedb.Spec, bool) {
+	spec, ok := sp.advanced(stored, admin)
+	if !ok {
+		return spec, false
 	}
 	spec.Kind, spec.Ports, spec.Direction, spec.Group = sp.Kind, sp.Ports, sp.Direction, ""
 	if sp.Kind == gamedb.KindMulticast {
@@ -168,6 +167,18 @@ func (sp specForm) spec(stored map[string]bool, admin bool) (spec gamedb.Spec, o
 	}
 	if spec.Direction == "" {
 		spec.Direction = "both"
+	}
+	return spec, true
+}
+
+// advanced decodes the row's hidden advanced value (empty: none). Only an admin may send one that is not stored
+// for the game already.
+func (sp specForm) advanced(stored map[string]bool, admin bool) (spec gamedb.Spec, ok bool) {
+	if sp.Adv == "" {
+		return spec, true
+	}
+	if err := json.Unmarshal([]byte(sp.Adv), &spec); err != nil || (!admin && !stored[advOf(spec)]) {
+		return spec, false
 	}
 	return spec, true
 }

@@ -36,46 +36,56 @@ func shortHash(h string) string {
 
 // formatNum groups thousands with a thin space ("120 431").
 func formatNum(v any) string {
-	var n int64
-	switch x := v.(type) {
-	case int:
-		n = int64(x)
-	case int64:
-		n = x
-	case uint64:
-		n = int64(x)
-	case uint32:
-		n = int64(x)
-	case uint16:
-		n = int64(x)
-	default:
+	n, ok := numberOf(v)
+	if !ok {
 		return fmt.Sprint(v)
 	}
+	return groupThousands(n)
+}
+
+// numberOf converts the integer types the templates pass to formatNum.
+func numberOf(v any) (int64, bool) {
+	switch x := v.(type) {
+	case int:
+		return int64(x), true
+	case int64:
+		return x, true
+	case uint64:
+		return int64(x), true
+	case uint32:
+		return int64(x), true
+	case uint16:
+		return int64(x), true
+	}
+	return 0, false
+}
+
+// groupThousands writes n with a narrow space between groups of three digits.
+func groupThousands(n int64) string {
 	s := strconv.FormatInt(n, 10)
-	neg := strings.HasPrefix(s, "-")
-	s = strings.TrimPrefix(s, "-")
+	digits := strings.TrimPrefix(s, "-")
 	var b strings.Builder
-	for i, c := range s {
-		if i > 0 && (len(s)-i)%3 == 0 {
+	b.WriteString(s[:len(s)-len(digits)]) // the sign
+	for i, c := range digits {
+		if i > 0 && (len(digits)-i)%3 == 0 {
 			b.WriteString(" ")
 		}
 		b.WriteRune(c)
 	}
-	if neg {
-		return "-" + b.String()
-	}
 	return b.String()
+}
+
+// groupKeys are the key cap labels of the built-in groups other than the tables.
+var groupKeys = map[string]string{
+	compile.GroupGameserver: "GS",
+	compile.GroupWiFi:       "WL",
+	compile.GroupOrga:       "OR",
 }
 
 // tableKey is the short label on a VLAN key cap: table number, GS (gameserver), WL (WiFi), OR (orga).
 func tableKey(name, group string) string {
-	switch group {
-	case compile.GroupGameserver:
-		return "GS"
-	case compile.GroupWiFi:
-		return "WL"
-	case compile.GroupOrga:
-		return "OR"
+	if k, ok := groupKeys[group]; ok {
+		return k
 	}
 	if f := strings.Fields(name); len(f) > 1 {
 		return f[len(f)-1]
@@ -86,18 +96,18 @@ func tableKey(name, group string) string {
 	return strings.ToUpper(name)
 }
 
+// modeNames are the words for the operating modes ("" is an engine without configuration).
+var modeNames = map[string]string{
+	compile.ModeActive:  "Aktiv",
+	compile.ModeObserve: "Beobachten",
+	compile.ModePaused:  "Pausiert",
+	"standby":           "Standby",
+	"":                  "Ohne Konfiguration",
+}
+
 func modeName(m string) string {
-	switch m {
-	case compile.ModeActive:
-		return "Aktiv"
-	case compile.ModeObserve:
-		return "Beobachten"
-	case compile.ModePaused:
-		return "Pausiert"
-	case "standby":
-		return "Standby"
-	case "":
-		return "Ohne Konfiguration"
+	if n, ok := modeNames[m]; ok {
+		return n
 	}
 	return m
 }
@@ -127,13 +137,7 @@ func urlQuery(s string) string { return url.QueryEscape(s) }
 // timeTag renders a point in time as <time>. The text is the server's zone (UTC in the container); the
 // script replaces it with the browser's local time. kind: "datetime" | "time".
 func timeTag(v any, kind string) template.HTML {
-	var t time.Time
-	switch x := v.(type) {
-	case time.Time:
-		t = x
-	case string:
-		t, _ = time.Parse(time.RFC3339Nano, x)
-	}
+	t := timeOf(v)
 	if t.IsZero() {
 		return "–"
 	}
@@ -147,6 +151,18 @@ func timeTag(v any, kind string) template.HTML {
 	}
 	return template.HTML(`<time datetime="` + t.UTC().Format(time.RFC3339) + `" data-fmt="` + template.HTMLEscapeString(kind) + //nolint:gosec // G203: every variable part is escaped (HTMLEscapeString / escapeArgs)
 		`">` + template.HTMLEscapeString(text) + `</time>`)
+}
+
+// timeOf reads the point in time a template passes to timeTag: a time.Time or an RFC 3339 text (zero if neither).
+func timeOf(v any) time.Time {
+	switch x := v.(type) {
+	case time.Time:
+		return x
+	case string:
+		t, _ := time.Parse(time.RFC3339Nano, x)
+		return t
+	}
+	return time.Time{}
 }
 
 // dict builds a map for passing several values to a sub-template.
@@ -208,19 +224,19 @@ func confName(c string) string {
 	return c
 }
 
-// hostIssueText puts a code of the host preparation of the engine (hostprep) into words.
+// hostIssueTexts put the codes of the host preparation of the engine (hostprep) into words.
+var hostIssueTexts = map[string]string{
+	"sysctl":     "Auf den Relay-Schnittstellen ließ sich das Routing nicht abschalten.",
+	"ipv6":       "IPv6 ließ sich auf den Relay-Schnittstellen nicht abschalten.",
+	"firewall":   "Die Host-Firewall für die Relay-Schnittstellen ließ sich nicht einrichten. Dienste des Hosts wie SSH sind damit aus den Spieler-Netzen erreichbar; die Weboberfläche weist solche Verbindungen selbst ab.",
+	"mgmt_route": "Der Rückweg für die Verwaltungsadresse ließ sich nicht setzen. Aus einem Spieler-Netz kann die Weboberfläche dann hängen.",
+	"forward":    "Der Host leitet IPv4 weiter (ip_forward) und die Engine konnte es für die Relay-Schnittstellen nicht verhindern: Der Host kann zwischen den Netzen routen.",
+}
+
+// hostIssueText puts a code of the host preparation into words; an unknown code stays as it is.
 func hostIssueText(code string) string {
-	switch code {
-	case "sysctl":
-		return "Auf den Relay-Schnittstellen ließ sich das Routing nicht abschalten."
-	case "ipv6":
-		return "IPv6 ließ sich auf den Relay-Schnittstellen nicht abschalten."
-	case "firewall":
-		return "Die Host-Firewall für die Relay-Schnittstellen ließ sich nicht einrichten. Dienste des Hosts wie SSH sind damit aus den Spieler-Netzen erreichbar; die Weboberfläche weist solche Verbindungen selbst ab."
-	case "mgmt_route":
-		return "Der Rückweg für die Verwaltungsadresse ließ sich nicht setzen. Aus einem Spieler-Netz kann die Weboberfläche dann hängen."
-	case "forward":
-		return "Der Host leitet IPv4 weiter (ip_forward) und die Engine konnte es für die Relay-Schnittstellen nicht verhindern: Der Host kann zwischen den Netzen routen."
+	if t, ok := hostIssueTexts[code]; ok {
+		return t
 	}
 	return code
 }

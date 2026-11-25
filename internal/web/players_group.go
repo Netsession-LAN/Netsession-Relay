@@ -75,11 +75,17 @@ type playerGroup struct {
 
 // addRule notes the ports of a rule the group was seen on and the other games that share them.
 func (g *playerGroup) addRule(rule compile.Rule, refs []gameRef) {
-	if g.Ports != "" && !strings.Contains(g.Ports, rule.Ports) {
-		g.Ports += ", " + rule.Ports
-	} else if g.Ports == "" {
+	switch {
+	case g.Ports == "":
 		g.Ports = rule.Ports
+	case !strings.Contains(g.Ports, rule.Ports):
+		g.Ports += ", " + rule.Ports
 	}
+	g.addOtherGames(refs)
+}
+
+// addOtherGames notes the games besides the group's own one that share its ports.
+func (g *playerGroup) addOtherGames(refs []gameRef) {
 	for _, r := range refs {
 		if r.ID != g.GameID && !slices.Contains(g.More, r) {
 			g.More = append(g.More, r)
@@ -90,26 +96,35 @@ func (g *playerGroup) addRule(rule compile.Rule, refs []gameRef) {
 // addPlayer adds a sender to the group. The same PC on another port of the same game is one line with the
 // widest time span; servers on different ports of one host (four CS2 servers on 27015-27018) stay separate.
 func (g *playerGroup) addPlayer(row playerRow) {
-	i := slices.IndexFunc(g.Players, func(x playerRow) bool {
-		return x.IP == row.IP && x.VID == row.VID && (!x.Server || !row.Server || x.Port == row.Port)
-	})
+	i := slices.IndexFunc(g.Players, row.samePlayer)
 	if i < 0 {
 		g.Players = append(g.Players, row)
 		return
 	}
-	old := &g.Players[i]
-	if row.First.Before(old.First) {
-		old.First = row.First
+	g.Players[i].merge(row)
+}
+
+// samePlayer reports whether x is the line of p's PC: same address in the same network, and for two servers
+// also the same port.
+func (p playerRow) samePlayer(x playerRow) bool {
+	return x.IP == p.IP && x.VID == p.VID && (!x.Server || !p.Server || x.Port == p.Port)
+}
+
+// merge widens the line to the time span and count of row. A host stays a host, "aktiv" gives way to what row
+// says, and a server found by the probe brings its details.
+func (p *playerRow) merge(row playerRow) {
+	if row.First.Before(p.First) {
+		p.First = row.First
 	}
-	if row.Last.After(old.Last) {
-		old.Last, old.Ago = row.Last, row.Ago
+	if row.Last.After(p.Last) {
+		p.Last, p.Ago = row.Last, row.Ago
 	}
-	old.Count += row.Count
-	if row.Role == roleHost || old.Role == roleActive {
-		old.Role = row.Role
+	p.Count += row.Count
+	if row.Role == roleHost || p.Role == roleActive {
+		p.Role = row.Role
 	}
 	if row.Server {
-		old.Server, old.Port, old.SrvName, old.SrvMap, old.Slots = true, row.Port, row.SrvName, row.SrvMap, row.Slots
+		p.Server, p.Port, p.SrvName, p.SrvMap, p.Slots = true, row.Port, row.SrvName, row.SrvMap, row.Slots
 	}
 }
 
@@ -154,11 +169,16 @@ func markScanners(groups []playerGroup) {
 		}
 	}
 	for gi := range groups {
-		for pi := range groups[gi].Players {
-			if p := &groups[gi].Players[pi]; !p.Server {
-				p.Spread = spread[p.IP]
-				p.Scanner = p.Spread >= scannerSpread
-			}
+		groups[gi].markSpread(spread)
+	}
+}
+
+// markSpread sets the number of games every searching player appears in (spread by address) and marks scanners.
+func (g *playerGroup) markSpread(spread map[string]int) {
+	for pi := range g.Players {
+		if p := &g.Players[pi]; !p.Server {
+			p.Spread = spread[p.IP]
+			p.Scanner = p.Spread >= scannerSpread
 		}
 	}
 }
@@ -177,20 +197,26 @@ func (g *playerGroup) searchingIPs() map[string]bool {
 // roleOf says what a sender on this rule does: only "announce" games host, only "query" games search,
 // "both" (FlatOut) cannot be told apart from the packet alone.
 func roleOf(ids []string, dirs map[string]map[string]bool) string {
-	host, search := false, false
+	host, search, unclear := ruleDirections(ids, dirs)
+	switch {
+	case unclear || host == search:
+		return roleActive
+	case host:
+		return roleHost
+	}
+	return roleSearch
+}
+
+// ruleDirections collects what the games ids do (dirs: the directions per game): host (announce), search
+// (query), or unclear as soon as one game does both or is not known.
+func ruleDirections(ids []string, dirs map[string]map[string]bool) (host, search, unclear bool) {
 	for _, id := range ids {
 		d := dirs[id]
+		if d["both"] || d[""] {
+			return false, false, true
+		}
 		host = host || d["announce"]
 		search = search || d["query"]
-		if d["both"] || d[""] {
-			return roleActive
-		}
 	}
-	switch {
-	case host && !search:
-		return roleHost
-	case search && !host:
-		return roleSearch
-	}
-	return roleActive
+	return host, search, false
 }

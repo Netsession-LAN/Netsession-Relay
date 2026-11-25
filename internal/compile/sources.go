@@ -50,11 +50,15 @@ func mergeSources(games []string, byGame map[string][]netip.Prefix, vlans []VLAN
 		}
 	}
 	SortSources(out)
-	out = slices.Compact(out)
+	return slices.Compact(out), ignoredFilters(open)
+}
+
+// ignoredFilters describes the VLANs where a source filter was ignored ("" when there are none).
+func ignoredFilters(open []string) string {
 	if len(open) == 0 {
-		return out, ""
+		return ""
 	}
-	return out, fmt.Sprintf("source filter ignored (%s), those VLANs stay unrestricted", strings.Join(open, "; "))
+	return fmt.Sprintf("source filter ignored (%s), those VLANs stay unrestricted", strings.Join(open, "; "))
 }
 
 // vlanFilter is what the games of one port want inside one VLAN network.

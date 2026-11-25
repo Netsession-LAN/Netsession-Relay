@@ -135,21 +135,35 @@ func (d *Dispatcher) reload(targets []store.Target, force bool) {
 			continue
 		}
 		keep[t.ID] = true
-		w := d.workers[t.ID]
-		if w != nil && !force && w.t.Updated == t.Updated {
-			continue
+		if old := d.restart(t, force); old != nil {
+			stopping = append(stopping, old)
 		}
-		if w != nil {
-			stopping = append(stopping, w)
-		}
-		d.start(t)
 	}
+	stopping = append(stopping, d.removeWorkersExcept(keep)...)
+}
+
+// restart starts a new worker for t unless one for the unchanged target runs already (force: in any case). It
+// returns the replaced worker, which the caller stops, or nil. The caller holds d.mu.
+func (d *Dispatcher) restart(t store.Target, force bool) *worker {
+	w := d.workers[t.ID]
+	if w != nil && !force && w.t.Updated == t.Updated {
+		return nil
+	}
+	d.start(t)
+	return w
+}
+
+// removeWorkersExcept removes the workers of the targets not in keep and returns them for the caller to stop.
+// The caller holds d.mu.
+func (d *Dispatcher) removeWorkersExcept(keep map[int64]bool) []*worker {
+	var removed []*worker
 	for id, w := range d.workers {
 		if !keep[id] {
-			stopping = append(stopping, w)
+			removed = append(removed, w)
 			delete(d.workers, id)
 		}
 	}
+	return removed
 }
 
 // start builds the sender of a target and runs a new worker for it; a target whose sender cannot be built is
@@ -186,17 +200,22 @@ func (d *Dispatcher) Publish(ev Event) {
 	if ev.Time.IsZero() {
 		ev.Time = time.Now()
 	}
+	for _, w := range d.subscribers(ev.Type) {
+		w.push(ev)
+	}
+}
+
+// subscribers returns the workers whose targets take events of type typ (test events go to no one).
+func (d *Dispatcher) subscribers(typ string) []*worker {
 	d.mu.Lock()
+	defer d.mu.Unlock()
 	ws := make([]*worker, 0, len(d.workers))
 	for _, w := range d.workers {
-		if w.t.Wants(ev.Type) && ev.Type != TypeTest {
+		if w.t.Wants(typ) && typ != TypeTest {
 			ws = append(ws, w)
 		}
 	}
-	d.mu.Unlock()
-	for _, w := range ws {
-		w.push(ev)
-	}
+	return ws
 }
 
 // ErrUnknownTarget is returned by Test for a target that is not running.

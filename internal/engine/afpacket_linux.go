@@ -46,30 +46,48 @@ func openPacketSock(name string, ifindex int, readTimeout time.Duration) (*packe
 		unix.Close(fd)
 		return nil, fmt.Errorf("%s: %s: %w", name, step, err)
 	}
-	raw, err := bpf.Assemble(rxFilter)
-	if err != nil {
-		return fail("assemble filter", err)
-	}
-	filter := make([]unix.SockFilter, len(raw))
-	for i, r := range raw {
-		filter[i] = unix.SockFilter{Code: r.Op, Jt: r.Jt, Jf: r.Jf, K: r.K}
-	}
-	prog := unix.SockFprog{Len: uint16(len(filter)), Filter: &filter[0]}
-	if err := unix.SetsockoptSockFprog(fd, unix.SOL_SOCKET, unix.SO_ATTACH_FILTER, &prog); err != nil {
-		return fail("attach filter", err)
-	}
-	if err := unix.SetsockoptInt(fd, unix.SOL_PACKET, unix.PACKET_IGNORE_OUTGOING, 1); err != nil {
-		return fail("PACKET_IGNORE_OUTGOING", err)
-	}
-	_ = unix.SetsockoptInt(fd, unix.SOL_SOCKET, unix.SO_RCVBUF, 4<<20)
-	tv := unix.NsecToTimeval(readTimeout.Nanoseconds())
-	if err := unix.SetsockoptTimeval(fd, unix.SOL_SOCKET, unix.SO_RCVTIMEO, &tv); err != nil {
-		return fail("SO_RCVTIMEO", err)
+	if step, err := setPacketSockOptions(fd, readTimeout); err != nil {
+		return fail(step, err)
 	}
 	if err := unix.Bind(fd, &unix.SockaddrLinklayer{Protocol: htons(unix.ETH_P_ALL), Ifindex: ifindex}); err != nil {
 		return fail("bind", err)
 	}
 	return &packetSock{fd: fd, ifindex: ifindex, name: name}, nil
+}
+
+// setPacketSockOptions attaches the receive filter and sets the socket options of openPacketSock. On error it
+// returns the step that failed.
+func setPacketSockOptions(fd int, readTimeout time.Duration) (string, error) {
+	filter, err := assembleRxFilter()
+	if err != nil {
+		return "assemble filter", err
+	}
+	prog := unix.SockFprog{Len: uint16(len(filter)), Filter: &filter[0]}
+	if err := unix.SetsockoptSockFprog(fd, unix.SOL_SOCKET, unix.SO_ATTACH_FILTER, &prog); err != nil {
+		return "attach filter", err
+	}
+	if err := unix.SetsockoptInt(fd, unix.SOL_PACKET, unix.PACKET_IGNORE_OUTGOING, 1); err != nil {
+		return "PACKET_IGNORE_OUTGOING", err
+	}
+	_ = unix.SetsockoptInt(fd, unix.SOL_SOCKET, unix.SO_RCVBUF, 4<<20)
+	tv := unix.NsecToTimeval(readTimeout.Nanoseconds())
+	if err := unix.SetsockoptTimeval(fd, unix.SOL_SOCKET, unix.SO_RCVTIMEO, &tv); err != nil {
+		return "SO_RCVTIMEO", err
+	}
+	return "", nil
+}
+
+// assembleRxFilter returns rxFilter as the kernel's classic BPF program.
+func assembleRxFilter() ([]unix.SockFilter, error) {
+	raw, err := bpf.Assemble(rxFilter)
+	if err != nil {
+		return nil, err
+	}
+	filter := make([]unix.SockFilter, len(raw))
+	for i, r := range raw {
+		filter[i] = unix.SockFilter{Code: r.Op, Jt: r.Jt, Jf: r.Jf, K: r.K}
+	}
+	return filter, nil
 }
 
 // read returns the next frame; ok=false on timeout. Only the receiver that owns the socket reads, and close is

@@ -36,15 +36,7 @@ const msgProfileReserved = uimsg.Error("Der Name „neu“ ist reserviert.")
 // profileSave stores the checked cells of the matrix form (fields e = "src>dst").
 func (s *Server) profileSave(w http.ResponseWriter, r *http.Request) {
 	name := r.PathValue("name")
-	var edges []compile.Edge
-	for _, v := range r.PostForm["e"] {
-		src, dst, ok := strings.Cut(v, ">")
-		if !ok || src == "" || dst == "" {
-			continue
-		}
-		edges = append(edges, compile.Edge{Src: src, Dst: dst})
-	}
-	if err := s.Store.SetProfileEdges(r.Context(), s.actor(r), name, edges); err != nil {
+	if err := s.Store.SetProfileEdges(r.Context(), s.actor(r), name, profileEdges(r.PostForm["e"])); err != nil {
 		back(w, r, "/netz", "", s.profileError(r, err))
 		return
 	}
@@ -53,6 +45,19 @@ func (s *Server) profileSave(w http.ResponseWriter, r *http.Request) {
 		a.Message = s.T(r)("Profil %s gespeichert und angewendet.", name)
 	}
 	s.answer(w, r, "/netz", a)
+}
+
+// profileEdges reads the checked cells ("src>dst") of the matrix form; malformed ones are skipped.
+func profileEdges(cells []string) []compile.Edge {
+	var edges []compile.Edge
+	for _, v := range cells {
+		src, dst, ok := strings.Cut(v, ">")
+		if !ok || src == "" || dst == "" {
+			continue
+		}
+		edges = append(edges, compile.Edge{Src: src, Dst: dst})
+	}
+	return edges
 }
 
 func (s *Server) profileCreate(w http.ResponseWriter, r *http.Request) {

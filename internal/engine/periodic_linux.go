@@ -28,10 +28,15 @@ func (e *Engine) everySecond(n int) {
 		e.probe(st)
 	}
 	e.logAlarms(now)
-	if n%60 == 30 {
+	e.minuteTasks(n, now)
+}
+
+// minuteTasks runs what is due once a minute: the host preparation at second 30, garbage collection at second 0.
+func (e *Engine) minuteTasks(n int, now time.Time) {
+	switch n % 60 {
+	case 30:
 		e.refreshHost()
-	}
-	if n%60 == 0 {
+	case 0:
 		e.guard.GC(now)
 		e.guard.Players.GC(now)
 		e.guard.Probe.GC(now)
@@ -64,18 +69,24 @@ func (e *Engine) refreshHost() {
 		return
 	}
 	next := hostprep.Refresh(st.table.Snapshot)
-	known := map[string]bool{}
-	if cur := e.hostIssues.Load(); cur != nil {
-		for _, x := range *cur {
-			known[x.Code] = true
-		}
-	}
+	known := e.knownHostIssues()
 	for _, is := range next {
 		if !known[is.Code] {
 			e.Log.Warn("host preparation incomplete (optional by hand: deploy/host/setup.sh)", "what", is.Code, "detail", is.Detail)
 		}
 	}
 	e.hostIssues.Store(&next)
+}
+
+// knownHostIssues returns the codes of the host preparation issues reported so far.
+func (e *Engine) knownHostIssues() map[string]bool {
+	known := map[string]bool{}
+	if cur := e.hostIssues.Load(); cur != nil {
+		for _, x := range *cur {
+			known[x.Code] = true
+		}
+	}
+	return known
 }
 
 func (e *Engine) sampleRates(st *state) {
@@ -87,22 +98,26 @@ func (e *Engine) sampleRates(st *state) {
 		cur.rxRate, cur.sentRate = cur.rx-prev.rx, cur.sent-prev.sent
 	}
 	for _, v := range st.table.VLANs {
-		in := e.Counters.VLANIn[v.VID].Load()
-		cur.vlanIn[v.VID] = in
-		if t, ok := prev.lastIn[v.VID]; ok {
-			cur.lastIn[v.VID] = t
-		}
-		if p, ok := prev.vlanIn[v.VID]; ok {
-			cur.vlanRate[v.VID] = in - p
-			if in > p {
-				cur.lastIn[v.VID] = now
-			}
-		} else if in > 0 {
-			cur.lastIn[v.VID] = now
-		}
+		cur.addVLAN(&prev, v.VID, e.Counters.VLANIn[v.VID].Load(), now)
 	}
 	e.prevRates = cur
 	e.rates.Store(&cur)
+}
+
+// addVLAN records the in counter of VLAN vid, its rate since prev and when it last grew.
+func (cur *rateSample) addVLAN(prev *rateSample, vid int, in uint64, now time.Time) {
+	cur.vlanIn[vid] = in
+	if t, ok := prev.lastIn[vid]; ok {
+		cur.lastIn[vid] = t
+	}
+	if p, ok := prev.vlanIn[vid]; ok {
+		cur.vlanRate[vid] = in - p
+		if in > p {
+			cur.lastIn[vid] = now
+		}
+	} else if in > 0 {
+		cur.lastIn[vid] = now
+	}
 }
 
 // sendBeacons announces this engine on every VLAN (dual-active guard).

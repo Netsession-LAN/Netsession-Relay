@@ -41,44 +41,60 @@ func syncMgmtRoutes(plan Plan) *Issue {
 	}
 	errs = append(errs, missing.errs...)
 	errs = append(errs, syncMgmtTable(routes)...)
-	for _, r := range missing.rules {
-		if err := netlink.RuleAdd(r); err != nil {
-			errs = append(errs, fmt.Errorf("rule from %s to %s: %w", r.Src, r.Dst, err))
-		}
-	}
+	errs = append(errs, addMgmtRules(missing.rules)...)
 	if err := errors.Join(errs...); err != nil {
 		return fail(err)
 	}
 	return nil
 }
 
+func addMgmtRules(rules map[string]*netlink.Rule) []error {
+	var errs []error
+	for _, r := range rules {
+		if err := netlink.RuleAdd(r); err != nil {
+			errs = append(errs, fmt.Errorf("rule from %s to %s: %w", r.Src, r.Dst, err))
+		}
+	}
+	return errs
+}
+
 // wantedMgmt works out what the management table and the rules into it have to look like: the default route
 // and the on-link networks of the interface that carries the default route, and one rule per pair of management
 // address and relay network (mgmtRules). Without a default route or without relay networks nothing is wanted.
 func wantedMgmt(plan Plan) (routes []netlink.Route, rules map[string]*netlink.Rule, err error) {
-	rules = map[string]*netlink.Rule{}
 	def := defaultRoute()
 	if def == nil || len(plan.Networks) == 0 {
-		return nil, rules, nil
+		return nil, map[string]*netlink.Rule{}, nil
 	}
 	link, err := netlink.LinkByIndex(def.LinkIndex)
 	if err != nil {
 		return nil, nil, err
 	}
-	routes = append(routes, netlink.Route{LinkIndex: def.LinkIndex, Gw: def.Gw, Table: MgmtTable})
 	onLink := onLinkNetworks(link)
-	for _, n := range onLink {
-		routes = append(routes, netlink.Route{LinkIndex: def.LinkIndex, Dst: n, Scope: netlink.SCOPE_LINK, Table: MgmtTable})
-	}
 	mgmt, err := globalAddrs(link)
 	if err != nil {
 		return nil, nil, err
 	}
-	for _, mr := range mgmtRules(mgmt, plan.Networks, prefixesOf(onLink)) {
+	return mgmtTableRoutes(def, onLink), mgmtPolicyRules(mgmt, plan.Networks, onLink), nil
+}
+
+// mgmtTableRoutes are the routes of the management table: the default route and the on-link networks.
+func mgmtTableRoutes(def *netlink.Route, onLink []*net.IPNet) []netlink.Route {
+	routes := []netlink.Route{{LinkIndex: def.LinkIndex, Gw: def.Gw, Table: MgmtTable}}
+	for _, n := range onLink {
+		routes = append(routes, netlink.Route{LinkIndex: def.LinkIndex, Dst: n, Scope: netlink.SCOPE_LINK, Table: MgmtTable})
+	}
+	return routes
+}
+
+// mgmtPolicyRules are the kernel rules for mgmtRules, by mgmtRuleKey.
+func mgmtPolicyRules(mgmt []netip.Addr, networks []netip.Prefix, onLink []*net.IPNet) map[string]*netlink.Rule {
+	rules := map[string]*netlink.Rule{}
+	for _, mr := range mgmtRules(mgmt, networks, prefixesOf(onLink)) {
 		r := policyRule(mr)
 		rules[mgmtRuleKey(r)] = r
 	}
-	return routes, rules, nil
+	return rules
 }
 
 // onLinkNetworks are the networks directly attached to the link (link-scope routes without a gateway, not the
@@ -90,15 +106,15 @@ func onLinkNetworks(link netlink.Link) []*net.IPNet {
 	}
 	var out []*net.IPNet
 	for _, r := range rs {
-		if r.Dst == nil || r.Gw != nil || r.Scope != netlink.SCOPE_LINK {
-			continue
+		if isOnLinkNetwork(r) {
+			out = append(out, r.Dst)
 		}
-		if ones, _ := r.Dst.Mask.Size(); ones == 0 {
-			continue
-		}
-		out = append(out, r.Dst)
 	}
 	return out
+}
+
+func isOnLinkNetwork(r netlink.Route) bool {
+	return r.Gw == nil && r.Scope == netlink.SCOPE_LINK && !isDefault(r.Dst)
 }
 
 // prefixesOf converts the IPv4 networks to prefixes, skipping any that are not IPv4.
@@ -138,13 +154,23 @@ func syncMgmtTable(want []netlink.Route) []error {
 			errs = append(errs, fmt.Errorf("route in table %d: %w", MgmtTable, err))
 		}
 	}
-	if old, err := netlink.RouteListFiltered(netlink.FAMILY_V4, &netlink.Route{Table: MgmtTable}, netlink.RT_FILTER_TABLE); err == nil {
-		for i := range old {
-			if !hasRoute(want, old[i]) {
-				if err := netlink.RouteDel(&old[i]); err != nil {
-					errs = append(errs, fmt.Errorf("remove route: %w", err))
-				}
-			}
+	return append(errs, removeUnwantedRoutes(want)...)
+}
+
+// removeUnwantedRoutes deletes the routes of the management table that are not in want. A table that cannot be
+// read is left alone.
+func removeUnwantedRoutes(want []netlink.Route) []error {
+	old, err := netlink.RouteListFiltered(netlink.FAMILY_V4, &netlink.Route{Table: MgmtTable}, netlink.RT_FILTER_TABLE)
+	if err != nil {
+		return nil
+	}
+	var errs []error
+	for i := range old {
+		if hasRoute(want, old[i]) {
+			continue
+		}
+		if err := netlink.RouteDel(&old[i]); err != nil {
+			errs = append(errs, fmt.Errorf("remove route: %w", err))
 		}
 	}
 	return errs

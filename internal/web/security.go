@@ -24,14 +24,20 @@ func (s *Server) isAdmin(r *http.Request) bool {
 // "/", has no scheme or host, no backslash (browsers read "/\host" as "//host") and no control characters, raw
 // or percent-encoded in the path.
 func localPath(p string) bool {
-	if !strings.HasPrefix(p, "/") || strings.HasPrefix(p, "//") || hasUnsafeChar(p) {
+	if !isSitePath(p) {
 		return false
 	}
 	u, err := url.Parse(p)
 	if err != nil || !pathOnly(u) {
 		return false
 	}
-	return strings.HasPrefix(u.Path, "/") && !strings.HasPrefix(u.Path, "//") && !hasUnsafeChar(u.Path)
+	return isSitePath(u.Path)
+}
+
+// isSitePath reports whether p starts with a single "/" and has no unsafe character; localPath checks it on the
+// raw target and on the decoded path.
+func isSitePath(p string) bool {
+	return strings.HasPrefix(p, "/") && !strings.HasPrefix(p, "//") && !hasUnsafeChar(p)
 }
 
 // pathOnly reports whether u has nothing that leads to another site: no scheme, host, user or opaque part.
@@ -54,18 +60,26 @@ func hasUnsafeChar(s string) bool {
 func ParseProxies(s string) ([]netip.Prefix, error) {
 	var out []netip.Prefix
 	for _, f := range strings.FieldsFunc(s, func(r rune) bool { return r == ',' || r == ' ' || r == ';' }) {
-		if p, err := netip.ParsePrefix(f); err == nil {
-			out = append(out, p.Masked())
-			continue
-		}
-		a, err := netip.ParseAddr(f)
-		if err != nil {
+		p, ok := proxyPrefix(f)
+		if !ok {
 			return nil, errors.New("trusted proxy " + f + ": not an address or network")
 		}
-		a = a.Unmap()
-		out = append(out, netip.PrefixFrom(a, a.BitLen()))
+		out = append(out, p)
 	}
 	return out, nil
+}
+
+// proxyPrefix reads one trusted proxy: a network, or an address as a network of its own.
+func proxyPrefix(f string) (netip.Prefix, bool) {
+	if p, err := netip.ParsePrefix(f); err == nil {
+		return p.Masked(), true
+	}
+	a, err := netip.ParseAddr(f)
+	if err != nil {
+		return netip.Prefix{}, false
+	}
+	a = a.Unmap()
+	return netip.PrefixFrom(a, a.BitLen()), true
 }
 
 func (s *Server) trustedProxy(a netip.Addr) bool {
@@ -101,6 +115,18 @@ func (s *Server) clientIP(r *http.Request) string {
 	if !s.fromTrustedProxy(r) {
 		return remote
 	}
+	if a, ok := s.forwardedFor(r); ok {
+		return a.Unmap().String()
+	}
+	if a, err := netip.ParseAddr(strings.TrimSpace(r.Header.Get("CF-Connecting-IP"))); err == nil {
+		return a.Unmap().String()
+	}
+	return remote
+}
+
+// forwardedFor is the right-most address of X-Forwarded-For that is not a trusted proxy; ok is false when there is
+// none, or when garbage comes first from the right.
+func (s *Server) forwardedFor(r *http.Request) (netip.Addr, bool) {
 	hops := strings.Split(strings.Join(r.Header.Values("X-Forwarded-For"), ","), ",")
 	for i := len(hops) - 1; i >= 0; i-- {
 		h := strings.TrimSpace(hops[i])
@@ -112,13 +138,10 @@ func (s *Server) clientIP(r *http.Request) string {
 			break // garbage: do not look further left
 		}
 		if !s.trustedProxy(a) {
-			return a.Unmap().String()
+			return a, true
 		}
 	}
-	if a, err := netip.ParseAddr(strings.TrimSpace(r.Header.Get("CF-Connecting-IP"))); err == nil {
-		return a.Unmap().String()
-	}
-	return remote
+	return netip.Addr{}, false
 }
 
 // ---- HTTPS detection (Secure cookies, HSTS) ----

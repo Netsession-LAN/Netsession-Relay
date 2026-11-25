@@ -140,12 +140,7 @@ func (s *Server) admitLocalLogin(r *http.Request, name, ip, key string, now time
 // checkLocalLogin checks the password of the local account name. It returns the account, or errBusy when no
 // check could run (the attempt is taken back) or errLogin, the same for an unknown name as for a wrong password.
 func (s *Server) checkLocalLogin(ctx context.Context, name, pw, ip, key string) (store.User, error) {
-	u, err := s.Store.UserByName(ctx, name)
-	known := err == nil && u.Kind == "local" && u.PasswordHash != ""
-	hash := u.PasswordHash
-	if !known {
-		hash = dummyHash() // same work for an unknown name as for a wrong password
-	}
+	u, hash, known := s.localLoginAccount(ctx, name)
 	ran, verr := s.verifyPassword(ctx, pw, hash)
 	if !ran {
 		s.throttle.cancel(key) // no password was checked: the attempt does not count
@@ -160,6 +155,17 @@ func (s *Server) checkLocalLogin(ctx context.Context, name, pw, ip, key string) 
 	}
 	s.Log.Warn("login failed", "name", name, "ip", ip)
 	return u, errLogin
+}
+
+// localLoginAccount reads the local account name and the hash its password is checked against. For an unknown
+// name, or an account without a local password, known is false and the hash a dummy: same work as for a wrong
+// password.
+func (s *Server) localLoginAccount(ctx context.Context, name string) (u store.User, hash string, known bool) {
+	u, err := s.Store.UserByName(ctx, name)
+	if err == nil && u.Kind == "local" && u.PasswordHash != "" {
+		return u, u.PasswordHash, true
+	}
+	return u, dummyHash(), false
 }
 
 // localLoginFailed records a failed login of an existing local account; verr is the result of the check.

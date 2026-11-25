@@ -113,20 +113,17 @@ var watchEngineDownKey = store.AlarmKey{Kind: alarmEngineDown, Key: "engine"}
 // watchEngineDownAlarms gives the active alarms of a round in which the engine did not answer. engine_down opens once
 // the engine has been silent for engineDownAfter; an empty text keeps an alarm open without publishing anything.
 func watchEngineDownAlarms(T translator, open map[store.AlarmKey]string, engErr error, downSince *time.Time, now time.Time) map[store.AlarmKey]string {
-	active := map[store.AlarmKey]string{}
+	// without the engine nothing is known about the other alarms: keep them as they are (engine_down too, until
+	// it opens below)
+	active := make(map[store.AlarmKey]string, len(open))
+	for k := range open {
+		active[k] = ""
+	}
 	if downSince.IsZero() {
 		*downSince = now
 	}
 	if now.Sub(*downSince) >= engineDownAfter {
 		active[watchEngineDownKey] = T("Engine antwortet nicht") + ": " + engErr.Error()
-	} else if _, ok := open[watchEngineDownKey]; ok {
-		active[watchEngineDownKey] = ""
-	}
-	// without the engine nothing is known about the other alarms: keep them as they are
-	for k := range open {
-		if k != watchEngineDownKey {
-			active[k] = ""
-		}
 	}
 	return active
 }

@@ -246,10 +246,6 @@ func Compile(in Input) (*Snapshot, []Warning, error) {
 	if !slices.Contains([]string{ModeActive, ModeObserve, ModePaused, ModeStandby}, mode) {
 		c.fail("mode %q invalid", mode)
 	}
-	limits := in.Limits
-	if limits == (Limits{}) {
-		limits = DefaultLimits
-	}
 
 	var vErrs []error
 	c.vlans, c.groups, vErrs = checkVLANs(in.VLANs)
@@ -263,24 +259,30 @@ func Compile(in Input) (*Snapshot, []Warning, error) {
 	if err := errors.Join(c.errs...); err != nil {
 		return nil, c.warns, err
 	}
+	snap, warns := c.snapshot(mode)
+	return snap, warns, nil
+}
 
+// snapshot builds the rules of a configuration without mistakes and returns the hashed snapshot with the
+// sorted warnings. Without limits of its own the configuration gets DefaultLimits.
+func (c *compiler) snapshot(mode string) (*Snapshot, []Warning) {
 	rules := buildRules(c.acc, c.vlans, c.warn)
 	warns := sortedWarnings(c.warns)
 	snap := &Snapshot{
 		Version:  SnapshotVersion,
 		Mode:     mode,
-		SeedHash: in.DB.Hash(),
+		SeedHash: c.in.DB.Hash(),
 		VLANs:    c.vlans,
 		Rules:    rules,
-		Limits:   limits,
+		Limits:   cmp.Or(c.in.Limits, DefaultLimits),
 		Peers:    []Peer{},
-		Probe:    in.Probe,
+		Probe:    c.in.Probe,
 	}
 	for _, w := range warns {
 		snap.Warnings = append(snap.Warnings, w.String())
 	}
 	snap.Hash = hashOf(snap)
-	return snap, warns, nil
+	return snap, warns
 }
 
 // addProfiles indexes the flow profiles by name; a name defined twice is a mistake (the last one is kept).

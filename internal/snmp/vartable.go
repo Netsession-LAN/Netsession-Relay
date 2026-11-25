@@ -48,33 +48,52 @@ func (a *Agent) table() []entry {
 	if a.cache != nil && time.Since(a.cachedAt) < 5*time.Second {
 		return a.cache
 	}
-	v := a.view()
-	var es []entry
-	add := func(oid string, typ gosnmp.Asn1BER, val any) {
-		es = append(es, entry{oid: parseOID(oid), pdu: gosnmp.SnmpPDU{Name: "." + strings.TrimPrefix(oid, "."), Type: typ, Value: val}})
-	}
-	sys := "1.3.6.1.2.1.1."
-	add(sys+"1.0", gosnmp.OctetString, a.c.SysDescr)
-	add(sys+"2.0", gosnmp.ObjectIdentifier, "."+Base)
-	add(sys+"3.0", gosnmp.TimeTicks, uint32(time.Since(a.start)/(10*time.Millisecond)))
-	add(sys+"4.0", gosnmp.OctetString, a.c.Contact)
-	add(sys+"5.0", gosnmp.OctetString, a.c.SysName)
-	add(sys+"6.0", gosnmp.OctetString, a.c.Location)
-	add(sys+"7.0", gosnmp.Integer, 72)
-	for _, s := range Scalars {
-		add(OID(s.Sub)+".0", s.Syntax.BER, s.Get(v))
-	}
-	for _, t := range Tables {
-		rows := t.Rows(v)
-		for _, c := range t.Columns {
-			for _, r := range rows {
-				add(fmt.Sprintf("%s.1.%d.%d", OID(t.Sub), c.Sub, r.Index), c.Syntax.BER, c.Get(r.Row))
-			}
-		}
-	}
-	slices.SortFunc(es, func(x, y entry) int { return slices.Compare(x.oid, y.oid) })
+	es := a.variables(a.view())
 	a.cache, a.cachedAt = es, time.Now()
 	return es
+}
+
+// entries collects variables in any order.
+type entries []entry
+
+func (es *entries) add(oid string, typ gosnmp.Asn1BER, val any) {
+	*es = append(*es, entry{oid: parseOID(oid), pdu: gosnmp.SnmpPDU{Name: "." + strings.TrimPrefix(oid, "."), Type: typ, Value: val}})
+}
+
+// variables returns the system group and the relay tree for view v, sorted by OID.
+func (a *Agent) variables(v *View) []entry {
+	var es entries
+	a.addSystemGroup(&es)
+	for _, s := range Scalars {
+		es.add(OID(s.Sub)+".0", s.Syntax.BER, s.Get(v))
+	}
+	for _, t := range Tables {
+		es.addTable(t, v)
+	}
+	slices.SortFunc(es, func(x, y entry) int { return slices.Compare(x.oid, y.oid) })
+	return es
+}
+
+// addSystemGroup adds the variables of the MIB-2 system group.
+func (a *Agent) addSystemGroup(es *entries) {
+	sys := "1.3.6.1.2.1.1."
+	es.add(sys+"1.0", gosnmp.OctetString, a.c.SysDescr)
+	es.add(sys+"2.0", gosnmp.ObjectIdentifier, "."+Base)
+	es.add(sys+"3.0", gosnmp.TimeTicks, uint32(time.Since(a.start)/(10*time.Millisecond)))
+	es.add(sys+"4.0", gosnmp.OctetString, a.c.Contact)
+	es.add(sys+"5.0", gosnmp.OctetString, a.c.SysName)
+	es.add(sys+"6.0", gosnmp.OctetString, a.c.Location)
+	es.add(sys+"7.0", gosnmp.Integer, 72)
+}
+
+// addTable adds every cell of table t, column by column.
+func (es *entries) addTable(t Table, v *View) {
+	rows := t.Rows(v)
+	for _, c := range t.Columns {
+		for _, r := range rows {
+			es.add(fmt.Sprintf("%s.1.%d.%d", OID(t.Sub), c.Sub, r.Index), c.Syntax.BER, c.Get(r.Row))
+		}
+	}
 }
 
 func (a *Agent) get(es []entry, oid []int) gosnmp.SnmpPDU {

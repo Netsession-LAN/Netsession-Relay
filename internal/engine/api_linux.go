@@ -41,21 +41,12 @@ func (e *Engine) Ack(kind, by string) int {
 
 // FinderStart starts a port finder session (engine API).
 func (e *Engine) FinderStart(req engineapi.FinderStart) error {
-	fr := FinderRequest{VIDs: req.VIDs, Duration: time.Duration(req.Seconds) * time.Second}
-	if req.Src != "" {
-		a, err := netip.ParseAddr(req.Src)
-		if err != nil || !a.Is4() {
-			return fmt.Errorf("bad sender address %q", req.Src)
-		}
-		fr.Src = a
+	src, err := parseFinderSrc(req.Src)
+	if err != nil {
+		return err
 	}
-	var have []int
-	if st := e.st.Load(); st != nil {
-		for _, v := range st.table.Snapshot.VLANs {
-			have = append(have, v.VID)
-		}
-	}
-	if err := CheckFinderVIDs(req.VIDs, have); err != nil {
+	fr := FinderRequest{VIDs: req.VIDs, Src: src, Duration: time.Duration(req.Seconds) * time.Second}
+	if err := CheckFinderVIDs(req.VIDs, e.configuredVIDs()); err != nil {
 		return err
 	}
 	if err := e.guard.Finder.Start(fr, time.Now()); err != nil {
@@ -63,6 +54,29 @@ func (e *Engine) FinderStart(req engineapi.FinderStart) error {
 	}
 	e.Log.Info("port finder started", "vids", req.VIDs, "src", req.Src, "seconds", req.Seconds)
 	return nil
+}
+
+// parseFinderSrc parses the sender filter of a port finder session; empty means any sender.
+func parseFinderSrc(s string) (netip.Addr, error) {
+	if s == "" {
+		return netip.Addr{}, nil
+	}
+	a, err := netip.ParseAddr(s)
+	if err != nil || !a.Is4() {
+		return netip.Addr{}, fmt.Errorf("bad sender address %q", s)
+	}
+	return a, nil
+}
+
+// configuredVIDs returns the VLAN IDs of the active snapshot.
+func (e *Engine) configuredVIDs() []int {
+	var have []int
+	if st := e.st.Load(); st != nil {
+		for _, v := range st.table.Snapshot.VLANs {
+			have = append(have, v.VID)
+		}
+	}
+	return have
 }
 
 // FinderStop ends the port finder session (engine API).
@@ -84,12 +98,7 @@ func (e *Engine) Status() engineapi.Status {
 	st := engineapi.Status{Version: e.Version, Started: e.started, Standby: e.guard.Standby(),
 		RX: e.Counters.RX.Load(), Sent: e.Counters.Sent.Load(),
 		Reasons: e.Counters.ReasonCounts(), BeaconAuth: e.beaconAuth, IfacePolicy: "auto"}
-	if is := e.hostIssues.Load(); is != nil {
-		for _, x := range *is {
-			st.HostIssues = append(st.HostIssues, engineapi.HostIssue{Code: x.Code, Detail: x.Detail})
-			st.SelfTest = append(st.SelfTest, x.Code+": "+x.Detail)
-		}
-	}
+	e.hostIssueStatus(&st)
 	if len(e.AllowedIfaces) > 0 {
 		st.IfacePolicy = "list"
 	}
@@ -103,6 +112,18 @@ func (e *Engine) Status() engineapi.Status {
 	return st
 }
 
+// hostIssueStatus fills in what the host preparation could not do.
+func (e *Engine) hostIssueStatus(st *engineapi.Status) {
+	is := e.hostIssues.Load()
+	if is == nil {
+		return
+	}
+	for _, x := range *is {
+		st.HostIssues = append(st.HostIssues, engineapi.HostIssue{Code: x.Code, Detail: x.Detail})
+		st.SelfTest = append(st.SelfTest, x.Code+": "+x.Detail)
+	}
+}
+
 // tableStatus fills in the snapshot, the rule and VLAN counters and the rates (rs; nil before the first sample).
 func (e *Engine) tableStatus(st *engineapi.Status, t *Table, rs *rateSample) {
 	snap := t.Snapshot
@@ -111,17 +132,24 @@ func (e *Engine) tableStatus(st *engineapi.Status, t *Table, rs *rateSample) {
 	for _, r := range t.RuleStats() {
 		st.RuleStats = append(st.RuleStats, engineapi.RuleStat{ID: r.ID, RX: r.RX, Relayed: r.Relayed})
 	}
+	st.VLANStats = e.vlanStats(t, rs)
+	if rs != nil {
+		st.RXRate, st.SentRate = rs.rxRate, rs.sentRate
+	}
+}
+
+// vlanStats returns the counters and rates (rs; nil before the first sample) of the table's VLANs.
+func (e *Engine) vlanStats(t *Table, rs *rateSample) []engineapi.VLANStat {
+	var out []engineapi.VLANStat
 	for _, v := range t.VLANs {
 		vs := engineapi.VLANStat{VID: v.VID, Name: v.Name, Group: v.Group, Interface: netif.LinkName(v.VLAN),
 			In: e.Counters.VLANIn[v.VID].Load(), Out: e.Counters.VLANOut[v.VID].Load()}
 		if rs != nil {
 			vs.InRate, vs.LastIn = rs.vlanRate[v.VID], rs.lastIn[v.VID]
 		}
-		st.VLANStats = append(st.VLANStats, vs)
+		out = append(out, vs)
 	}
-	if rs != nil {
-		st.RXRate, st.SentRate = rs.rxRate, rs.sentRate
-	}
+	return out
 }
 
 func topUnknown(c *Counters, n int) []engineapi.PortCount {

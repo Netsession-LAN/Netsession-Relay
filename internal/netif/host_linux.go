@@ -46,9 +46,21 @@ func HardenLink(name string) error {
 	if err != nil {
 		return err
 	}
+	nlErr := setDevconfNetlink(link.Attrs().Index)
+	if nlErr == nil {
+		return nil
+	}
+	if err := setDevconfProc(name); err != nil {
+		return fmt.Errorf("netlink: %w; %w", nlErr, err)
+	}
+	return nil
+}
+
+// setDevconfNetlink sets relayDevconf on the interface with one RTM_SETLINK message.
+func setDevconfNetlink(index int) error {
 	req := nl.NewNetlinkRequest(unix.RTM_SETLINK, unix.NLM_F_ACK)
 	msg := nl.NewIfInfomsg(unix.AF_UNSPEC)
-	msg.Index = int32(link.Attrs().Index)
+	msg.Index = int32(index)
 	req.AddData(msg)
 	conf := nl.NewRtAttr(iflaInetConf, nil)
 	for _, c := range relayDevconf {
@@ -56,10 +68,12 @@ func HardenLink(name string) error {
 	}
 	af := nl.NewRtAttr(unix.AF_INET, conf.Serialize())
 	req.AddData(nl.NewRtAttr(unix.IFLA_AF_SPEC, af.Serialize()))
-	_, nlErr := req.Execute(unix.NETLINK_ROUTE, 0)
-	if nlErr == nil {
-		return nil
-	}
+	_, err := req.Execute(unix.NETLINK_ROUTE, 0)
+	return err
+}
+
+// setDevconfProc sets relayDevconf through /proc/sys, writing only the values that differ.
+func setDevconfProc(name string) error {
 	var errs []error
 	for _, c := range relayDevconf {
 		p := "/proc/sys/net/ipv4/conf/" + name + "/" + c.file
@@ -70,26 +84,16 @@ func HardenLink(name string) error {
 			errs = append(errs, err)
 		}
 	}
-	if len(errs) > 0 {
-		return fmt.Errorf("netlink: %w; %w", nlErr, errors.Join(errs...))
-	}
-	return nil
+	return errors.Join(errs...)
 }
 
 // DisableIPv6 keeps IPv6 off a relay interface (no router solicitations or link-local chatter into the game
 // VLANs). The sysctl is preferred; where /proc/sys is read-only (containers) the interface gets no
 // automatic IPv6 address and existing IPv6 addresses are removed, which silences it just the same.
 func DisableIPv6(name string) error {
-	p := "/proc/sys/net/ipv6/conf/" + name + "/disable_ipv6"
-	b, err := os.ReadFile(p)
-	if err != nil {
-		if _, e := os.Stat("/proc/sys/net/ipv6"); e != nil {
-			return nil //nolint:nilerr // the host has no IPv6 at all: nothing to switch off
-		}
+	done, err := disableIPv6Sysctl(name)
+	if done || err != nil {
 		return err
-	}
-	if strings.TrimSpace(string(b)) == "1" || os.WriteFile(p, []byte("1"), 0o644) == nil { //nolint:gosec // G306: writes an existing /proc/sys setting; the mode is not used
-		return nil
 	}
 	link, err := netlink.LinkByName(name)
 	if err != nil {
@@ -98,6 +102,24 @@ func DisableIPv6(name string) error {
 	if err := netlink.LinkSetIP6AddrGenMode(link, nl.IN6_ADDR_GEN_MODE_NONE); err != nil {
 		return fmt.Errorf("address generation off: %w", err)
 	}
+	return removeIPv6Addrs(link)
+}
+
+// disableIPv6Sysctl switches IPv6 off through /proc/sys. done is true when IPv6 is off now or the host has no
+// IPv6 at all; false with a nil error means the sysctl cannot be written.
+func disableIPv6Sysctl(name string) (done bool, err error) {
+	p := "/proc/sys/net/ipv6/conf/" + name + "/disable_ipv6"
+	b, err := os.ReadFile(p)
+	if err != nil {
+		if _, e := os.Stat("/proc/sys/net/ipv6"); e != nil {
+			return true, nil //nolint:nilerr // the host has no IPv6 at all: nothing to switch off
+		}
+		return false, err
+	}
+	return strings.TrimSpace(string(b)) == "1" || os.WriteFile(p, []byte("1"), 0o644) == nil, nil //nolint:gosec // G306: writes an existing /proc/sys setting; the mode is not used
+}
+
+func removeIPv6Addrs(link netlink.Link) error {
 	addrs, err := netlink.AddrList(link, netlink.FAMILY_V6)
 	if err != nil {
 		return err
@@ -130,19 +152,35 @@ func Interfaces() ([]HostIface, error) {
 	def, _ := DefaultRouteLinks()
 	var out []HostIface
 	for _, l := range links {
-		a := l.Attrs()
-		h := HostIface{Name: a.Name, Up: a.Flags&net.FlagUp != 0, Carrier: a.OperState == netlink.OperUp || a.OperState == netlink.OperUnknown && a.Flags&net.FlagRunning != 0,
-			Loopback: a.Flags&net.FlagLoopback != 0, DefaultRoute: def[a.Name], Relay: a.Alias == Alias, Kind: l.Type()}
-		if addrs, err := netlink.AddrList(l, netlink.FAMILY_ALL); err == nil {
-			for _, ad := range addrs {
-				if ad.IP.IsLinkLocalUnicast() {
-					continue
-				}
-				h.Addrs = append(h.Addrs, ad.IPNet.String())
-			}
-		}
-		out = append(out, h)
+		out = append(out, hostIface(l, def[l.Attrs().Name]))
 	}
 	sort.SliceStable(out, func(i, j int) bool { return out[i].Name < out[j].Name })
 	return out, nil
+}
+
+func hostIface(l netlink.Link, defaultRoute bool) HostIface {
+	a := l.Attrs()
+	return HostIface{Name: a.Name, Up: a.Flags&net.FlagUp != 0, Carrier: hasCarrier(a), Loopback: a.Flags&net.FlagLoopback != 0,
+		DefaultRoute: defaultRoute, Relay: a.Alias == Alias, Kind: l.Type(), Addrs: globalAddrs(l)}
+}
+
+// hasCarrier reports a link that is up at the physical layer; drivers without operstate report "unknown" and
+// the running flag.
+func hasCarrier(a *netlink.LinkAttrs) bool {
+	return a.OperState == netlink.OperUp || a.OperState == netlink.OperUnknown && a.Flags&net.FlagRunning != 0
+}
+
+// globalAddrs lists the addresses of the interface without the link-local ones.
+func globalAddrs(l netlink.Link) []string {
+	addrs, err := netlink.AddrList(l, netlink.FAMILY_ALL)
+	if err != nil {
+		return nil
+	}
+	var out []string
+	for _, ad := range addrs {
+		if !ad.IP.IsLinkLocalUnicast() {
+			out = append(out, ad.IPNet.String())
+		}
+	}
+	return out
 }

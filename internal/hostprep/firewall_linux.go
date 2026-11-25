@@ -52,17 +52,9 @@ func firewallCurrent(ifaces []string) bool {
 
 // setHoldsExactly reports whether the interface set of the table holds exactly these interfaces.
 func setHoldsExactly(c *nftables.Conn, t *nftables.Table, ifaces []string) bool {
-	set, err := c.GetSetByName(t, "relay_if")
-	if err != nil {
+	have, err := relaySetNames(c, t)
+	if err != nil || len(have) != len(ifaces) {
 		return false
-	}
-	elems, err := c.GetSetElements(set)
-	if err != nil || len(elems) != len(ifaces) {
-		return false
-	}
-	have := map[string]bool{}
-	for _, e := range elems {
-		have[strings.TrimRight(string(e.Key), "\x00")] = true
 	}
 	for _, n := range ifaces {
 		if !have[n] {
@@ -72,18 +64,40 @@ func setHoldsExactly(c *nftables.Conn, t *nftables.Table, ifaces []string) bool 
 	return true
 }
 
+// relaySetNames reads the interface names in the set of the table.
+func relaySetNames(c *nftables.Conn, t *nftables.Table) (map[string]bool, error) {
+	set, err := c.GetSetByName(t, "relay_if")
+	if err != nil {
+		return nil, err
+	}
+	elems, err := c.GetSetElements(set)
+	if err != nil {
+		return nil, err
+	}
+	have := map[string]bool{}
+	for _, e := range elems {
+		have[strings.TrimRight(string(e.Key), "\x00")] = true
+	}
+	return have, nil
+}
+
 // chainsComplete reports whether the input and forward chains exist with at least their two rules each.
 func chainsComplete(c *nftables.Conn, t *nftables.Table) bool {
 	for _, name := range []string{"input", "forward"} {
-		ch, err := c.ListChain(t, name)
-		if err != nil || ch == nil {
-			return false
-		}
-		if rules, err := c.GetRules(t, ch); err != nil || len(rules) < 2 {
+		if !chainComplete(c, t, name) {
 			return false
 		}
 	}
 	return true
+}
+
+func chainComplete(c *nftables.Conn, t *nftables.Table, name string) bool {
+	ch, err := c.ListChain(t, name)
+	if err != nil || ch == nil {
+		return false
+	}
+	rules, err := c.GetRules(t, ch)
+	return err == nil && len(rules) >= 2
 }
 
 func writeFirewall(ifaces []string, conntrack bool) error {
@@ -107,6 +121,12 @@ func writeFirewall(ifaces []string, conntrack bool) error {
 	if err := c.AddSet(set, elems); err != nil {
 		return err
 	}
+	addFirewallRules(c, t, set, conntrack)
+	return c.Flush()
+}
+
+// addFirewallRules adds the input and forward chains with their rules for the interfaces in set.
+func addFirewallRules(c *nftables.Conn, t *nftables.Table, set *nftables.Set, conntrack bool) {
 	accept := nftables.ChainPolicyAccept
 	input := c.AddChain(&nftables.Chain{Name: "input", Table: t, Type: nftables.ChainTypeFilter,
 		Hooknum: nftables.ChainHookInput, Priority: nftables.ChainPriorityFilter, Policy: &accept})
@@ -149,5 +169,4 @@ func writeFirewall(ifaces []string, conntrack bool) error {
 	// the host never routes from or to a relay interface
 	rule(forward, from(), no())
 	rule(forward, to, no())
-	return c.Flush()
 }
