@@ -57,7 +57,7 @@ func (s *Server) noSession(w http.ResponseWriter, r *http.Request, T translator)
 // msgCSRF is shown when a form comes without the token of the session (an old tab, or another site).
 const msgCSRF = "Sitzung abgelaufen oder Formular veraltet. Lade die Seite neu."
 
-// csrfToken is the token a write request carries: the header set by app.js, else the hidden form field.
+// csrfToken is the token a write request carries: the header set by the UI scripts, else the hidden form field.
 func csrfToken(r *http.Request) string {
 	if tok := r.Header.Get("X-CSRF-Token"); tok != "" {
 		return tok

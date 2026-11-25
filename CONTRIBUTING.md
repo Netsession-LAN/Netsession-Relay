@@ -55,7 +55,7 @@ What a change should bring along:
   `internal/store`).
 - **Web UI:** texts are written in German in the templates and the Go code and translated through the English
   catalog in `internal/web/i18n/en-*.json` (German text → English text). Every new text needs its English entry;
-  the tests render all pages in English and fail on a missing one. Texts used by `app.js` are also listed in
+  the tests render all pages in English and fail on a missing one. Texts used by the scripts (`app-*.js`) are also listed in
   `jsTexts` (`internal/web/i18n.go`). Use the design tokens (`internal/web/static/ns/tokens.css`), no CDN, no
   inline scripts, and keep every form working without JavaScript.
 - **Errors:** packages below `internal/web` return errors with an identity (`errors.Is`, never a comparison of

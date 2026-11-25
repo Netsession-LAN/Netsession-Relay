@@ -22,7 +22,7 @@ func themeOf(r *http.Request) string {
 }
 
 // w98Mode tells how a page is rendered in the theme "98". The browser says what the request is for
-// (Sec-Fetch-Dest): a top-level GET gets the desktop shell, whose window manager (static/w98.js) loads the same
+// (Sec-Fetch-Dest): a top-level GET gets the desktop shell, whose window manager (static/w98*.js) loads the same
 // address into a window, and that request, made by an iframe, gets the page without the desktop around it.
 // Without the header (old browsers) the page is rendered as a single window with the taskbar, no script needed.
 func w98Mode(r *http.Request, theme string) string {

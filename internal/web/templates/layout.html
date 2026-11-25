@@ -11,8 +11,19 @@
 <link rel="stylesheet" href="{{static "app.css"}}">
 {{if and (eq .Theme "98") (ne .Nav "setup")}}<link rel="stylesheet" href="{{static "theme98.css"}}">{{end}}
 <script type="application/json" id="i18n">{{jsCatalog}}</script>
-<script src="{{static "app.js"}}" defer></script>
-{{if and (eq .Theme "98") .User.Name (ne .Nav "setup")}}{{if not .W98}}<script src="{{static "w98mode.js"}}"></script>{{end}}{{if ne .W98 "frame"}}<script src="{{static "w98.js"}}" defer></script>{{end}}{{end}}
+{{/* parts of the UI script in this order: app-core.js first (window.NSR), app-live.js last (it starts the live updates) */}}
+<script src="{{static "app-core.js"}}" defer></script>
+<script src="{{static "app-confirm.js"}}" defer></script>
+<script src="{{static "app-page.js"}}" defer></script>
+<script src="{{static "app-switches.js"}}" defer></script>
+<script src="{{static "app-forms.js"}}" defer></script>
+<script src="{{static "app-refresh.js"}}" defer></script>
+<script src="{{static "app-games.js"}}" defer></script>
+<script src="{{static "app-live-alarms.js"}}" defer></script>
+<script src="{{static "app-live-games.js"}}" defer></script>
+<script src="{{static "app-live-view.js"}}" defer></script>
+<script src="{{static "app-live.js"}}" defer></script>
+{{if and (eq .Theme "98") .User.Name (ne .Nav "setup")}}{{if not .W98}}<script src="{{static "w98mode.js"}}"></script>{{end}}{{if ne .W98 "frame"}}<script src="{{static "w98-base.js"}}" defer></script><script src="{{static "w98-live.js"}}" defer></script><script src="{{static "w98-win.js"}}" defer></script><script src="{{static "w98.js"}}" defer></script>{{end}}{{end}}
 </head>
 <body{{if .CSRF}} data-csrf="{{.CSRF}}"{{end}}{{if and .Live (ne .Nav "setup")}} data-live-url="/api/v1/events"{{end}}>
 {{if and (eq .W98 "shell") (ne .Nav "setup")}}{{template "w98-shell" .}}{{else}}
@@ -192,11 +203,11 @@
     <a class="btn-outline btn-sm" href="">{{t "Neu laden"}}</a></div>
   </div>{{end}}
 {{/* ---- theme "98", the desktop shell: what a top-level request gets (theme.go w98Mode, .W98 "shell"). The window
-     manager static/w98.js opens every page as a program in its own window, an iframe that gets the page without
+     manager static/w98*.js opens every page as a program in its own window, an iframe that gets the page without
      chrome (.W98 "frame"). Without JavaScript the requested page fills the desktop.
      Browsers send Sec-Fetch-Dest only to https and localhost. Without it the server cannot tell the two apart and
      sends the single-window page (.W98 ""); there static/w98mode.js decides in the browser: inside a window the
-     chrome is hidden by CSS, at the top w98.js turns the page into the same desktop. ---- */}}
+     chrome is hidden by CSS, at the top the window manager turns the page into the same desktop. ---- */}}
 {{define "w98-tpls"}}<template id="w98-win-tpl"><section class="w98-window">
   <div class="w98-title">
     {{icon98 "relay"}}<span class="w98-title-text"></span>

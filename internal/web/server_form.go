@@ -29,7 +29,7 @@ func (s *Server) readForm(w http.ResponseWriter, r *http.Request, rc *http.Respo
 	return true
 }
 
-// parseBody reads the whole body now (forms from pages are urlencoded, the ones from app.js multipart); files
+// parseBody reads the whole body now (forms from pages are urlencoded, the ones from the UI scripts multipart); files
 // stay in memory, nothing is written to a temporary directory.
 func parseBody(r *http.Request, limit int64) error {
 	err := r.ParseForm()

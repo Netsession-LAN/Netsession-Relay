@@ -5,6 +5,8 @@ All notable changes to Netsession Relay. Versions follow [Semantic Versioning](h
 ## [Unreleased]
 
 ### Changed
+- The UI scripts are split along their parts into small plain scripts (`app-*.js`, `w98-*.js`, no build step,
+  same behaviour): no script file has a total complexity above 40 any more (before: 272).
 - Large source files split along their responsibilities (68 new files, whole declarations moved, no code
   changed): no file sums up more than 37 cyclomatic complexity any more (before: 70).
 

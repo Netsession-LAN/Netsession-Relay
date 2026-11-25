@@ -140,7 +140,8 @@ func TestTheme98Shell(t *testing.T) {
 	if code != 200 {
 		t.Fatalf("shell = %d", code)
 	}
-	for _, want := range []string{`data-w98="shell"`, `<div class="w98-desktop" id="w98-desktop" data-start="/spiele?zeige=aus">`, `/static/w98.js?v=`,
+	for _, want := range []string{`data-w98="shell"`, `<div class="w98-desktop" id="w98-desktop" data-start="/spiele?zeige=aus">`, `/static/w98-base.js?v=`,
+		`/static/w98-live.js?v=`, `/static/w98-win.js?v=`, `/static/w98.js?v=`,
 		`<template id="w98-win-tpl">`, `<template id="w98-task-tpl">`, `<div class="w98-tasks" id="w98-tasks">`, `<details class="w98-start"`,
 		`<a href="/spiele" data-app aria-current="page">`, `<a href="/finder" data-app>`, `<form method="post" action="/logout">`, `<div class="w98-tray">`,
 		`id="stop-form"`, `<dialog class="dialog" id="confirm"`, `<noscript><iframe class="w98-noscript" src="/spiele?zeige=aus"`} {
@@ -166,16 +167,17 @@ func TestTheme98Shell(t *testing.T) {
 			t.Errorf("page in a window lacks %s", want)
 		}
 	}
-	for _, not := range []string{`w98-taskbar`, `w98-start`, `w98-win`, `w98.js`, `<header class="top">`, `<footer class="foot">`, `id="live"`, `action="/logout"`} {
+	for _, not := range []string{`w98-taskbar`, `w98-start`, `w98-win`, `w98.js`, `w98-base.js`, `w98-live.js`, `<header class="top">`, `<footer class="foot">`, `id="live"`, `action="/logout"`} {
 		if strings.Contains(frame, not) {
 			t.Errorf("page in a window contains %s", not)
 		}
 	}
 
 	// no header (plain http, old browsers): the page as a single window that works without script; w98mode.js and
-	// w98.js turn it into a window or into the desktop in the browser
+	// the window manager (w98*.js) turn it into a window or into the desktop in the browser
 	_, body := get(t, c, e.srv.URL+"/spiele")
-	for _, want := range []string{`<div class="w98-win">`, `<label class="w98-task" for="w98-min"`, `/static/w98mode.js?v=`, `/static/w98.js?v=`, `<template id="w98-win-tpl">`} {
+	for _, want := range []string{`<div class="w98-win">`, `<label class="w98-task" for="w98-min"`, `/static/w98mode.js?v=`, `/static/w98-base.js?v=`,
+		`/static/w98-live.js?v=`, `/static/w98-win.js?v=`, `/static/w98.js?v=`, `<template id="w98-win-tpl">`} {
 		if !strings.Contains(body, want) {
 			t.Errorf("without Sec-Fetch-Dest the 98 page lacks %s", want)
 		}
@@ -195,12 +197,12 @@ func TestTheme98Shell(t *testing.T) {
 		resp.Header.Get("Vary") != "Sec-Fetch-Dest" {
 		t.Errorf("framing headers: %v", resp.Header)
 	}
-	for _, f := range []string{"w98.js", "w98mode.js"} {
+	for _, f := range []string{"w98-base.js", "w98-live.js", "w98-win.js", "w98.js", "w98mode.js"} {
 		if code, _ := get(t, c, e.srv.URL+"/static/"+f); code != 200 {
 			t.Errorf("%s = %d", f, code)
 		}
 	}
-	// a session that ended: the login page is the plain brand page, whatever asks for it (w98.js then leaves the desktop)
+	// a session that ended: the login page is the plain brand page, whatever asks for it (the window manager then leaves the desktop)
 	anon, _ := e.client("")
 	anon.Jar.SetCookies(u, []*http.Cookie{{Name: themeCookie, Value: theme98, Path: "/"}})
 	for _, dest := range []string{"document", "iframe"} {

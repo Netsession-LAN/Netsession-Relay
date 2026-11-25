@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"html/template"
 	"io"
+	"io/fs"
 	"log/slog"
 	"net/http"
 	"net/http/httptest"
@@ -148,12 +149,9 @@ func TestLangSwitch(t *testing.T) {
 	}
 }
 
-// app.js looks texts up with t("…"): every one is listed in jsTexts (so the page embeds it) and translated.
+// The UI scripts (static/*.js) look texts up with t("…"): every one is listed in jsTexts (so the page embeds it)
+// and translated.
 func TestScriptTexts(t *testing.T) {
-	b, err := staticFS.ReadFile("static/app.js")
-	if err != nil {
-		t.Fatal(err)
-	}
 	listed := map[string]bool{}
 	for _, k := range jsTexts {
 		listed[k] = true
@@ -161,11 +159,45 @@ func TestScriptTexts(t *testing.T) {
 			t.Errorf("script text %q has no English entry", k)
 		}
 	}
-	for _, m := range regexp.MustCompile(`\bt\("([^"]*)"`).FindAllStringSubmatch(string(b), -1) {
-		if !listed[m[1]] {
-			t.Errorf("app.js uses %q, missing in jsTexts", m[1])
+	used := 0
+	for _, f := range staticScripts(t) {
+		b, err := staticFS.ReadFile(f)
+		if err != nil {
+			t.Fatal(err)
+		}
+		for _, m := range regexp.MustCompile(`\bt\("([^"]*)"`).FindAllStringSubmatch(string(b), -1) {
+			used++
+			if !listed[m[1]] {
+				t.Errorf("%s uses %q, missing in jsTexts", f, m[1])
+			}
 		}
 	}
+	if used == 0 {
+		t.Error("no script looks up a text: the pattern no longer matches")
+	}
+}
+
+// Every UI script is loaded by the layout (the parts of the UI and of the window manager are separate files).
+func TestScriptsInLayout(t *testing.T) {
+	b, err := templateFS.ReadFile("templates/layout.html")
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, f := range staticScripts(t) {
+		if tag := `<script src="{{static "` + strings.TrimPrefix(f, "static/") + `"}}"`; !strings.Contains(string(b), tag) {
+			t.Errorf("layout.html does not load %s", f)
+		}
+	}
+}
+
+// staticScripts lists the embedded scripts (static/*.js).
+func staticScripts(t *testing.T) []string {
+	t.Helper()
+	files, err := fs.Glob(staticFS, "static/*.js")
+	if err != nil || len(files) < 2 {
+		t.Fatalf("scripts: %v %v", files, err)
+	}
+	return files
 }
 
 // Page titles are looked up quietly (they may contain names), so the fixed ones are checked here in the source.

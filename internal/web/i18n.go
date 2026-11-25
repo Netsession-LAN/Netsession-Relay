@@ -108,7 +108,7 @@ func jsCatalog(lang string) string {
 	return string(b)
 }
 
-// jsTexts are the German texts app.js shows (app.js looks them up with t()).
+// jsTexts are the German texts the UI scripts show (static/app-*.js look them up with t()).
 var jsTexts = []string{
 	" Hinweis: ",
 	" · gesehen von %s",
