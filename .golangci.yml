@@ -7,11 +7,14 @@ linters:
   enable:
     - bodyclose   # HTTP response bodies are closed
     - errorlint   # errors are compared with errors.Is/As, wrapped with %w
+    - gocyclo     # cyclomatic complexity per function (CONTRIBUTING.md, "Code shape")
     - gosec       # security checks
     - misspell
     - nilerr      # no "return nil" right after checking an error
     - unconvert   # no needless conversions
   settings:
+    gocyclo:
+      min-complexity: 7  # reports functions above 7
     staticcheck:
       checks: ["all", "-ST1000", "-ST1003"]
     gosec:
@@ -28,7 +31,7 @@ linters:
     rules:
       # tests may ignore errors of their helpers and build fixtures freely
       - path: _test\.go
-        linters: [errcheck, gosec, bodyclose]
+        linters: [errcheck, gosec, bodyclose, gocyclo]
 
 formatters:
   enable:

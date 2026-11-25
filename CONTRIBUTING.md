@@ -30,6 +30,7 @@ gofmt -l cmd internal games      # must print nothing
 go mod tidy -diff                # must print nothing
 go vet ./... && GOOS=windows go vet ./...
 go run github.com/golangci/golangci-lint/v2/cmd/golangci-lint@v2.15.0 run ./...
+sh tools/complexity.sh               # complexity per file (see "Code shape")
 go run golang.org/x/vuln/cmd/govulncheck@v1.9.0 ./...
 go test ./...
 CGO_ENABLED=1 go test -race ./...    # the race detector needs a C compiler
@@ -42,6 +43,25 @@ The lab script needs Docker (privileged containers) and builds the binary with t
 newer.
 
 [docs/development.md](docs/development.md) explains the packages, the lab and the demo mode.
+
+## Code shape
+
+The code is kept small on purpose, so that a reader understands a function at one glance. CI enforces the numbers.
+
+- **Functions:** a cyclomatic complexity of at most 7 (golangci-lint, `gocyclo`), 5 or less where it stays natural.
+  Split along real steps: one check, one step of a sequence, one lookup, each with a name that says what it does.
+  A `switch` or `select` that reads best as one list may stay as it is.
+- **Files:** the complexity of all functions in a file sums up to at most 37 (`sh tools/complexity.sh`). A file that
+  grows past it is split along its responsibilities into files of the same package (`live_hub.go`,
+  `live_rates.go`), never into collections like `util2.go`.
+- **Packet path** (`internal/engine`, `internal/pkt`): no allocation per frame and no measurable slowdown; every
+  change there comes with the benchmarks before and after (`go test -run=^$ -bench=. -benchmem`). Here a function
+  may keep a branch more than elsewhere if a further call costs time.
+- **UI scripts** (`internal/web/static`): plain scripts with `defer`, no build step, no modules. Shared helpers
+  live in `app-core.js` (`window.NSR`) and `w98-base.js` (`window.W98`); every part is a file of its own. The
+  order of the `<script>` tags in `layout.html` is the load order. After a change to the UI, run the browser check
+  `UI_CHECK=1 sh tools/screens/run.sh <dir>`: it opens the pages in both themes and fails on any script error.
+- Tests are exempt from the limits; they should still read as a list of cases.
 
 What a change should bring along:
 
@@ -70,7 +90,7 @@ What a change should bring along:
 ## Pull requests
 
 - One topic per pull request, with tests.
-- CI must be green: formatting, a tidy `go.mod`, `go vet` for Linux and Windows, golangci-lint (`.golangci.yml`), govulncheck, the
+- CI must be green: formatting, a tidy `go.mod`, `go vet` for Linux and Windows, golangci-lint (`.golangci.yml`), the file complexity, govulncheck, the
   tests with and without the race detector, and the network lab.
 - This repository is a published copy of Netsession's internal repository. Accepted pull requests are applied there
   and come back with the next publication, so your commit may appear with a different hash. You stay credited in
