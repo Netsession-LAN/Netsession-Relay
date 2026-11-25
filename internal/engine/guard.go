@@ -42,6 +42,7 @@ type Guard struct {
 	stormOverSecs int
 	lastSent      uint64
 	lastCopies    map[stormKey]uint64
+	copiesOf      *Table // the table whose copy counters lastCopies holds
 	pauseMu       sync.RWMutex
 	paused        map[stormKey]int64 // storm brake: (rule, ingress VLAN) -> paused until (unix nanos)
 	pausedN       atomic.Int32       // len(paused), so the packet path skips the lock while nothing is paused

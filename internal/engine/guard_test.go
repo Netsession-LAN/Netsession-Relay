@@ -267,6 +267,36 @@ func TestStormBrake(t *testing.T) {
 	}
 }
 
+// After a snapshot change the copy counters start at 0. A VLAN that floods again and is already past its count
+// from the old table must still be the loudest (found in the lab: the old count was subtracted, the brake paused
+// a quieter VLAN).
+func TestStormBrakeAfterNewTable(t *testing.T) {
+	c := newClock()
+	g := guardAt(c)
+	s := limitsSnapshot(testSnapshot(defaultRules()...))
+	s.Limits.StormPPS = 100
+	tb := newTable(t, s)
+	cnt := &Counters{}
+	for sec := 1; sec <= 2; sec++ { // two seconds over the limit on the old table, table 1 the loudest
+		cnt.Sent.Add(500)
+		tb.rules[0].copies[t1].Add(300)
+		tb.rules[0].copies[t2].Add(60)
+		c.add(time.Second)
+		if id, _ := g.StormTick(tb, cnt, c.now()); id != "" {
+			t.Fatalf("paused after %d s", sec)
+		}
+	}
+	// the snapshot changes; in the third second table 1 is already past its old count of 600 again
+	tb = newTable(t, s)
+	cnt.Sent.Add(500)
+	tb.rules[0].copies[t1].Add(610)
+	tb.rules[0].copies[t2].Add(60)
+	c.add(time.Second)
+	if id, vid := g.StormTick(tb, cnt, c.now()); id != "bc:23757" || vid != 1101 {
+		t.Fatalf("paused %q for VLAN %d, want bc:23757 from 1101", id, vid)
+	}
+}
+
 // One VLAN cannot use up the engine-wide storm budget: its copies (frames times target VLANs) are limited,
 // whatever source addresses it invents.
 func TestCopyBudgetPerVLAN(t *testing.T) {

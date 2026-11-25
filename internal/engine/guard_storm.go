@@ -55,8 +55,13 @@ func (g *Guard) sentSinceLastTick(c *Counters) uint64 {
 }
 
 // loudestPair returns the pair (rule, ingress VLAN) that caused most copies since the last tick, and that number.
+// The copy counters start at 0 with every new table, so the counters of an older table are not subtracted: a
+// pair that is already past its old count again would otherwise look far quieter than it is.
 func (g *Guard) loudestPair(t *Table) (top stormKey, topRate uint64) {
 	last := g.lastCopies
+	if g.copiesOf != t {
+		last, g.copiesOf = nil, t
+	}
 	g.lastCopies = make(map[stormKey]uint64, len(last))
 	for _, r := range t.rules {
 		for in := range r.copies {
@@ -76,7 +81,7 @@ func (g *Guard) copiesSince(last map[stormKey]uint64, k stormKey, v uint64) uint
 		return 0
 	}
 	g.lastCopies[k] = v
-	if p, ok := last[k]; ok && p <= v { // counters start at 0 with every new table
+	if p, ok := last[k]; ok && p <= v {
 		return v - p
 	}
 	return v

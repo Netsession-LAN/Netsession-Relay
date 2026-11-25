@@ -2,7 +2,11 @@
 
 All notable changes to Netsession Relay. Versions follow [Semantic Versioning](https://semver.org/).
 
-## [Unreleased]
+## [1.0.4] - 2026-11-25
+
+### Fixed
+- Storm brake: right after a configuration change it could pause a quieter network instead of the loud one for
+  60 s (the copy counters of the previous configuration were subtracted).
 
 ### Changed
 - The UI scripts are split along their parts into small plain scripts (`app-*.js`, `w98-*.js`, no build step,

@@ -7,6 +7,7 @@
 [![docs](https://readthedocs.org/projects/netsession-relay/badge/?version=latest)](https://netsession-relay.readthedocs.io/)
 [![coverage](https://qlty.sh/gh/Netsession-LAN/projects/Netsession-Relay/coverage.svg)](https://qlty.sh/gh/Netsession-LAN/projects/Netsession-Relay)
 [![maintainability](https://qlty.sh/gh/Netsession-LAN/projects/Netsession-Relay/maintainability.svg)](https://qlty.sh/gh/Netsession-LAN/projects/Netsession-Relay)
+[![scrutinizer](https://scrutinizer-ci.com/g/Netsession-LAN/Netsession-Relay/badges/quality-score.png?b=main)](https://scrutinizer-ci.com/g/Netsession-LAN/Netsession-Relay/?branch=main)
 
 **Every table sees every LAN game again.**
 
