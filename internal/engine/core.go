@@ -1,6 +1,6 @@
-// Package engine is the packet data plane: per-packet decisions (this file, the lookup table in table.go and the
-// copies in fanout.go; portable and unit-tested on every OS) and the Linux runtime with AF_PACKET sockets
-// (engine_linux.go, apply_linux.go, receive_linux.go).
+// Package engine is the packet data plane: per-packet decisions (this file and core_checks.go, the lookup table in
+// table.go and the copies in fanout.go; portable and unit-tested on every OS) and the Linux runtime with AF_PACKET
+// sockets (engine_linux.go, apply_linux.go, receive_linux.go).
 //
 // Processing order per received frame:
 //
@@ -24,67 +24,11 @@ package engine
 
 import (
 	"cmp"
-	"fmt"
-	"net/netip"
-	"sync/atomic"
 	"time"
 
 	"github.com/Netsession-LAN/Netsession-Relay/internal/compile"
-	"github.com/Netsession-LAN/Netsession-Relay/internal/gamedb"
 	"github.com/Netsession-LAN/Netsession-Relay/internal/pkt"
 )
-
-// Reason is why a frame was not relayed (or Relayed).
-type Reason int
-
-// Reasons. Keep in sync with reasonNames.
-const (
-	Relayed Reason = iota
-	DropParse
-	DropOwnMAC
-	DropBlocked
-	DropForeignRelay
-	DropSrcSubnet
-	DropNotBroadcast
-	DropUnknownPort
-	DropNoTarget
-	DropSize
-	DropTTL
-	DropMode // engine in observe/paused/standby/holdoff: nothing is sent
-	DropLoop
-	DropRate
-	DropAutoPaused
-	DropSrcFilter // the rule's source filter restricts the ingress VLAN and the sender is not on it
-	// DropSendError: at least one copy of the frame could not be built or sent (interface down, socket error).
-	// Unlike the other reasons it is also counted for a frame of which other copies did go out, so the reason
-	// counters can add up to more than the frames received.
-	DropSendError
-	DropPanic // handling the frame panicked; the engine keeps running
-	numReasons
-)
-
-var reasonNames = [numReasons]string{
-	"relayed", "parse", "own_mac", "blocked", "foreign_relay", "src_subnet", "not_broadcast",
-	"unknown_port", "no_target", "size", "ttl", "mode", "loop", "rate", "auto_paused",
-	"src_filter", "send_error", "panic",
-}
-
-func (r Reason) String() string {
-	if r < 0 || r >= numReasons {
-		return fmt.Sprintf("reason(%d)", int(r))
-	}
-	return reasonNames[r]
-}
-
-// Counters are engine-wide statistics. All fields are safe for concurrent use.
-type Counters struct {
-	RX           atomic.Uint64
-	Sent         atomic.Uint64 // frames sent (one received frame may produce several)
-	Reasons      [numReasons]atomic.Uint64
-	UnknownPorts [65536]atomic.Uint32      // broadcasts on ports without a rule (port finder)
-	VLANIn       [MaxVID + 1]atomic.Uint64 // frames received per VLAN ID (after the kernel filter)
-	VLANOut      [MaxVID + 1]atomic.Uint64 // frames sent per VLAN ID
-}
 
 // MaxVID is the highest VLAN ID (IEEE 802.1Q). NewTable refuses a snapshot with a VID outside 1..MaxVID, so the
 // VID of a table VLAN is always a valid index of the per-VLAN counters.
@@ -149,49 +93,6 @@ func (p *Processor) process(t *Table, in int, frame []byte, emit Emit) Reason {
 	return p.fanOut(t, rule, in, &f, emit)
 }
 
-// checkSender drops frames of own or partner MACs, of the fixed block list and from outside the ingress VLAN's
-// network (steps 1-3).
-func (p *Processor) checkSender(t *Table, in int, f *pkt.Frame) Reason {
-	if t.ownMACs[f.SrcMAC] {
-		return DropOwnMAC
-	}
-	if isBlocked(f) {
-		return DropBlocked
-	}
-	if !t.VLANs[in].CIDR.Contains(f.Src) {
-		return p.foreignSource(t, in, f.Src)
-	}
-	return pass
-}
-
-// isBlocked reports frames of the fixed block list: DHCP and senders without an address.
-func isBlocked(f *pkt.Frame) bool {
-	return isDHCPPort(f.DstPort) || isDHCPPort(f.SrcPort) || f.Src.IsUnspecified()
-}
-
-func isDHCPPort(port uint16) bool { return port == 67 || port == 68 }
-
-// foreignSource classifies a source outside the ingress VLAN's network: in the network of another VLAN another
-// relay is active (alarm), otherwise the sender is simply misconfigured.
-func (p *Processor) foreignSource(t *Table, in int, src netip.Addr) Reason {
-	for i := range t.VLANs {
-		if i != in && t.VLANs[i].CIDR.Contains(src) {
-			p.raiseForeignRelay(&t.VLANs[in], src, t.VLANs[i].VID)
-			return DropForeignRelay
-		}
-	}
-	return DropSrcSubnet
-}
-
-func (p *Processor) raiseForeignRelay(vin *VLANRuntime, src netip.Addr, otherVID int) {
-	if p.g == nil {
-		return
-	}
-	p.g.Alarms.Raise(AlarmForeignRelay, fmt.Sprintf("%d", vin.VID), p.g.Now(),
-		"VLAN %d (%s) receives frames from %s (network of VLAN %d): another relay is active",
-		vin.VID, vin.Name, src, otherVID)
-}
-
 // findRule finds the rule of a multicast or broadcast frame; other destinations are not relayed at all. The port
 // finder sees the frame also when no rule has its port, and broadcasts on such ports are counted for it.
 func (p *Processor) findRule(t *Table, vin *VLANRuntime, f *pkt.Frame, frame []byte) (*ruleRT, Reason) {
@@ -224,40 +125,6 @@ func (p *Processor) observe(vin *VLANRuntime, f *pkt.Frame, frame []byte, rule *
 		id = rule.ID
 	}
 	p.g.Finder.Observe(vin.VID, f, frame, id, p.g.Now())
-}
-
-// admit applies the rule's source filter, records the sender, and checks targets, size and TTL (steps 4-6).
-// With TTL mode decrement it lowers the frame's TTL.
-func (p *Processor) admit(t *Table, rule *ruleRT, in int, f *pkt.Frame) Reason {
-	if allow := rule.srcAllow[in]; allow != nil && !containsAddr(allow, f.Src) {
-		return DropSrcFilter
-	}
-	rule.rx.Add(1)
-	p.learn(t, rule, t.VLANs[in].VID, f)
-	return checkDelivery(rule, in, f)
-}
-
-// checkDelivery checks that the frame has targets, a size the rule relays and TTL left (steps 5-6).
-func checkDelivery(rule *ruleRT, in int, f *pkt.Frame) Reason {
-	if len(rule.targets[in]) == 0 {
-		return DropNoTarget
-	}
-	if len(f.Payload) == 0 || len(f.Payload) > rule.PayloadMax {
-		return DropSize
-	}
-	return applyTTLMode(rule.TTLMode, f)
-}
-
-// applyTTLMode lowers the TTL with mode decrement; a frame whose TTL would reach zero is dropped.
-func applyTTLMode(mode string, f *pkt.Frame) Reason {
-	if mode != gamedb.TTLDecrement {
-		return pass
-	}
-	if f.TTL <= 1 {
-		return DropTTL
-	}
-	f.TTL--
-	return pass
 }
 
 // learn notes the player for the players page and the payload for the server probe.
@@ -311,24 +178,4 @@ func (p *Processor) withinRates(t *Table, rule *ruleRT, in int, f *pkt.Frame, no
 		return false
 	}
 	return g.AllowCopies(vin.VID, len(rule.targets[in]), t.copyRate, t.copyRate, now)
-}
-
-// ReasonCounts returns the reason counters as a map (for logs and the API).
-func (c *Counters) ReasonCounts() map[string]uint64 {
-	m := map[string]uint64{}
-	for i := range c.Reasons {
-		if v := c.Reasons[i].Load(); v > 0 {
-			m[Reason(i).String()] = v
-		}
-	}
-	return m
-}
-
-func containsAddr(ps []netip.Prefix, a netip.Addr) bool {
-	for _, p := range ps {
-		if p.Contains(a) {
-			return true
-		}
-	}
-	return false
 }

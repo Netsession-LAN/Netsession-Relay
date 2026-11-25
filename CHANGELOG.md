@@ -2,6 +2,12 @@
 
 All notable changes to Netsession Relay. Versions follow [Semantic Versioning](https://semver.org/).
 
+## [Unreleased]
+
+### Changed
+- Large source files split along their responsibilities (68 new files, whole declarations moved, no code
+  changed): no file sums up more than 37 cyclomatic complexity any more (before: 70).
+
 ## [1.0.3] - 2026-11-25
 
 ### Changed

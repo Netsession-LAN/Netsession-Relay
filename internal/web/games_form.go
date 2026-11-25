@@ -1,9 +1,9 @@
 package web
 
 import (
-	"encoding/json"
 	"fmt"
 	"net/http"
+	"regexp"
 	"strconv"
 	"strings"
 	"time"
@@ -29,24 +29,6 @@ type gameForm struct {
 	Err        string
 }
 
-// specForm is one discovery row. Adv carries the fields the form does not show (source/dst/TTL mode, rate,
-// payload limit) as JSON, so editing a seed game keeps them.
-type specForm struct {
-	Kind, Ports, Group, Direction string
-	Adv                           string
-}
-
-// emptySpecRows is the number of blank discovery rows offered below the existing ones.
-const emptySpecRows = 2
-
-func blankSpec() specForm { return specForm{Kind: gamedb.KindBroadcast, Direction: "both"} }
-
-func (f *gameForm) pad() {
-	for range emptySpecRows {
-		f.Specs = append(f.Specs, blankSpec())
-	}
-}
-
 // readGameForm reads the posted form. The port finder used to post a single spec without index (kind, ports,
 // group, direction); that is still accepted as row 0.
 func readGameForm(r *http.Request, isNew bool) gameForm {
@@ -65,16 +47,6 @@ func readGameForm(r *http.Request, isNew bool) gameForm {
 			Direction: v("direction" + k), Adv: v("adv" + k)})
 	}
 	return f
-}
-
-// advOf is the hidden form value for the fields of a spec the form does not show ("" when all are defaults).
-func advOf(sp gamedb.Spec) string {
-	sp.Kind, sp.Ports, sp.Group, sp.Direction = "", "", "", ""
-	if sp == (gamedb.Spec{}) {
-		return ""
-	}
-	b, _ := json.Marshal(sp)
-	return string(b)
 }
 
 // game builds the game from the form; base is the stored game when editing (keeps game ports, sources …). The
@@ -129,15 +101,6 @@ func splitAliases(field string) []string {
 	return aliases
 }
 
-// storedAdv is the set of hidden advanced values (advOf) the discovery rows of the stored game carry.
-func storedAdv(base gamedb.Game) map[string]bool {
-	stored := map[string]bool{}
-	for _, sp := range base.Discovery {
-		stored[advOf(sp)] = true
-	}
-	return stored
-}
-
 // discovery builds the discovery specs from the filled form rows (rows without ports are skipped). A row whose
 // hidden advanced value is corrupt, or not one of stored while the user is no admin, fails the whole form.
 func (f gameForm) discovery(stored map[string]bool, admin bool, T translator) ([]gamedb.Spec, string) {
@@ -153,34 +116,6 @@ func (f gameForm) discovery(stored map[string]bool, admin bool, T translator) ([
 		specs = append(specs, spec)
 	}
 	return specs, ""
-}
-
-// spec is the discovery spec of one form row; ok is false when its hidden advanced value is not acceptable.
-func (sp specForm) spec(stored map[string]bool, admin bool) (gamedb.Spec, bool) {
-	spec, ok := sp.advanced(stored, admin)
-	if !ok {
-		return spec, false
-	}
-	spec.Kind, spec.Ports, spec.Direction, spec.Group = sp.Kind, sp.Ports, sp.Direction, ""
-	if sp.Kind == gamedb.KindMulticast {
-		spec.Group = sp.Group
-	}
-	if spec.Direction == "" {
-		spec.Direction = "both"
-	}
-	return spec, true
-}
-
-// advanced decodes the row's hidden advanced value (empty: none). Only an admin may send one that is not stored
-// for the game already.
-func (sp specForm) advanced(stored map[string]bool, admin bool) (spec gamedb.Spec, ok bool) {
-	if sp.Adv == "" {
-		return spec, true
-	}
-	if err := json.Unmarshal([]byte(sp.Adv), &spec); err != nil || (!admin && !stored[advOf(spec)]) {
-		return spec, false
-	}
-	return spec, true
 }
 
 // sourceName is the origin written into the game's sources note.
@@ -200,4 +135,15 @@ func (f gameForm) origin() string {
 		return "sniffer"
 	}
 	return "custom"
+}
+
+var slugRE = regexp.MustCompile(`[^a-z0-9]+`)
+
+func slug(name string) string {
+	r := strings.NewReplacer("ä", "ae", "ö", "oe", "ü", "ue", "ß", "ss")
+	s := strings.Trim(slugRE.ReplaceAllString(r.Replace(strings.ToLower(name)), "_"), "_")
+	if s == "" || s[0] == '_' {
+		s = "spiel_" + s
+	}
+	return s
 }

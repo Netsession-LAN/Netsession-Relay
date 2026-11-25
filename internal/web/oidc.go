@@ -21,66 +21,6 @@ import (
 // its groups (the "groups" claim) and is refreshed at every login; an account in none of the three relay groups
 // gets no access. The local emergency login stays.
 
-// OIDCConfig comes from the environment (NSRELAY_OIDC_*); empty Issuer = OIDC off.
-type OIDCConfig struct {
-	Issuer       string
-	ClientID     string
-	ClientSecret string
-	RedirectURL  string
-	// Name is what the login button calls the identity provider ("Sign in with <Name>"); default "SSO".
-	Name string
-	// GroupAdmin, GroupOperator and GroupViewer are the groups of the identity provider that give the three
-	// roles; defaults relay-admin, relay-operator, relay-viewer.
-	GroupAdmin, GroupOperator, GroupViewer string
-}
-
-// Defaults of the optional OIDC settings.
-const (
-	DefaultOIDCName          = "SSO"
-	DefaultOIDCGroupAdmin    = "relay-admin"
-	DefaultOIDCGroupOperator = "relay-operator"
-	DefaultOIDCGroupViewer   = "relay-viewer"
-)
-
-// Enabled reports whether the configuration is complete.
-func (c OIDCConfig) Enabled() bool {
-	return c.Issuer != "" && c.ClientID != "" && c.ClientSecret != "" && c.RedirectURL != ""
-}
-
-// withDefaults fills the optional settings.
-func (c OIDCConfig) withDefaults() OIDCConfig {
-	c.Name = cmp.Or(strings.TrimSpace(c.Name), DefaultOIDCName)
-	c.GroupAdmin = cmp.Or(strings.TrimSpace(c.GroupAdmin), DefaultOIDCGroupAdmin)
-	c.GroupOperator = cmp.Or(strings.TrimSpace(c.GroupOperator), DefaultOIDCGroupOperator)
-	c.GroupViewer = cmp.Or(strings.TrimSpace(c.GroupViewer), DefaultOIDCGroupViewer)
-	return c
-}
-
-// role maps the groups of an account to a role: the highest one a group gives, "" when no group gives one.
-// Group names are compared without regard to case.
-func (c OIDCConfig) role(groups []string) string {
-	best := ""
-	for _, g := range groups {
-		if r := c.groupRole(strings.TrimSpace(g)); store.RoleRank(r) > store.RoleRank(best) {
-			best = r
-		}
-	}
-	return best
-}
-
-// groupRole is the role one group gives, "" for any other group.
-func (c OIDCConfig) groupRole(g string) string {
-	switch {
-	case strings.EqualFold(g, c.GroupAdmin):
-		return store.RoleAdmin
-	case strings.EqualFold(g, c.GroupOperator):
-		return store.RoleOperator
-	case strings.EqualFold(g, c.GroupViewer):
-		return store.RoleViewer
-	}
-	return ""
-}
-
 type oidcClient struct {
 	mu       sync.Mutex
 	cfg      OIDCConfig
@@ -138,16 +78,6 @@ func (s *Server) oidcLogin(w http.ResponseWriter, r *http.Request) {
 	s.setCookie(w, r, &http.Cookie{Name: oidcCookie, Value: state + "." + nonce + "." + verifier, Path: "/oidc/", MaxAge: 600}) //nolint:gosec // G124: setCookie sets HttpOnly, SameSite and, per request, Secure
 	url := s.oidc.oauth.AuthCodeURL(state, oidc.Nonce(nonce), oauth2.S256ChallengeOption(verifier))
 	http.Redirect(w, r, url, http.StatusSeeOther)
-}
-
-// oidcClaims are the claims the relay reads (identity providers usually put the groups into the profile scope).
-type oidcClaims struct {
-	Subject  string   `json:"sub"`
-	Username string   `json:"preferred_username"`
-	Name     string   `json:"name"`
-	Email    string   `json:"email"`
-	Groups   []string `json:"groups"`
-	Nonce    string   `json:"nonce"`
 }
 
 func (s *Server) oidcCallback(w http.ResponseWriter, r *http.Request) {
@@ -255,51 +185,4 @@ func readOIDCState(r *http.Request) (oidcState, bool) {
 		return oidcState{}, false
 	}
 	return oidcState{state: parts[0], nonce: parts[1], verifier: parts[2]}, true
-}
-
-// oidcIdentity redeems the authorization code and returns the claims of the verified ID token. On failure msg is
-// the text for the user and err (may be nil) the detail for the log.
-func (s *Server) oidcIdentity(ctx context.Context, code string, st oidcState) (cl oidcClaims, msg string, err error) {
-	tok, err := s.oidc.oauth.Exchange(ctx, code, oauth2.VerifierOption(st.verifier))
-	if err != nil {
-		return cl, msgOIDCToken, err
-	}
-	if cl, msg, err = s.oidcIDTokenClaims(ctx, tok, st.nonce); msg != "" {
-		return cl, msg, err
-	}
-	if len(cl.Groups) == 0 {
-		cl.Groups = s.oidcUserInfoGroups(ctx, tok)
-	}
-	return cl, "", nil
-}
-
-// oidcIDTokenClaims verifies the ID token that came with tok and returns its claims; the token must carry nonce.
-// On failure msg is the text for the user and err (may be nil) the detail for the log.
-func (s *Server) oidcIDTokenClaims(ctx context.Context, tok *oauth2.Token, nonce string) (cl oidcClaims, msg string, err error) {
-	raw, ok := tok.Extra("id_token").(string)
-	if !ok {
-		return cl, msgOIDCNoToken, nil
-	}
-	idt, err := s.oidc.verifier.Verify(ctx, raw)
-	if err != nil {
-		return cl, msgOIDCBad, err
-	}
-	if err = idt.Claims(&cl); err != nil || cl.Nonce != nonce {
-		return cl, msgOIDCNonce, err
-	}
-	return cl, "", nil
-}
-
-// oidcUserInfoGroups reads the groups from the userinfo endpoint, for setups that put them only there (nil when
-// that fails).
-func (s *Server) oidcUserInfoGroups(ctx context.Context, tok *oauth2.Token) []string {
-	ui, err := s.oidc.provider.UserInfo(ctx, oauth2.StaticTokenSource(tok))
-	if err != nil {
-		return nil
-	}
-	var more oidcClaims
-	if ui.Claims(&more) != nil {
-		return nil
-	}
-	return more.Groups
 }

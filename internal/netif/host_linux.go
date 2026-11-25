@@ -87,52 +87,6 @@ func setDevconfProc(name string) error {
 	return errors.Join(errs...)
 }
 
-// DisableIPv6 keeps IPv6 off a relay interface (no router solicitations or link-local chatter into the game
-// VLANs). The sysctl is preferred; where /proc/sys is read-only (containers) the interface gets no
-// automatic IPv6 address and existing IPv6 addresses are removed, which silences it just the same.
-func DisableIPv6(name string) error {
-	done, err := disableIPv6Sysctl(name)
-	if done || err != nil {
-		return err
-	}
-	link, err := netlink.LinkByName(name)
-	if err != nil {
-		return err
-	}
-	if err := netlink.LinkSetIP6AddrGenMode(link, nl.IN6_ADDR_GEN_MODE_NONE); err != nil {
-		return fmt.Errorf("address generation off: %w", err)
-	}
-	return removeIPv6Addrs(link)
-}
-
-// disableIPv6Sysctl switches IPv6 off through /proc/sys. done is true when IPv6 is off now or the host has no
-// IPv6 at all; false with a nil error means the sysctl cannot be written.
-func disableIPv6Sysctl(name string) (done bool, err error) {
-	p := "/proc/sys/net/ipv6/conf/" + name + "/disable_ipv6"
-	b, err := os.ReadFile(p)
-	if err != nil {
-		if _, e := os.Stat("/proc/sys/net/ipv6"); e != nil {
-			return true, nil //nolint:nilerr // the host has no IPv6 at all: nothing to switch off
-		}
-		return false, err
-	}
-	return strings.TrimSpace(string(b)) == "1" || os.WriteFile(p, []byte("1"), 0o644) == nil, nil //nolint:gosec // G306: writes an existing /proc/sys setting; the mode is not used
-}
-
-func removeIPv6Addrs(link netlink.Link) error {
-	addrs, err := netlink.AddrList(link, netlink.FAMILY_V6)
-	if err != nil {
-		return err
-	}
-	var errs []error
-	for i := range addrs {
-		if err := netlink.AddrDel(link, &addrs[i]); err != nil {
-			errs = append(errs, err)
-		}
-	}
-	return errors.Join(errs...)
-}
-
 // HasIPv4 reports whether the interface has an IPv4 address of its own.
 func HasIPv4(name string) bool {
 	link, err := netlink.LinkByName(name)
@@ -183,4 +137,42 @@ func globalAddrs(l netlink.Link) []string {
 		}
 	}
 	return out
+}
+
+// DefaultRouteLinks returns the names of the interfaces that carry a default route (IPv4 or IPv6, main table):
+// the management side of the host, which the engine does not use unless it is told to (engine.CheckIfaces).
+func DefaultRouteLinks() (map[string]bool, error) {
+	routes, err := netlink.RouteList(nil, netlink.FAMILY_ALL)
+	if err != nil {
+		return nil, err
+	}
+	out := map[string]bool{}
+	for _, r := range routes {
+		if !isDefaultRoute(r) {
+			continue
+		}
+		addLinkName(out, r.LinkIndex)
+		for _, nh := range r.MultiPath {
+			addLinkName(out, nh.LinkIndex)
+		}
+	}
+	return out, nil
+}
+
+func isDefaultRoute(r netlink.Route) bool {
+	if r.Dst == nil {
+		return true
+	}
+	ones, _ := r.Dst.Mask.Size()
+	return ones == 0
+}
+
+// addLinkName adds the name of the interface with this index (none for index 0, a route without device).
+func addLinkName(names map[string]bool, index int) {
+	if index <= 0 {
+		return
+	}
+	if l, err := netlink.LinkByIndex(index); err == nil {
+		names[l.Attrs().Name] = true
+	}
 }

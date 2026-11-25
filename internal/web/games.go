@@ -10,8 +10,6 @@ import (
 	"sort"
 	"strings"
 
-	"github.com/Netsession-LAN/Netsession-Relay/internal/compile"
-	"github.com/Netsession-LAN/Netsession-Relay/internal/control"
 	"github.com/Netsession-LAN/Netsession-Relay/internal/gamedb"
 	"github.com/Netsession-LAN/Netsession-Relay/internal/store"
 	"github.com/Netsession-LAN/Netsession-Relay/internal/uimsg"
@@ -173,107 +171,6 @@ func (b *gameListBlocks) groups() []gameGroup {
 	return out
 }
 
-type gameDetail struct {
-	Game          gameRow
-	Rules         []ruleView
-	Steps         []diagStep
-	Verdict       diagStep
-	CanSwitch     bool
-	CanAdmin      bool
-	Profile       string       // flow profile of the game in the active event ("" = default)
-	Profiles      []string     // all profile names
-	Default       string       // name of the default profile
-	Sources       []sourceView // source filter of the game in the active event (empty = every sender)
-	Verifications []store.Verification
-}
-
-type ruleView struct {
-	compile.Rule
-	RX, Relayed uint64
-}
-
-func (s *Server) game(w http.ResponseWriter, r *http.Request) {
-	ctx := r.Context()
-	id := r.PathValue("id")
-	games, err := s.Store.Games(ctx)
-	if err != nil {
-		s.failInternal(w, r, "game: list", err)
-		return
-	}
-	i := slices.IndexFunc(games, func(g store.GameRow) bool { return g.ID == id })
-	if i < 0 {
-		s.fail(w, r, http.StatusNotFound, "Dieses Spiel gibt es nicht.")
-		return
-	}
-	live := s.liveNow(ctx)
-	idx := s.rules(ctx, live.Hash)
-	d := &gameDetail{Game: gameRowOf(games[i], idx, live), Rules: rulesFor(idx, id, live),
-		CanSwitch: store.RoleRank(sessionFrom(r).User.Role) >= store.RoleRank(store.RoleOperator)}
-	d.Steps, d.Verdict = diagnoseT(s.T(r), games[i], d.Rules, live)
-	d.CanAdmin = store.RoleRank(sessionFrom(r).User.Role) >= store.RoleRank(store.RoleAdmin)
-	d.Verifications, err = s.Store.Verifications(ctx, id)
-	s.degraded("game: test results", err)
-	if c, err := s.Store.ExportConfig(ctx); err == nil {
-		d.addEventConfig(c, id)
-	}
-	if r.URL.Query().Get("teil") == "diagnose" { // fragment for the live refresh
-		s.renderGameDiagnosis(w, r, d)
-		return
-	}
-	s.renderLive(w, r, "game", d.Game.Name, "games", d, live)
-}
-
-// renderGameDiagnosis writes only the diagnosis part of the game page.
-func (s *Server) renderGameDiagnosis(w http.ResponseWriter, r *http.Request, d *gameDetail) {
-	w.Header().Set("Content-Type", "text/html; charset=utf-8")
-	w.Header().Set("Cache-Control", "no-store")
-	if err := s.page(r, "game").ExecuteTemplate(w, "diagnose", d); err != nil {
-		s.Log.Error("render", "page", "game/diagnose", "err", err)
-	}
-}
-
-// addEventConfig fills in what the active event sets for the game: its flow profile (with the names to choose
-// from) and its source filter.
-func (d *gameDetail) addEventConfig(c store.Config, id string) {
-	for _, p := range c.Profiles {
-		d.Profiles = append(d.Profiles, p.Name)
-		if p.Default {
-			d.Default = p.Name
-		}
-	}
-	for _, g := range c.Games {
-		if g.ID == id {
-			d.Profile = g.FlowProfile
-			d.Sources = sourceViews(g.Sources, c.VLANs)
-		}
-	}
-}
-
-type applyAnswer struct {
-	OK       bool     `json:"ok"`
-	Enabled  bool     `json:"enabled"`
-	Message  string   `json:"message,omitempty"`
-	Error    string   `json:"error,omitempty"`
-	Warnings []string `json:"warnings,omitempty"`
-	Revision int64    `json:"revision,omitempty"`
-}
-
-// applyNow compiles and applies after a change; warnings except shared ports are reported.
-func (s *Server) applyNow(r *http.Request, note string) applyAnswer {
-	res, err := control.Apply(r.Context(), s.Store, s.Engine, s.actor(r), note, false)
-	s.dropRuleIndex()
-	a := applyAnswer{OK: err == nil, Revision: res.Revision}
-	for _, w := range res.Warnings {
-		if w.Code != compile.WarnSharedPort {
-			a.Warnings = append(a.Warnings, w.Message)
-		}
-	}
-	if err != nil {
-		a.Error = string(s.applyError(r, res, err))
-	}
-	return a
-}
-
 func (s *Server) toggleGame(w http.ResponseWriter, r *http.Request) {
 	id := r.PathValue("id")
 	on := r.PostFormValue("on") == "1"
@@ -306,29 +203,4 @@ func (s *Server) gameName(ctx context.Context, id string) string {
 		return games[i].Name
 	}
 	return id
-}
-
-// backPath is where a form wants to return to (hidden field "back"); only local paths are accepted.
-func backPath(r *http.Request, def string) string {
-	p := r.PostFormValue("back")
-	if localPath(p) && !strings.ContainsAny(p, "?#") {
-		return p
-	}
-	return def
-}
-
-func (s *Server) answer(w http.ResponseWriter, r *http.Request, path string, a applyAnswer) {
-	if wantsJSON(r) {
-		code := http.StatusOK
-		if a.Error != "" {
-			code = http.StatusUnprocessableEntity
-		}
-		writeJSON(w, code, a)
-		return
-	}
-	var err error
-	if a.Error != "" {
-		err = errors.New(a.Error)
-	}
-	back(w, r, path, a.Message, err)
 }

@@ -17,7 +17,6 @@ import (
 	"slices"
 
 	"github.com/Netsession-LAN/Netsession-Relay/internal/gamedb"
-	"github.com/Netsession-LAN/Netsession-Relay/internal/portspec"
 )
 
 // SnapshotVersion is the format version of Snapshot.
@@ -194,25 +193,6 @@ type Warning struct {
 
 func (w Warning) String() string { return w.Code + ": " + w.Message }
 
-type portKey struct {
-	kind  string
-	group string
-	port  uint16
-}
-
-type portAcc struct {
-	games      []string
-	sourceMode map[string][]string // mode -> games
-	dstMode    map[string][]string
-	ttlMode    map[string][]string
-	flows      map[Edge]bool
-	rate       int
-	burst      int
-	payloadMax int
-	notQuery   bool                      // some game on this port announces (or both), so no probing
-	sources    map[string][]netip.Prefix // game -> source filter (only games that have one)
-}
-
 // compiler is the state of one Compile call: the checked input, what the games have claimed per port so far,
 // and the findings.
 type compiler struct {
@@ -308,138 +288,6 @@ func (c *compiler) warnEmptyGroups() {
 func sortedWarnings(warns []Warning) []Warning {
 	slices.SortFunc(warns, func(a, b Warning) int { return cmp.Or(cmp.Compare(a.Code, b.Code), cmp.Compare(a.Message, b.Message)) })
 	return slices.Compact(warns)
-}
-
-// addGame resolves one selected game: its flow profile, overrides and source filter, and what each of its
-// discovery specs claims on its ports. Mistakes are collected in c.errs; a game with a mistake claims nothing.
-func (c *compiler) addGame(sel Selection) {
-	g, ok := c.selectGame(sel.GameID)
-	if !ok {
-		return
-	}
-	prof, ok := c.gameProfile(g.ID, sel.FlowProfile)
-	if !ok {
-		return
-	}
-	if err := checkOverride(sel.Override); err != nil {
-		c.fail("game %q: %w", g.ID, err)
-		return
-	}
-	sources := c.gameSources(g, sel.Sources)
-	for _, raw := range g.Discovery {
-		c.claim(g.ID, c.effectiveSpec(g, raw, sel.Override), prof.Edges, sources)
-	}
-}
-
-// selectGame looks up a selected game. It reports false for a game that is unknown or selected twice (both
-// mistakes) and for a game without LAN discovery (a warning: there is nothing to relay).
-func (c *compiler) selectGame(id string) (gamedb.Game, bool) {
-	g, ok := c.in.DB.Get(id)
-	if !ok {
-		c.fail("game %q not in database", id)
-		return g, false
-	}
-	if c.seenGame[g.ID] {
-		c.fail("game %q selected twice", g.ID)
-		return g, false
-	}
-	c.seenGame[g.ID] = true
-	if g.RelayNeeded != gamedb.RelayYes {
-		c.warn(WarnGameNoRelay, "%s (%s) has no LAN discovery to relay (relay_needed=%s), skipped", g.Name, g.ID, g.RelayNeeded)
-		return g, false
-	}
-	return g, true
-}
-
-// gameProfile returns the flow profile of a game ("" = the default profile). An undefined profile is a mistake
-// (false); a profile that names a group without VLANs is a mistake, too, but the game still uses it.
-func (c *compiler) gameProfile(gameID, name string) (FlowProfile, bool) {
-	pname := cmp.Or(name, c.in.DefaultProfile)
-	prof, ok := c.profiles[pname]
-	if !ok {
-		c.fail("game %q: flow profile %q not defined", gameID, pname)
-		return prof, false
-	}
-	for _, e := range prof.Edges {
-		for _, grp := range []string{e.Src, e.Dst} {
-			if _, known := c.groups[grp]; !known {
-				c.fail("flow profile %q: group %q has no VLAN", pname, grp)
-			}
-		}
-	}
-	return prof, true
-}
-
-// effectiveSpec is a discovery spec with its defaults and the overrides of the event applied. It warns when the
-// override rewrites the sender of a game that needs the original one.
-func (c *compiler) effectiveSpec(g gamedb.Game, raw gamedb.Spec, o Override) gamedb.Spec {
-	s := raw.Effective()
-	s.SourceMode = cmp.Or(o.SourceMode, s.SourceMode)
-	s.DstMode = cmp.Or(o.DstMode, s.DstMode)
-	if s.SourceMode != gamedb.SourceOriginal && g.SourceIP == gamedb.SourceOriginal {
-		c.warn(WarnRelayIPRewrite, "%s needs the original sender IP, but source_mode=%s is set", g.ID, s.SourceMode)
-	}
-	return s
-}
-
-// claim records what one discovery spec of a game wants on each of its ports.
-func (c *compiler) claim(gameID string, s gamedb.Spec, edges []Edge, sources []netip.Prefix) {
-	ps, err := portspec.Parse(s.Ports)
-	if err != nil { // impossible after gamedb validation; keep the guard
-		c.fail("game %q: %w", gameID, err)
-		return
-	}
-	for _, p := range ps.Ports() {
-		k := portKey{s.Kind, s.Group, p}
-		a := c.acc[k]
-		if a == nil {
-			a = newPortAcc()
-			c.acc[k] = a
-		}
-		a.add(gameID, s, edges, sources)
-	}
-}
-
-func newPortAcc() *portAcc {
-	return &portAcc{sourceMode: map[string][]string{}, dstMode: map[string][]string{},
-		ttlMode: map[string][]string{}, flows: map[Edge]bool{}, sources: map[string][]netip.Prefix{}}
-}
-
-// add records the claim of one game's spec on this port.
-func (a *portAcc) add(gameID string, s gamedb.Spec, edges []Edge, sources []netip.Prefix) {
-	a.games = appendUnique(a.games, gameID)
-	a.sourceMode[s.SourceMode] = appendUnique(a.sourceMode[s.SourceMode], gameID)
-	a.dstMode[s.DstMode] = appendUnique(a.dstMode[s.DstMode], gameID)
-	a.ttlMode[s.TTLMode] = appendUnique(a.ttlMode[s.TTLMode], gameID)
-	for _, e := range edges {
-		a.flows[e] = true
-	}
-	a.rate = max(a.rate, s.RatePPS)
-	a.burst = max(a.burst, s.RateBurst)
-	a.payloadMax = max(a.payloadMax, s.PayloadMax)
-	if s.Direction != "query" {
-		a.notQuery = true
-	}
-	if len(sources) > 0 {
-		a.sources[gameID] = sources
-	}
-}
-
-func appendUnique(s []string, v string) []string {
-	if slices.Contains(s, v) {
-		return s
-	}
-	return append(s, v)
-}
-
-func checkOverride(o Override) error {
-	if o.SourceMode != "" && !slices.Contains([]string{gamedb.SourceOriginal, gamedb.SourceRelay}, o.SourceMode) {
-		return fmt.Errorf("override source_mode %q not supported", o.SourceMode)
-	}
-	if o.DstMode != "" && !slices.Contains([]string{gamedb.DstKeep, gamedb.DstSubnet, gamedb.DstLimited}, o.DstMode) {
-		return fmt.Errorf("override dst_mode %q invalid", o.DstMode)
-	}
-	return nil
 }
 
 func hashOf(s *Snapshot) string {

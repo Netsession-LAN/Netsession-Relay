@@ -5,22 +5,13 @@ package store
 import (
 	"context"
 	"database/sql"
-	"embed"
 	"errors"
-	"fmt"
-	"io/fs"
-	"path"
-	"sort"
-	"strings"
 	"sync"
 	"time"
 
-	"modernc.org/sqlite" // pure-Go SQLite driver, registers "sqlite"
+	"modernc.org/sqlite"
 	sqlite3 "modernc.org/sqlite/lib"
 )
-
-//go:embed migrations/*.sql
-var migrations embed.FS
 
 // Store is the configuration database.
 type Store struct {
@@ -65,123 +56,6 @@ func (s *Store) VacuumInto(ctx context.Context, path string) error {
 	return err
 }
 
-// migrate applies the migrations that are not recorded yet, each in its own transaction, in the order of their
-// file names.
-//
-// Migrations never remove or rename a table or column an older version needs (they add tables, columns with a
-// default and indexes, and may move data into a new place): when a deploy is rolled back, the previous version of
-// the program has to work with the database the newer one left behind.
-func (s *Store) migrate(ctx context.Context, last string) error {
-	if _, err := s.db.ExecContext(ctx, `CREATE TABLE IF NOT EXISTS schema_migration (name TEXT PRIMARY KEY, applied TEXT NOT NULL)`); err != nil {
-		return err
-	}
-	names, err := fs.Glob(migrations, "migrations/*.sql")
-	if err != nil {
-		return err
-	}
-	sort.Strings(names)
-	return s.applyPending(ctx, names, last)
-}
-
-// applyPending applies the migrations of names that are not recorded yet, in this order, and stops after the
-// migration last (see isLastMigration) if it was among them.
-func (s *Store) applyPending(ctx context.Context, names []string, last string) error {
-	for _, name := range names {
-		ran, err := s.applyIfPending(ctx, name)
-		if err != nil {
-			return err
-		}
-		if ran && isLastMigration(name, last) {
-			break
-		}
-	}
-	return nil
-}
-
-// applyIfPending applies the migration file name unless it is recorded as applied; ran reports that it ran now.
-func (s *Store) applyIfPending(ctx context.Context, name string) (ran bool, err error) {
-	applied, err := s.migrationApplied(ctx, name)
-	if err != nil || applied {
-		return false, err
-	}
-	return true, s.applyMigration(ctx, name)
-}
-
-// isLastMigration reports whether the migration file name is the one openUpTo stops after: its base name starts
-// with last ("" stops nowhere).
-func isLastMigration(name, last string) bool {
-	return last != "" && strings.HasPrefix(path.Base(name), last)
-}
-
-// migrationApplied reports whether the migration file name is recorded as applied.
-func (s *Store) migrationApplied(ctx context.Context, name string) (bool, error) {
-	var n int
-	err := s.db.QueryRowContext(ctx, `SELECT count(*) FROM schema_migration WHERE name = ?`, name).Scan(&n)
-	return n > 0, err
-}
-
-// applyMigration runs the statements of one migration file and records it, all in one transaction.
-func (s *Store) applyMigration(ctx context.Context, name string) error {
-	body, err := migrations.ReadFile(name)
-	if err != nil {
-		return err
-	}
-	return s.tx(ctx, func(tx *sql.Tx) error {
-		for _, stmt := range splitSQL(string(body)) {
-			if _, err := tx.ExecContext(ctx, stmt); err != nil {
-				return fmt.Errorf("%s: %w\n%s", name, err, stmt)
-			}
-		}
-		_, err := tx.ExecContext(ctx, `INSERT INTO schema_migration(name, applied) VALUES (?, ?)`, name, s.ts())
-		return err
-	})
-}
-
-// splitSQL splits a migration into statements, line by line: a statement ends with a line that ends in ";",
-// comment lines and empty lines are dropped, and a trigger (CREATE TRIGGER ... END;) is kept together. That is
-// all the migrations of this package need; a ";" at the end of a line inside a string literal would break it
-// (TestSplitSQLShippedMigrations checks every shipped file).
-func splitSQL(body string) []string {
-	var sp sqlSplitter
-	for _, line := range strings.Split(body, "\n") {
-		sp.add(line)
-	}
-	if strings.TrimSpace(sp.cur.String()) != "" {
-		sp.out = append(sp.out, sp.cur.String())
-	}
-	return sp.out
-}
-
-// sqlSplitter collects the lines of the current statement for splitSQL.
-type sqlSplitter struct {
-	out       []string
-	cur       strings.Builder
-	inTrigger bool
-}
-
-func (sp *sqlSplitter) add(line string) {
-	trimmed := strings.TrimSpace(line)
-	if strings.HasPrefix(trimmed, "--") || trimmed == "" {
-		return
-	}
-	sp.cur.WriteString(line)
-	sp.cur.WriteString("\n")
-	upper := strings.ToUpper(trimmed)
-	if strings.HasPrefix(upper, "CREATE TRIGGER") {
-		sp.inTrigger = true
-	}
-	if sp.ends(trimmed, upper) {
-		sp.out = append(sp.out, sp.cur.String())
-		sp.cur.Reset()
-		sp.inTrigger = false
-	}
-}
-
-// ends reports whether the line ends the current statement: it ends in ";", and inside a trigger it is the END.
-func (sp *sqlSplitter) ends(trimmed, upper string) bool {
-	return strings.HasSuffix(trimmed, ";") && (!sp.inTrigger || strings.HasSuffix(upper, "END;"))
-}
-
 func (s *Store) ts() string { return s.Now().UTC().Format(time.RFC3339Nano) }
 
 func (s *Store) tx(ctx context.Context, fn func(*sql.Tx) error) error {
@@ -204,86 +78,6 @@ var ErrExists = errors.New("exists")
 
 // ErrInvalid is returned for names or values the store refuses.
 var ErrInvalid = errors.New("invalid")
-
-// Audit appends to the audit log. Changes of the store itself do not use it: they write their entry in the
-// transaction of the change (audited).
-func (s *Store) Audit(ctx context.Context, user, action, object, before, after string) error {
-	return s.audited(ctx, func(*sql.Tx) (AuditEntry, error) {
-		return AuditEntry{User: user, Action: action, Object: object, Before: before, After: after}, nil
-	})
-}
-
-// audited runs fn in one transaction together with the audit entry fn returns: the change and its entry are
-// stored together or not at all. An entry without an action means "nothing changed, nothing to record". The
-// listener (SetOnAudit) hears about the entry after the commit.
-func (s *Store) audited(ctx context.Context, fn func(tx *sql.Tx) (AuditEntry, error)) error {
-	var e AuditEntry
-	err := s.tx(ctx, func(tx *sql.Tx) error {
-		var err error
-		if e, err = fn(tx); err != nil || e.Action == "" {
-			return err
-		}
-		e.TS = s.ts()
-		_, err = tx.ExecContext(ctx, `INSERT INTO audit_log(ts, user, action, object, before, after) VALUES (?,?,?,?,?,?)`,
-			e.TS, e.User, e.Action, e.Object, e.Before, e.After)
-		return err
-	})
-	if err == nil && e.Action != "" {
-		s.notifyAudit(e)
-	}
-	return err
-}
-
-// isUniqueViolation reports whether err is SQLite refusing a duplicate key. It looks at the result code of the
-// driver, never at the wording of the message.
-func isUniqueViolation(err error) bool {
-	var se *sqlite.Error
-	if !errors.As(err, &se) {
-		return false
-	}
-	return se.Code() == sqlite3.SQLITE_CONSTRAINT_UNIQUE || se.Code() == sqlite3.SQLITE_CONSTRAINT_PRIMARYKEY
-}
-
-// SetOnAudit sets a function called after every audit entry (syslog). It must not block.
-func (s *Store) SetOnAudit(fn func(AuditEntry)) {
-	s.auditMu.Lock()
-	s.onAudit = fn
-	s.auditMu.Unlock()
-}
-
-func (s *Store) notifyAudit(e AuditEntry) {
-	s.auditMu.Lock()
-	fn := s.onAudit
-	s.auditMu.Unlock()
-	if fn != nil {
-		fn(e)
-	}
-}
-
-// AuditEntry is one audit log row.
-type AuditEntry struct {
-	ID                    int64
-	TS, User, Action      string
-	Object, Before, After string
-}
-
-// AuditLog returns the newest entries.
-func (s *Store) AuditLog(ctx context.Context, limit int) ([]AuditEntry, error) {
-	rows, err := s.db.QueryContext(ctx, `SELECT id, ts, user, action, object, before, after FROM audit_log ORDER BY id DESC LIMIT ?`, limit)
-	if err != nil {
-		return nil, err
-	}
-	defer rows.Close()
-	var out []AuditEntry
-	for rows.Next() {
-		var e AuditEntry
-		if err := rows.Scan(&e.ID, &e.TS, &e.User, &e.Action, &e.Object, &e.Before, &e.After); err != nil {
-			return nil, err
-		}
-		out = append(out, e)
-	}
-	return out, rows.Err()
-}
 
 // Setting returns a setting, or def when it is not set. When the database cannot be read it returns def together
 // with the error, so a caller that only needs a usable value may ignore the error.
@@ -310,3 +104,13 @@ const upsertSetting = `INSERT INTO setting(key, value) VALUES (?, ?) ON CONFLICT
 const (
 	SettingMode = "engine_mode" // active | observe | paused
 )
+
+// isUniqueViolation reports whether err is SQLite refusing a duplicate key. It looks at the result code of the
+// driver, never at the wording of the message.
+func isUniqueViolation(err error) bool {
+	var se *sqlite.Error
+	if !errors.As(err, &se) {
+		return false
+	}
+	return se.Code() == sqlite3.SQLITE_CONSTRAINT_UNIQUE || se.Code() == sqlite3.SQLITE_CONSTRAINT_PRIMARYKEY
+}
